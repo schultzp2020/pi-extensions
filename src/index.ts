@@ -154,7 +154,13 @@ export default async function (pi: ExtensionAPI): Promise<void> {
 
   // ── Connect to proxy and refresh models ──
 
+  let isConnecting = false
+
   async function connectAndRefresh(accessToken: string): Promise<void> {
+    if (isConnecting) {
+      return
+    }
+    isConnecting = true
     try {
       log('connectAndRefresh: connecting to proxy...')
       const result = await connectToProxy(sessionId, accessToken)
@@ -167,6 +173,8 @@ export default async function (pi: ExtensionAPI): Promise<void> {
       }
     } catch (error) {
       log(`Failed to connect to proxy: ${String(error)}`)
+    } finally {
+      isConnecting = false
     }
   }
 
