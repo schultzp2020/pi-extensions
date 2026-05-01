@@ -9,7 +9,6 @@ A [Pi](https://github.com/badlogic/pi) extension that gives you access to all yo
 - **Thinking/reasoning** — `thinkingDelta` events map to `reasoning_content` in SSE, with XML tag filtering as a safety net.
 - **Multi-session** — multiple Pi sessions share one proxy process via HTTP internal API and a port file at `~/.pi/agent/cursor-proxy.json`.
 - **Conversation persistence** — checkpoints and blob stores are persisted to disk, preventing "blob not found" crashes on long sessions.
-- **Zero cost** — reports $0 per token since Cursor is subscription-based.
 
 ## Requirements
 
@@ -80,28 +79,6 @@ Pi ──(OpenAI API)──▶ Local Proxy ──(gRPC/H2)──▶ api2.cursor.
 
 The extension spawns a standalone proxy process that translates between OpenAI's chat completions format and Cursor's protobuf Connect protocol over HTTP/2.
 
-```
-src/
-├── index.ts                    # Extension entry — OAuth, provider registration, lifecycle
-├── auth.ts                     # PKCE OAuth flow (login, poll, token refresh)
-├── pkce.ts                     # PKCE challenge/verifier generation
-├── proxy-lifecycle.ts          # Spawn, discover, reconnect proxy process
-└── proxy/
-    ├── main.ts                 # Proxy HTTP server — routes, chat completion handler
-    ├── cursor-session.ts       # H2 connection to Cursor, batch state machine
-    ├── cursor-messages.ts      # Protobuf message dispatcher
-    ├── openai-stream.ts        # SSE stream writer (session events → OpenAI chunks)
-    ├── openai-messages.ts      # Parse OpenAI message format
-    ├── session-manager.ts      # Session isolation by X-Session-Id
-    ├── models.ts               # Model discovery (AvailableModels + GetUsableModels)
-    ├── internal-api.ts         # /internal/* endpoints (heartbeat, token, health)
-    ├── conversation-state.ts   # Checkpoint/blob persistence to disk
-    ├── connect-protocol.ts     # Connect framing (encode/decode/parse)
-    ├── thinking-filter.ts      # XML thinking tag filter
-    ├── native-tools.ts         # Tool redirection and rejection
-    └── request-context.ts      # RequestContext builder with MCP tools
-```
-
 ### Key design decisions
 
 See [`docs/adr/`](docs/adr/) for Architecture Decision Records:
@@ -144,4 +121,4 @@ The `agent_pb.ts` is vendored directly (the `.proto` source is not publicly avai
 
 ## License
 
-TBD
+[MIT](LICENSE)
