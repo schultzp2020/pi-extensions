@@ -162,11 +162,10 @@ function sendNativeResultFrame(write: (data: Uint8Array) => void, exec: PendingE
   const { nativeResultType } = exec
   const args = exec.nativeArgs ?? {}
 
-  // oxlint-disable-next-line typescript/no-explicit-any -- protobuf discriminated union requires dynamic case
   let resultValue: unknown
   let resultCase: string
 
-  // oxlint-disable-next-line typescript/switch-exhaustiveness-check -- fallback default handles remaining cases
+  // oxlint-disable-next-line typescript/switch-exhaustiveness-check -- default branch handles undefined and unknown types
   switch (nativeResultType) {
     case 'readResult': {
       const lines = content.split('\n')

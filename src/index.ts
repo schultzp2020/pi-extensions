@@ -100,6 +100,11 @@ export default async function (pi: ExtensionAPI): Promise<void> {
     }
   }
 
+  function updateModels(newModels: CursorModel[]): void {
+    models = newModels
+    saveModelCache(models)
+  }
+
   async function ensureProxy(accessToken: string): Promise<void> {
     if (currentPort) {
       await pushToken(currentPort, accessToken)
@@ -109,8 +114,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
       const result = await connectToProxy(sessionId, accessToken)
       currentPort = result.port
       if (result.models.length > 0) {
-        models = result.models // eslint-disable-line prefer-destructuring
-        saveModelCache(models)
+        updateModels(result.models)
       }
     } catch {
       // proxy spawn failed — models will be empty until next attempt
@@ -148,8 +152,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
       const result = await connectToProxy(sessionId, storedToken)
       currentPort = result.port
       if (result.models.length > 0) {
-        models = result.models // eslint-disable-line prefer-destructuring
-        saveModelCache(models)
+        updateModels(result.models)
       }
     } catch {
       // no existing proxy available

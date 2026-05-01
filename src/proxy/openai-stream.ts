@@ -15,12 +15,9 @@ export const SSE_HEADERS = {
 
 const SSE_KEEPALIVE_MS = 15_000
 
-/** Safely call .unref() on a timer returned by setInterval/setTimeout. */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function unrefTimer(timer: any): void {
-  // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-  if (typeof timer?.unref === 'function') {
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
+/** Prevents a timer from keeping the process alive. */
+function unrefTimer(timer: ReturnType<typeof setInterval>): void {
+  if (typeof timer === 'object' && 'unref' in timer) {
     timer.unref()
   }
 }

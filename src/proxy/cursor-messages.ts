@@ -10,7 +10,7 @@
  * use `any` in union positions, making `no-unsafe-*` rules fire on nearly every
  * line. These are intentional and safe; we suppress them at file level.
  */
-/* oxlint-disable typescript/no-unsafe-member-access, typescript/no-unsafe-assignment, typescript/no-unsafe-argument */
+/* oxlint-disable typescript/no-explicit-any, typescript/no-unsafe-member-access, typescript/no-unsafe-assignment, typescript/no-unsafe-argument */
 import { create, fromBinary, toBinary, toJson } from '@bufbuild/protobuf'
 import { ValueSchema } from '@bufbuild/protobuf/wkt'
 
@@ -129,7 +129,6 @@ interface NativeRedirectInfo {
 }
 
 function nativeToMcpRedirect(execCase: string, execMsg: ExecServerMessage): NativeRedirectInfo | null {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const args = execMsg.message.value as any
   const toolCallId: string = (args?.toolCallId as string) || crypto.randomUUID()
 
@@ -240,7 +239,6 @@ function sendKvResponse(
 ): void {
   const response = create(KvClientMessageSchema, {
     id: kvMsg.id,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     message: { case: messageCase as any, value: value as any },
   })
   const clientMsg = create(AgentClientMessageSchema, {
@@ -258,7 +256,6 @@ function sendExecResult(
   const execClientMessage = create(ExecClientMessageSchema, {
     id: execMsg.id,
     execId: execMsg.execId,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     message: { case: messageCase as any, value: value as any },
   })
   const clientMessage = create(AgentClientMessageSchema, {
@@ -288,7 +285,6 @@ function sendExecStreamClose(execId: number, sendFrame: (data: Buffer) => void):
  * waiting indefinitely.
  */
 function sendUnknownExecResult(execMsg: ExecServerMessage, sendFrame: (data: Buffer) => void): void {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const unknowns: { no: number; wireType: number; data: Uint8Array }[] | undefined = (execMsg as any).$unknown
   const argsField = unknowns?.find((f) => f.wireType === 2 && f.no !== 1 && f.no !== 15 && f.no !== 19)
   if (!argsField) {
@@ -304,7 +300,6 @@ function sendUnknownExecResult(execMsg: ExecServerMessage, sendFrame: (data: Buf
     id: execMsg.id,
     execId: execMsg.execId,
   })
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   ;(execClientMsg as any).$unknown = [{ no: resultFieldNo, wireType: 2, data: new Uint8Array(0) }]
   const clientMessage = create(AgentClientMessageSchema, {
     message: { case: 'execClientMessage', value: execClientMsg },
@@ -314,30 +309,25 @@ function sendUnknownExecResult(execMsg: ExecServerMessage, sendFrame: (data: Buf
 }
 
 function handleInteractionUpdate(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   update: any,
   state: StreamState,
   onText: (text: string, isThinking: boolean) => void,
 ): void {
-  // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
   const updateCase: string | undefined = update.message?.case
 
   if (updateCase === 'textDelta') {
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
     const delta: string = (update.message.value.text as string) || ''
     if (delta) {
       state.lastDeltaType = 'text'
       onText(delta, false)
     }
   } else if (updateCase === 'thinkingDelta') {
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
     const delta: string = (update.message.value.text as string) || ''
     if (delta) {
       state.lastDeltaType = 'thinking'
       onText(delta, true)
     }
   } else if (updateCase === 'tokenDelta') {
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
     state.outputTokens += (update.message.value.tokens as number) || 0
   } else if (updateCase === 'toolCallStarted') {
     // Just a notification — not a batch delimiter
@@ -391,9 +381,7 @@ function handleExecMessage(
     if (state) {
       state.totalExecCount++
     }
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const mcpArgs = execMsg.message.value as any
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
     const decoded = decodeMcpArgsMap(mcpArgs.args as Record<string, Uint8Array>)
     const resolvedToolName = stripMcpToolPrefix((mcpArgs.toolName as string) || (mcpArgs.name as string) || '')
     fixMcpArgNames(resolvedToolName, decoded)
@@ -446,7 +434,6 @@ function handleExecMessage(
   const REJECT_REASON = 'Tool not available in this environment. Use the MCP tools provided instead.'
 
   if (execCase === 'backgroundShellSpawnArgs') {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const args = execMsg.message.value as any
     const result = create(BackgroundShellSpawnResultSchema, {
       result: {
@@ -488,20 +475,15 @@ function handleExecMessage(
 }
 
 function handleInteractionQuery(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   query: any,
   sendFrame: (data: Buffer) => void,
   onNotify?: (text: string) => void,
 ): void {
-  // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
   const queryId: number = (query.id as number) || 0
-  // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
   const queryCase: string = (query.query?.case as string) || 'unknown'
-  // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
   const searchTerm: string =
     queryCase === 'webSearchRequestQuery' ? (query.query?.value?.args?.searchTerm as string) || '' : ''
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let responseResult: { case: string; value: unknown } | undefined
 
   if (queryCase === 'webSearchRequestQuery') {
@@ -517,13 +499,11 @@ function handleInteractionQuery(
   } else if (queryCase === 'exaSearchRequestQuery') {
     responseResult = {
       case: 'exaSearchRequestResponse',
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       value: create(ExaSearchRequestResponseSchema, { result: { case: 'approved', value: {} as any } }),
     }
   } else if (queryCase === 'exaFetchRequestQuery') {
     responseResult = {
       case: 'exaFetchRequestResponse',
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       value: create(ExaFetchRequestResponseSchema, { result: { case: 'approved', value: {} as any } }),
     }
   } else if (queryCase === 'askQuestionInteractionQuery') {
@@ -555,7 +535,6 @@ function handleInteractionQuery(
   // Build and send the interaction response
   const interactionResponse = create(InteractionResponseSchema, {
     id: queryId,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     result: responseResult ? ({ case: responseResult.case, value: responseResult.value } as any) : undefined,
   })
   const clientMsg = create(AgentClientMessageSchema, {
@@ -608,7 +587,6 @@ export function processServerMessage(
   if (msgCase === 'execServerControlMessage') {
     const ctrl = msg.message.value
     if (ctrl.message.case === 'abort') {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       console.error(`[cursor-messages] exec ABORT for id=${String((ctrl.message.value as any).id)}`)
     }
     return true
