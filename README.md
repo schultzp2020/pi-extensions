@@ -18,19 +18,22 @@ A [Pi](https://github.com/badlogic/pi) extension that gives you access to all yo
 
 ## Installation
 
+From npm:
+
+```bash
+pi install pi-cursor
+```
+
+Or from source:
+
 ```bash
 git clone https://github.com/pschuegr/pi-cursor.git
 cd pi-cursor
 npm install
+npm run build
 ```
 
-### Load as a local extension
-
-```bash
-pi -e ./src/index.ts
-```
-
-Or install globally so Pi discovers it automatically:
+Then load via symlink:
 
 ```bash
 # Windows
@@ -58,7 +61,7 @@ Your browser opens to Cursor's OAuth page. After you log in, Pi polls until auth
 /model
 ```
 
-Pick any Cursor model from the list. Models are discovered dynamically from your subscription — whatever Cursor gives you, Pi can use.
+Pick any Cursor model from the list. Models that support max mode appear as both `model-name` and `model-name-max` variants.
 
 ### 3. Chat
 
@@ -77,7 +80,7 @@ Pi ──(OpenAI API)──▶ Local Proxy ──(gRPC/H2)──▶ api2.cursor.
                        :PORT                      Cursor API
 ```
 
-The extension spawns a standalone proxy process that translates between OpenAI's chat completions format and Cursor's protobuf Connect protocol over HTTP/2.
+The extension spawns a standalone proxy process that translates between OpenAI's chat completions format and Cursor's protobuf Connect protocol over HTTP/2. The proxy is built with [Rolldown](https://rolldown.rs) for tree-shaking and ships as plain JS — no TypeScript flags needed at runtime.
 
 ### Key design decisions
 
@@ -90,6 +93,7 @@ See [`docs/adr/`](docs/adr/) for Architecture Decision Records:
 ## Development
 
 ```bash
+npm run build         # Build with Rolldown (~22ms)
 npm test              # Run unit tests
 npm run test:watch    # Watch mode
 npm run lint          # Lint with oxlint (type-aware, strict)
@@ -112,7 +116,7 @@ The `agent_pb.ts` is vendored directly (the `.proto` source is not publicly avai
 ## How it works
 
 1. **Login** — PKCE OAuth flow opens `cursor.com/loginDeepControl` in the browser, polls `api2.cursor.sh/auth/poll` until the user completes login.
-2. **Proxy startup** — Extension spawns a child process running `src/proxy/main.ts`. The proxy opens an HTTP server on a random port and writes `{"type":"ready","port":N,"models":[...]}` to stdout.
+2. **Proxy startup** — Extension spawns a child process running the built proxy. The proxy opens an HTTP server on a random port and writes `{"type":"ready","port":N,"models":[...]}` to stdout.
 3. **Model discovery** — Proxy calls `AvailableModels` (or `GetUsableModels` as fallback) via gRPC to fetch the user's available models. Results are cached to disk for fast subsequent starts.
 4. **Provider registration** — Extension registers a `cursor` provider with Pi using `api: 'openai-completions'`, pointing `baseUrl` at the local proxy.
 5. **Chat completion** — Pi sends standard OpenAI requests to the proxy. The proxy builds an `AgentRunRequest` protobuf, opens an H2 stream to `api2.cursor.sh`, and translates the response back into SSE chunks.
