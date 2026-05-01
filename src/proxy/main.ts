@@ -220,11 +220,17 @@ function buildCursorRequest(
     },
   })
 
+  // Enable max mode for models that support it.
+  // The cached model list carries supportsMaxMode from discovery.
+  const cachedModel = getCachedModels().find((m) => m.id === modelId)
+  const maxMode = cachedModel?.supportsMaxMode ?? false
+
   const modelDetails = create(ModelDetailsSchema, {
     modelId,
     displayModelId: modelId,
     displayName: modelId,
     displayNameShort: modelId,
+    maxMode,
   })
 
   const runRequest = create(AgentRunRequestSchema, {

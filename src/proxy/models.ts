@@ -64,6 +64,7 @@ export interface CursorModel {
   contextWindow: number
   maxTokens: number
   supportsImages: boolean
+  supportsMaxMode: boolean
 }
 
 // ── Pretty model names ──
@@ -228,6 +229,7 @@ function normalizeAvailableModel(m: AvailableModelsResponse_AvailableModel): Cur
     contextWindow: context,
     maxTokens: DEFAULT_MAX_TOKENS,
     supportsImages: m.supportsImages === true,
+    supportsMaxMode: m.supportsMaxMode === true,
   }
 }
 
@@ -293,6 +295,7 @@ function normalizeLegacyModels(models: readonly ModelDetails[]): CursorModel[] {
       contextWindow: ctx,
       maxTokens: exactLimits?.maxTokens ?? DEFAULT_MAX_TOKENS,
       supportsImages: false, // GetUsableModels doesn't expose this
+      supportsMaxMode: m.maxMode === true,
     })
   }
   return [...byId.values()].sort((a, b) => a.id.localeCompare(b.id))
