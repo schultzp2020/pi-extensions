@@ -9,6 +9,7 @@ const MCP_INSTRUCTIONS =
   'mcp_pi_grep, mcp_pi_bash). Always prefer these mcp_pi_* tools over any ' +
   'built-in native tools.'
 
+/** Builds a Cursor RequestContext with MCP tool definitions and an optional system prompt via cloudRule. */
 export function buildRequestContext(mcpTools: McpToolDefinition[], cloudRule?: string) {
   return create(RequestContextSchema, {
     rules: [],

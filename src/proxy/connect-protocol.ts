@@ -1,6 +1,7 @@
 export const CONNECT_END_STREAM_FLAG = 0b00000010
 const MAX_FRAME_SIZE = 32 * 1024 * 1024 // 32 MiB
 
+/** Wraps data in a Connect protocol frame: 1 byte flags + 4 bytes big-endian length + payload. */
 export function frameConnectMessage(data: Uint8Array, flags = 0): Buffer {
   const header = Buffer.alloc(5)
   header[0] = flags
@@ -8,6 +9,10 @@ export function frameConnectMessage(data: Uint8Array, flags = 0): Buffer {
   return Buffer.concat([header, Buffer.from(data)])
 }
 
+/**
+ * Creates a streaming Connect frame parser. Accumulates incoming buffers and
+ * dispatches complete frames to `onMessage` (data) or `onEndStream` (end/error).
+ */
 export function createConnectFrameParser(
   onMessage: (bytes: Uint8Array) => void,
   onEndStream: (bytes: Uint8Array) => void,
@@ -43,6 +48,7 @@ export function createConnectFrameParser(
   }
 }
 
+/** Extracts the first data frame payload from a Connect unary response. Returns null if malformed. */
 export function decodeConnectUnaryBody(payload: Uint8Array): Uint8Array | null {
   if (payload.length < 5) {
     return null
@@ -67,6 +73,7 @@ export function decodeConnectUnaryBody(payload: Uint8Array): Uint8Array | null {
   return null
 }
 
+/** Parses a Connect end-stream JSON payload. Returns an Error if it contains an error field, null otherwise. */
 export function parseConnectEndStream(data: Uint8Array): Error | null {
   try {
     const payload = JSON.parse(new TextDecoder().decode(data)) as { error?: { code?: string; message?: string } }

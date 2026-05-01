@@ -1,6 +1,11 @@
 const THINKING_TAG_NAMES = ['think', 'thinking', 'reasoning', 'thought', 'think_intent']
 const MAX_THINKING_TAG_LEN = 16
 
+/**
+ * Streaming filter that splits text into `content` and `reasoning` based on
+ * XML-style thinking tags (e.g. `<thinking>`, `<reasoning>`). Handles partial
+ * tags across chunk boundaries by buffering incomplete `<` sequences.
+ */
 export function createThinkingTagFilter(): {
   process(text: string): { content: string; reasoning: string }
   flush(): { content: string; reasoning: string }

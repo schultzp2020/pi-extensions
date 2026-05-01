@@ -22,8 +22,6 @@ import {
 import { decodeConnectUnaryBody } from './connect-protocol.ts'
 import { callCursorUnaryRpc } from './cursor-session.ts'
 
-// ── Constants ──
-
 const AVAILABLE_MODELS_PATH = '/aiserver.v1.AiService/AvailableModels'
 const GET_USABLE_MODELS_PATH = '/agent.v1.AgentService/GetUsableModels'
 
@@ -55,8 +53,6 @@ const MODEL_LIMITS: Partial<Record<string, { context?: number; maxTokens?: numbe
   'gpt-5.4-nano': { context: 272_000 },
 }
 
-// ── Types ──
-
 export interface CursorModel {
   id: string
   name: string
@@ -66,8 +62,6 @@ export interface CursorModel {
   supportsImages: boolean
   supportsMaxMode: boolean
 }
-
-// ── Pretty model names ──
 
 const PRETTY_NAME_OVERRIDES: Record<string, string> = {
   'composer-1': 'Composer 1',
@@ -162,8 +156,6 @@ function formatToken(token: string): string {
   return token.charAt(0).toUpperCase() + token.slice(1)
 }
 
-// ── Fallback context window lookup ──
-
 function fallbackContext(modelId: string): number {
   const exact = MODEL_LIMITS[modelId]
   if (exact?.context) {
@@ -182,8 +174,6 @@ function fallbackContext(modelId: string): number {
   return DEFAULT_CONTEXT_WINDOW
 }
 
-// ── Connect-protocol decode helper ──
-
 function decodeConnectResponse<T>(schema: Parameters<typeof fromBinary>[0], payload: Uint8Array): T | null {
   try {
     return fromBinary(schema, payload) as T
@@ -200,8 +190,6 @@ function decodeConnectResponse<T>(schema: Parameters<typeof fromBinary>[0], payl
     }
   }
 }
-
-// ── Primary: AvailableModels RPC ──
 
 function normalizeAvailableModel(m: AvailableModelsResponse_AvailableModel): CursorModel[] {
   const id = m.name.trim()
@@ -255,13 +243,11 @@ async function fetchAvailableModels(accessToken: string): Promise<CursorModel[] 
       includeHiddenModels: true,
     })
 
-    console.error('[models] Calling AvailableModels RPC...')
     const responseBytes = await callCursorUnaryRpc({
       accessToken,
       rpcPath: AVAILABLE_MODELS_PATH,
       requestBody: toBinary(AvailableModelsRequestSchema, req),
     })
-    console.error(`[models] AvailableModels returned ${String(responseBytes.length)} bytes`)
 
     if (responseBytes.length === 0) {
       return null
@@ -280,8 +266,6 @@ async function fetchAvailableModels(accessToken: string): Promise<CursorModel[] 
     return null
   }
 }
-
-// ── Fallback: GetUsableModels RPC ──
 
 function pickLegacyName(model: ModelDetails): string {
   for (const name of [model.displayName, model.displayNameShort, model.displayModelId]) {
@@ -318,14 +302,12 @@ function normalizeLegacyModels(models: readonly ModelDetails[]): CursorModel[] {
 
 async function fetchUsableModels(accessToken: string): Promise<CursorModel[] | null> {
   try {
-    console.error('[models] Calling GetUsableModels RPC...')
     const requestBody = toBinary(GetUsableModelsRequestSchema, create(GetUsableModelsRequestSchema, {}))
     const responseBytes = await callCursorUnaryRpc({
       accessToken,
       rpcPath: GET_USABLE_MODELS_PATH,
       requestBody,
     })
-    console.error(`[models] GetUsableModels returned ${String(responseBytes.length)} bytes`)
 
     if (responseBytes.length === 0) {
       return null
@@ -344,18 +326,8 @@ async function fetchUsableModels(accessToken: string): Promise<CursorModel[] | n
   }
 }
 
-// ── Public API ──
-
-/**
- * Discover all usable Cursor models for the given access token.
- *
- * Tries AvailableModels RPC first (richer data: capabilities, context limits,
- * display names, image support). Falls back to GetUsableModels RPC (basic model
- * IDs + thinking details). Returns empty array if both fail.
- */
+/** Discovers all usable Cursor models. Tries AvailableModels RPC first, falls back to GetUsableModels. */
 export async function discoverCursorModels(accessToken: string): Promise<CursorModel[]> {
-  console.error('[models] Starting model discovery...')
-  // Try primary path first — richer data
   const available = await fetchAvailableModels(accessToken)
   if (available && available.length > 0) {
     console.error(`[models] Discovered ${String(available.length)} models via AvailableModels`)

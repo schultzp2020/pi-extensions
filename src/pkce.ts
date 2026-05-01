@@ -1,3 +1,4 @@
+/** Generates a PKCE verifier (random 32 bytes) and its SHA-256 challenge, both base64url-encoded. */
 export async function generatePKCE(): Promise<{ verifier: string; challenge: string }> {
   const array = new Uint8Array(32)
   crypto.getRandomValues(array)

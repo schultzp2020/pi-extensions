@@ -41,8 +41,6 @@ import {
 import { type PendingExec, type StreamState, createStreamState, processServerMessage } from './cursor-messages.ts'
 import { EventQueue } from './event-queue.ts'
 
-// ── Constants ──
-
 const CURSOR_API_URL = 'https://api2.cursor.sh'
 const CURSOR_CLIENT_VERSION = 'cli-2026.01.09-231024f'
 const HEARTBEAT_INTERVAL_MS = 30_000
@@ -52,8 +50,6 @@ const INACTIVITY_FLUSHED_MS = 10 * 60_000
 
 const CLOSE_OK = 0
 const CLOSE_ERR = 1
-
-// ── Types ──
 
 export type RetryHint = 'blob_not_found' | 'resource_exhausted' | 'timeout'
 
@@ -73,8 +69,6 @@ export interface SessionOptions {
   convKey: string
   onCheckpoint?: (bytes: Uint8Array, blobStore: Map<string, Uint8Array>) => void
 }
-
-// ── Helpers ──
 
 function classifyConnectError(errorMessage: string): RetryHint | undefined {
   if (/blob not found/i.test(errorMessage)) {
@@ -116,8 +110,6 @@ function generateTraceparent(): string {
   const spanId = randomUUID().replaceAll('-', '').slice(0, 16)
   return `00-${traceId}-${spanId}-01`
 }
-
-// ── Result senders ──
 
 /**
  * Send an MCP result (success with text content) back to Cursor for the given exec.
@@ -292,8 +284,6 @@ function sendExecStreamClose(write: (data: Uint8Array) => void, execMsgId: numbe
     ),
   )
 }
-
-// ── CursorSession ──
 
 export class CursorSession {
   private readonly queue: EventQueue<SessionEvent>
@@ -679,8 +669,6 @@ export class CursorSession {
     }
   }
 }
-
-// ── Unary RPC (for model discovery) ──
 
 export interface CursorUnaryRpcOptions {
   rpcPath: string

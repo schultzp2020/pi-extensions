@@ -69,8 +69,6 @@ import {
   setActiveSession,
 } from './session-manager.ts'
 
-// ── Types ──
-
 interface ProxyConfig {
   accessToken: string
   conversationDir?: string
@@ -85,8 +83,6 @@ interface ChatCompletionRequest {
   tools?: OpenAIToolDef[]
   tool_choice?: string | { type: string; function: { name: string } }
 }
-
-// ── Helpers ──
 
 function readBody(req: IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -124,8 +120,6 @@ function isChatCompletionRequest(value: unknown): value is ChatCompletionRequest
   )
 }
 
-// ── MCP tool conversion ──
-
 function buildMcpToolDefinitions(tools: OpenAIToolDef[]): McpToolDefinition[] {
   return tools.map((t) => {
     const { function: fn } = t
@@ -144,8 +138,6 @@ function buildMcpToolDefinitions(tools: OpenAIToolDef[]): McpToolDefinition[] {
   })
 }
 
-// ── Checkpoint decode ──
-
 function decodeCheckpointState(
   checkpoint: Uint8Array,
 ): ReturnType<typeof create<typeof ConversationStateStructureSchema>> | null {
@@ -156,8 +148,6 @@ function decodeCheckpointState(
     return null
   }
 }
-
-// ── AgentRunRequest building ──
 
 function buildCursorRequest(
   modelId: string,
@@ -254,8 +244,6 @@ function buildCursorRequest(
 // buildResumeRequest is reserved for future checkpoint resume functionality.
 // It requires conversationId, checkpoint, mcpTools, and cloudRule parameters.
 
-// ── Models endpoint ──
-
 function handleModelsRequest(res: ServerResponse, models: CursorModel[]): void {
   const data = models.map((m) => ({
     id: m.id,
@@ -265,8 +253,6 @@ function handleModelsRequest(res: ServerResponse, models: CursorModel[]): void {
   }))
   jsonResponse(res, 200, { object: 'list', data })
 }
-
-// ── Chat completion ──
 
 async function handleChatCompletion(
   req: IncomingMessage,
@@ -448,8 +434,6 @@ async function pipeReaderToResponse(
     }
   }
 }
-
-// ── Main ──
 
 async function main(): Promise<void> {
   // 1. Read config from stdin

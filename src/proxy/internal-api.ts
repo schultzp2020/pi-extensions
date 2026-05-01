@@ -8,14 +8,10 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 
 import { discoverCursorModels, type CursorModel } from './models.ts'
 
-// ── Types ──
-
 interface SessionHeartbeat {
   sessionId: string
   lastHeartbeatMs: number
 }
-
-// ── State ──
 
 const activeSessions = new Map<string, SessionHeartbeat>()
 const HEARTBEAT_TIMEOUT_MS = 30_000
@@ -24,8 +20,6 @@ let currentAccessToken: string | null = null
 let cachedModels: CursorModel[] = []
 let onModelsRefreshed: ((models: CursorModel[]) => void) | null = null
 let shutdownCallback: (() => void) | null = null
-
-// ── Configuration ──
 
 export function configureInternalApi(opts: {
   initialToken: string | null
@@ -39,8 +33,6 @@ export function configureInternalApi(opts: {
   shutdownCallback = opts.onShutdown ?? null
 }
 
-// ── Accessors ──
-
 export function getAccessToken(): string | null {
   return currentAccessToken
 }
@@ -48,8 +40,6 @@ export function getAccessToken(): string | null {
 export function getCachedModels(): CursorModel[] {
   return cachedModels
 }
-
-// ── Heartbeat monitor ──
 
 export function startHeartbeatMonitor(): NodeJS.Timeout {
   const timer = setInterval(() => {
@@ -71,8 +61,6 @@ export function startHeartbeatMonitor(): NodeJS.Timeout {
   return timer
 }
 
-// ── HTTP helpers ──
-
 function jsonResponse(res: ServerResponse, status: number, body: unknown): void {
   res.writeHead(status, { 'Content-Type': 'application/json' })
   res.end(JSON.stringify(body))
@@ -90,8 +78,6 @@ function readBody(req: IncomingMessage): Promise<string> {
     req.on('error', reject)
   })
 }
-
-// ── Route handler ──
 
 export async function handleInternalRequest(req: IncomingMessage, res: ServerResponse, path: string): Promise<void> {
   if (path === '/internal/health' && req.method === 'GET') {

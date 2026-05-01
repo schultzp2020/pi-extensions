@@ -9,19 +9,13 @@ import type { CursorSession } from './cursor-session.ts'
 import type { OpenAIMessage } from './openai-messages.ts'
 import { textContent } from './openai-messages.ts'
 
-// ── Types ──
-
 interface ActiveSession {
   session: CursorSession
   lastAccessMs: number
 }
 
-// ── State ──
-
 const activeSessions = new Map<string, ActiveSession>()
 const SESSION_TTL_MS = 30 * 60 * 1000 // 30 minutes
-
-// ── Key derivation ──
 
 export function deriveSessionKey(sessionId: string, messages: OpenAIMessage[]): string {
   const firstUserMsg = messages.find((m) => m.role === 'user')
@@ -40,8 +34,6 @@ export function deriveConversationKey(sessionId: string, messages: OpenAIMessage
     .digest('hex')
     .slice(0, 16)
 }
-
-// ── Session CRUD ──
 
 export function getActiveSession(key: string): CursorSession | undefined {
   const entry = activeSessions.get(key)
@@ -63,8 +55,6 @@ export function removeActiveSession(key: string): void {
     activeSessions.delete(key)
   }
 }
-
-// ── Lifecycle ──
 
 export function evictStaleSessions(): void {
   const now = Date.now()

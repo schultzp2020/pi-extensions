@@ -7,8 +7,6 @@
 import type { CursorSession, RetryHint, SessionEvent } from './cursor-session.ts'
 import { createThinkingTagFilter } from './thinking-filter.ts'
 
-// ── Constants ──
-
 export const SSE_HEADERS = {
   'Content-Type': 'text/event-stream',
   'Cache-Control': 'no-cache',
@@ -31,8 +29,6 @@ function generateCompletionId(): string {
   return crypto.randomUUID().replaceAll('-', '').slice(0, 28)
 }
 
-// ── Types ──
-
 export interface OpenAIUsage {
   prompt_tokens: number
   completion_tokens: number
@@ -51,8 +47,6 @@ export type PumpResult =
   | { outcome: 'done' }
   | { outcome: 'batchReady' }
   | { outcome: 'retry'; retryHint: RetryHint; error: string }
-
-// ── Token usage helpers ──
 
 function sanitizeTokenCount(value: number): number {
   return Number.isFinite(value) ? Math.max(0, Math.trunc(value)) : 0
@@ -95,8 +89,6 @@ function pickBetterUsage(current: OpenAIUsage | null, candidate: OpenAIUsage | n
   }
   return current
 }
-
-// ── SSE Context ──
 
 /**
  * Wraps a ReadableStreamDefaultController with helpers for emitting
@@ -195,8 +187,6 @@ export function createSSECtx(
     },
   }
 }
-
-// ── Pump Session ──
 
 /**
  * Drain events from a CursorSession and write them as SSE chunks.
@@ -322,8 +312,6 @@ export async function pumpSession(session: CursorSession, ctx: SSECtx): Promise<
     }
   }
 }
-
-// ── Non-streaming response ──
 
 function nonStreamingErrorResponse(message: string, code = 'non_streaming_error'): Response {
   return new Response(

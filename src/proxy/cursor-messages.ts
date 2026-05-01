@@ -49,8 +49,6 @@ import { frameConnectMessage } from './connect-protocol.ts'
 import { classifyExecMessage, fixMcpArgNames, stripMcpToolPrefix } from './native-tools.ts'
 import { buildRequestContext } from './request-context.ts'
 
-// ── Types ──
-
 export interface StreamState {
   toolCallIndex: number
   /** Total exec round-trips (MCP + native rejects + requestContext). Tracks Cursor's 25-call limit. */
@@ -104,8 +102,6 @@ export function createStreamState(): StreamState {
   }
 }
 
-// ── MCP arg decoding ──
-
 function decodeMcpArgValue(value: Uint8Array): unknown {
   try {
     const parsed = fromBinary(ValueSchema, value)
@@ -123,8 +119,6 @@ function decodeMcpArgsMap(args: Record<string, Uint8Array>): Record<string, unkn
   }
   return decoded
 }
-
-// ── Native tool redirection ──
 
 interface NativeRedirectInfo {
   toolCallId: string
@@ -238,8 +232,6 @@ function nativeToMcpRedirect(execCase: string, execMsg: ExecServerMessage): Nati
   return null
 }
 
-// ── Response helpers ──
-
 function sendKvResponse(
   kvMsg: KvServerMessage,
   messageCase: string,
@@ -321,8 +313,6 @@ function sendUnknownExecResult(execMsg: ExecServerMessage, sendFrame: (data: Buf
   sendExecStreamClose(execMsg.id, sendFrame)
 }
 
-// ── Interaction update handler ──
-
 function handleInteractionUpdate(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   update: any,
@@ -367,8 +357,6 @@ function handleInteractionUpdate(
   // Ignore: toolCallDelta, partialToolCall, and other unrecognized types
 }
 
-// ── KV message handler ──
-
 function handleKvMessage(
   kvMsg: KvServerMessage,
   blobStore: Map<string, Uint8Array>,
@@ -387,8 +375,6 @@ function handleKvMessage(
     sendKvResponse(kvMsg, 'setBlobResult', create(SetBlobResultSchema, {}), sendFrame)
   }
 }
-
-// ── Exec message handler ──
 
 function handleExecMessage(
   execMsg: ExecServerMessage,
@@ -501,8 +487,6 @@ function handleExecMessage(
   sendUnknownExecResult(execMsg, sendFrame)
 }
 
-// ── Interaction query handler ──
-
 function handleInteractionQuery(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   query: any,
@@ -579,8 +563,6 @@ function handleInteractionQuery(
   })
   sendFrame(frameConnectMessage(toBinary(AgentClientMessageSchema, clientMsg)))
 }
-
-// ── Main dispatcher ──
 
 /** Returns true if the message was a recognized type (real server activity, not keepalive). */
 export function processServerMessage(

@@ -9,14 +9,12 @@
  * the proxy self-exits after 30s without any heartbeat.
  */
 import { spawn } from 'node:child_process'
-import { createWriteStream, existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { createInterface } from 'node:readline'
 
 import type { CursorModel } from './proxy/models.ts'
-
-// ── Constants ──
 
 const PORT_FILE = join(homedir(), '.pi', 'agent', 'cursor-proxy.json')
 const PROXY_ENTRY = resolve(import.meta.dirname, 'proxy', 'main.ts')
@@ -26,8 +24,6 @@ const HEALTH_CHECK_TIMEOUT_MS = 2_000
 const HEARTBEAT_TIMEOUT_MS = 2_000
 const TOKEN_PUSH_TIMEOUT_MS = 2_000
 const MODEL_REFRESH_TIMEOUT_MS = 10_000
-
-// ── Types ──
 
 interface ProxyInfo {
   port: number
@@ -41,11 +37,7 @@ interface ProxyConnection {
   sessionId: string
 }
 
-// ── State ──
-
 let activeConnection: ProxyConnection | null = null
-
-// ── Process utilities ──
 
 function isProcessAlive(pid: number): boolean {
   try {
@@ -55,8 +47,6 @@ function isProcessAlive(pid: number): boolean {
     return false
   }
 }
-
-// ── Port file ──
 
 /**
  * Read the port file. Returns proxy info if the file exists and the
@@ -87,8 +77,6 @@ function writePortFile(info: ProxyInfo): void {
   mkdirSync(join(homedir(), '.pi', 'agent'), { recursive: true })
   writeFileSync(PORT_FILE, JSON.stringify(info))
 }
-
-// ── HTTP helpers ──
 
 async function checkProxyHealth(port: number): Promise<boolean> {
   try {
@@ -127,11 +115,6 @@ async function pushToken(port: number, accessToken: string): Promise<void> {
   }
 }
 
-// ── Public API ──
-
-/**
- * Refresh the model list from the proxy.
- */
 async function refreshModels(port: number): Promise<CursorModel[]> {
   const res = await fetch(`http://localhost:${String(port)}/internal/refresh-models`, {
     method: 'POST',
@@ -169,8 +152,6 @@ export async function connectToProxy(
   }
   return spawnProxy(sessionId, accessToken)
 }
-
-// ── Spawn ──
 
 async function spawnProxy(sessionId: string, accessToken: string): Promise<{ port: number; models: CursorModel[] }> {
   const child = spawn('node', ['--experimental-transform-types', PROXY_ENTRY], {
@@ -212,11 +193,8 @@ async function spawnProxy(sessionId: string, accessToken: string): Promise<{ por
   // Start heartbeat
   startHeartbeat(ready.port, childPid, sessionId)
 
-  // Log proxy stderr to file
-  const logPath = join(homedir(), '.pi', 'agent', 'cursor-proxy.log')
-  const logStream = createWriteStream(logPath, { flags: 'a' })
   stderr.on('data', (chunk: Buffer) => {
-    logStream.write(`${new Date().toISOString()} ${chunk.toString()}`)
+    process.stderr.write(`[cursor-proxy] ${chunk.toString()}`)
   })
 
   // Don't let the child keep the parent alive
@@ -224,8 +202,6 @@ async function spawnProxy(sessionId: string, accessToken: string): Promise<{ por
 
   return { port: ready.port, models: ready.models ?? [] }
 }
-
-// ── Heartbeat ──
 
 function startHeartbeat(port: number, pid: number, sessionId: string): void {
   stopHeartbeat()
@@ -239,9 +215,6 @@ function startHeartbeat(port: number, pid: number, sessionId: string): void {
   activeConnection = { port, pid, heartbeatTimer: timer, sessionId }
 }
 
-/**
- * Stop the heartbeat timer and clear the active connection.
- */
 export function stopHeartbeat(): void {
   if (activeConnection) {
     clearInterval(activeConnection.heartbeatTimer)
@@ -249,9 +222,6 @@ export function stopHeartbeat(): void {
   }
 }
 
-/**
- * Get the port of the currently active proxy, or null.
- */
 export function getActivePort(): number | null {
   return activeConnection?.port ?? null
 }
