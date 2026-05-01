@@ -6,10 +6,9 @@
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
-    "noEmit": true,
+    "declaration": true,
+    "sourceMap": true,
     "allowImportingTsExtensions": true,
-    "rootDir": "src"
-  },
-  "include": ["src/**/*.ts"],
-  "exclude": ["node_modules", "dist"]
+    "noEmit": true
+  }
 }

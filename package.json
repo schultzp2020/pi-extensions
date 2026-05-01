@@ -1,68 +1,29 @@
 {
-  "name": "pi-cursor",
-  "version": "0.1.0",
-  "description": "Pi extension for Cursor subscription models via local OpenAI-compatible proxy",
-  "keywords": [
-    "cursor",
-    "extension",
-    "openai",
-    "pi",
-    "proxy"
+  "private": true,
+  "workspaces": [
+    "packages/*"
   ],
-  "license": "MIT",
-  "author": "Paul Schultz",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/pschuegr/pi-cursor.git"
-  },
-  "files": [
-    "dist/",
-    "proto/",
-    "README.md",
-    "LICENSE"
-  ],
-  "type": "module",
   "scripts": {
-    "generate": "npx @bufbuild/buf generate",
-    "test": "vitest run",
-    "test:watch": "vitest",
-    "format": "oxfmt .",
-    "format:check": "oxfmt --check .",
+    "build": "npm run build --workspaces",
+    "test": "npm run test --workspaces",
     "lint": "oxlint --type-aware --type-check --deny-warnings .",
     "lint:fix": "oxlint --type-aware --type-check --fix .",
-    "prepare": "husky",
-    "build": "rolldown --config rolldown.config.ts",
-    "prepublishOnly": "npm run build"
-  },
-  "dependencies": {
-    "@bufbuild/protobuf": "^2.0.0"
+    "format": "oxfmt .",
+    "format:check": "oxfmt --check .",
+    "prepare": "husky"
   },
   "devDependencies": {
-    "@bufbuild/buf": "^1.50.0",
-    "@bufbuild/protoc-gen-es": "^2.10.0",
-    "@mariozechner/pi-ai": "^0.71.1",
-    "@mariozechner/pi-coding-agent": "^0.71.1",
-    "@types/node": "^22.0.0",
     "husky": "^9.1.7",
     "lint-staged": "^16.4.0",
     "oxfmt": "^0.47.0",
     "oxlint": "^1.62.0",
-    "oxlint-tsgolint": "^0.22.1",
-    "rolldown": "^1.0.0-rc.18",
-    "typescript": "^5.9.0",
-    "vitest": "^4.1.5"
+    "oxlint-tsgolint": "^0.22.1"
   },
   "lint-staged": {
     "*.ts": [
       "oxfmt",
-      "oxlint --type-aware --type-check --deny-warnings --fix",
-      "vitest related --run"
+      "oxlint --type-aware --type-check --deny-warnings --fix"
     ],
     "*.{json,md}": "oxfmt"
-  },
-  "pi": {
-    "extensions": [
-      "./dist/index.js"
-    ]
   }
 }
