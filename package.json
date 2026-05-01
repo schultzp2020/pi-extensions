@@ -12,7 +12,6 @@
     "format:check": "oxfmt --check .",
     "lint": "oxlint --type-aware --type-check --deny-warnings .",
     "lint:fix": "oxlint --type-aware --type-check --fix .",
-    "deadcode": "fallow",
     "prepare": "husky"
   },
   "dependencies": {
@@ -24,7 +23,6 @@
     "@mariozechner/pi-ai": "^0.71.1",
     "@mariozechner/pi-coding-agent": "^0.71.1",
     "@types/node": "^22.0.0",
-    "fallow": "^2.61.0",
     "husky": "^9.1.7",
     "lint-staged": "^16.4.0",
     "oxfmt": "^0.47.0",
