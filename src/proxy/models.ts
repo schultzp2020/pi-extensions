@@ -238,11 +238,13 @@ async function fetchAvailableModels(accessToken: string): Promise<CursorModel[] 
       includeHiddenModels: true,
     })
 
+    console.error('[models] Calling AvailableModels RPC...')
     const responseBytes = await callCursorUnaryRpc({
       accessToken,
       rpcPath: AVAILABLE_MODELS_PATH,
       requestBody: toBinary(AvailableModelsRequestSchema, req),
     })
+    console.error(`[models] AvailableModels returned ${String(responseBytes.length)} bytes`)
 
     if (responseBytes.length === 0) {
       return null
@@ -256,7 +258,8 @@ async function fetchAvailableModels(accessToken: string): Promise<CursorModel[] 
     const models = decoded.models.map((m) => normalizeAvailableModel(m)).filter((m): m is CursorModel => m !== null)
 
     return models.length > 0 ? models.sort((a, b) => a.id.localeCompare(b.id)) : null
-  } catch {
+  } catch (error) {
+    console.error('[models] AvailableModels RPC failed:', error instanceof Error ? error.message : String(error))
     return null
   }
 }
@@ -297,12 +300,14 @@ function normalizeLegacyModels(models: readonly ModelDetails[]): CursorModel[] {
 
 async function fetchUsableModels(accessToken: string): Promise<CursorModel[] | null> {
   try {
+    console.error('[models] Calling GetUsableModels RPC...')
     const requestBody = toBinary(GetUsableModelsRequestSchema, create(GetUsableModelsRequestSchema, {}))
     const responseBytes = await callCursorUnaryRpc({
       accessToken,
       rpcPath: GET_USABLE_MODELS_PATH,
       requestBody,
     })
+    console.error(`[models] GetUsableModels returned ${String(responseBytes.length)} bytes`)
 
     if (responseBytes.length === 0) {
       return null
@@ -315,7 +320,8 @@ async function fetchUsableModels(accessToken: string): Promise<CursorModel[] | n
 
     const models = normalizeLegacyModels(decoded.models)
     return models.length > 0 ? models : null
-  } catch {
+  } catch (error) {
+    console.error('[models] GetUsableModels RPC failed:', error instanceof Error ? error.message : String(error))
     return null
   }
 }
@@ -330,6 +336,7 @@ async function fetchUsableModels(accessToken: string): Promise<CursorModel[] | n
  * IDs + thinking details). Returns empty array if both fail.
  */
 export async function discoverCursorModels(accessToken: string): Promise<CursorModel[]> {
+  console.error('[models] Starting model discovery...')
   // Try primary path first — richer data
   const available = await fetchAvailableModels(accessToken)
   if (available && available.length > 0) {
