@@ -170,23 +170,44 @@ export default async function (pi: ExtensionAPI): Promise<void> {
     }
   }
 
-  // ── Startup: try connecting to existing proxy ──
+  // ── Startup: try connecting with existing credentials ──
 
+  function loadStoredToken(): string | null {
+    try {
+      const authPath = join(homedir(), '.pi', 'agent', 'auth.json')
+      if (!existsSync(authPath)) {
+        return null
+      }
+      const auth = JSON.parse(readFileSync(authPath, 'utf8')) as Record<string, { access?: string }>
+      return auth.cursor?.access ?? null
+    } catch {
+      return null
+    }
+  }
+
+  const storedToken = loadStoredToken()
   const existing = readPortFile()
+
   if (existing) {
     log('Found existing proxy, attempting reconnect...')
     try {
-      const result = await connectToProxy(sessionId, null)
+      const result = await connectToProxy(sessionId, storedToken)
       currentPort = result.port
       if (result.models.length > 0) {
         updateModels(result.models)
       }
       log(`Reconnected to existing proxy on port ${String(result.port)}`)
     } catch {
-      log('No existing proxy available, waiting for /login')
+      log('No existing proxy available')
     }
-  } else {
-    log('No existing proxy found, waiting for /login')
+  }
+
+  // If no proxy yet but we have a stored token, spawn one now
+  if (!currentPort && storedToken) {
+    log('No proxy running but found stored credentials, spawning proxy...')
+    await connectAndRefresh(storedToken)
+  } else if (!currentPort) {
+    log('No proxy and no credentials, waiting for /login')
   }
 
   // ── Register provider ──
