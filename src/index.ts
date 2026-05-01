@@ -1,6 +1,18 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+
+const LOG_PATH = join(homedir(), '.pi', 'agent', 'cursor-proxy.log')
+
+function log(msg: string): void {
+  const line = `${new Date().toISOString()} [ext] ${msg}\n`
+  try {
+    mkdirSync(join(homedir(), '.pi', 'agent'), { recursive: true })
+    appendFileSync(LOG_PATH, line)
+  } catch {
+    // best effort
+  }
+}
 
 /**
  * Pi extension entry point for Cursor subscription models.
@@ -78,11 +90,11 @@ async function pushTokenToProxy(port: number, accessToken: string): Promise<void
 // ── Extension factory ──
 
 export default async function (pi: ExtensionAPI): Promise<void> {
-  console.error('[pi-cursor] Extension loading...')
+  log('Extension loading...')
   const sessionId = crypto.randomUUID()
   let currentPort: number | null = null
   let models: CursorModel[] = loadModelCache()
-  console.error(`[pi-cursor] Loaded ${String(models.length)} cached models`)
+  log(`Loaded ${String(models.length)} cached models`)
 
   // ── OAuth login ──
 
@@ -125,7 +137,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
         refreshToken: onRefreshToken,
         getApiKey: (cred) => cred.access,
         modifyModels(registeredModels, credentials) {
-          console.error('[pi-cursor] modifyModels called, launching proxy...')
+          log('modifyModels called, launching proxy...')
           void connectAndRefresh(credentials.access)
           return registeredModels
         },
@@ -144,17 +156,17 @@ export default async function (pi: ExtensionAPI): Promise<void> {
 
   async function connectAndRefresh(accessToken: string): Promise<void> {
     try {
-      console.error('[pi-cursor] connectAndRefresh: connecting to proxy...')
+      log('connectAndRefresh: connecting to proxy...')
       const result = await connectToProxy(sessionId, accessToken)
       currentPort = result.port
-      console.error(`[pi-cursor] Proxy on port ${String(result.port)}, got ${String(result.models.length)} models`)
+      log(`Proxy on port ${String(result.port)}, got ${String(result.models.length)} models`)
       if (result.models.length > 0) {
         updateModels(result.models)
         pi.registerProvider(PROVIDER_ID, buildProviderConfig())
-        console.error(`[pi-cursor] Provider re-registered with ${String(result.models.length)} models`)
+        log(`Provider re-registered with ${String(result.models.length)} models`)
       }
     } catch (error) {
-      console.error(`[pi-cursor] Failed to connect to proxy: ${String(error)}`)
+      log(`Failed to connect to proxy: ${String(error)}`)
     }
   }
 
@@ -162,26 +174,26 @@ export default async function (pi: ExtensionAPI): Promise<void> {
 
   const existing = readPortFile()
   if (existing) {
-    console.error('[pi-cursor] Found existing proxy, attempting reconnect...')
+    log('Found existing proxy, attempting reconnect...')
     try {
       const result = await connectToProxy(sessionId, null)
       currentPort = result.port
       if (result.models.length > 0) {
         updateModels(result.models)
       }
-      console.error(`[pi-cursor] Reconnected to existing proxy on port ${String(result.port)}`)
+      log(`Reconnected to existing proxy on port ${String(result.port)}`)
     } catch {
-      console.error('[pi-cursor] No existing proxy available, waiting for /login')
+      log('No existing proxy available, waiting for /login')
     }
   } else {
-    console.error('[pi-cursor] No existing proxy found, waiting for /login')
+    log('No existing proxy found, waiting for /login')
   }
 
   // ── Register provider ──
 
   pi.registerProvider(PROVIDER_ID, buildProviderConfig())
-  console.error(`[pi-cursor] Provider registered (${String(models.length)} models, port=${String(currentPort)})`)
-  console.error('[pi-cursor] Extension loaded. Run /login cursor to authenticate.')
+  log(`Provider registered (${String(models.length)} models, port=${String(currentPort)})`)
+  log('Extension loaded. Run /login cursor to authenticate.')
 
   // ── Lifecycle: stop heartbeat on shutdown ──
 
