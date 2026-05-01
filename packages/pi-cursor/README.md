@@ -21,7 +21,7 @@ A [Pi](https://github.com/badlogic/pi) extension that gives you access to all yo
 From npm:
 
 ```bash
-pi install pi-cursor
+pi install @schultzp2020/pi-cursor
 ```
 
 Or from source:
