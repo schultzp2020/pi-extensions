@@ -13,8 +13,7 @@
     "lint": "oxlint --type-aware --type-check --deny-warnings .",
     "lint:fix": "oxlint --type-aware --type-check --fix .",
     "prepare": "husky",
-    "build": "rolldown --config rolldown.config.ts",
-    "build:watch": "rolldown --config rolldown.config.ts --watch"
+    "build": "rolldown --config rolldown.config.ts"
   },
   "dependencies": {
     "@bufbuild/protobuf": "^2.0.0"
