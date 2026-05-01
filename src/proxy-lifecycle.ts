@@ -157,6 +157,7 @@ async function spawnProxy(sessionId: string, accessToken: string): Promise<{ por
   const child = spawn('node', ['--experimental-transform-types', PROXY_ENTRY], {
     stdio: ['pipe', 'pipe', 'pipe'],
     detached: false,
+    windowsHide: true,
   })
 
   // Send config on stdin
