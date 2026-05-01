@@ -84,11 +84,7 @@ The extension spawns a standalone proxy process that translates between OpenAI's
 
 ### Key design decisions
 
-See [`docs/adr/`](docs/adr/) for Architecture Decision Records:
-
-- **ADR 0001** — Standalone proxy + extension (not built into Pi core)
-- **ADR 0002** — Proxy handles transient retries; extension handles OAuth refresh
-- **ADR 0003** — Shared proxy with HTTP internal API (not stdin)
+See [`docs/adr/`](docs/adr/) for Architecture Decision Records.
 
 ## Development
 
