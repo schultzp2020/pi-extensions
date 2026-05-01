@@ -9,7 +9,7 @@
  * the proxy self-exits after 30s without any heartbeat.
  */
 import { spawn } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
+import { createWriteStream, existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { createInterface } from 'node:readline'
@@ -212,9 +212,11 @@ async function spawnProxy(sessionId: string, accessToken: string): Promise<{ por
   // Start heartbeat
   startHeartbeat(ready.port, childPid, sessionId)
 
-  // Log proxy stderr (non-blocking)
+  // Log proxy stderr to file
+  const logPath = join(homedir(), '.pi', 'agent', 'cursor-proxy.log')
+  const logStream = createWriteStream(logPath, { flags: 'a' })
   stderr.on('data', (chunk: Buffer) => {
-    console.error(`[cursor-proxy] ${chunk.toString().trimEnd()}`)
+    logStream.write(`${new Date().toISOString()} ${chunk.toString()}`)
   })
 
   // Don't let the child keep the parent alive
