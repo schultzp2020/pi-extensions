@@ -13,7 +13,8 @@
   "author": "Paul Schultz",
   "repository": {
     "type": "git",
-    "url": "https://github.com/pschuegr/pi-cursor.git"
+    "url": "https://github.com/schultzp2020/pi-extensions.git",
+    "directory": "packages/pi-cursor"
   },
   "files": [
     "dist/",

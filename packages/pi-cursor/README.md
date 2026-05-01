@@ -27,8 +27,8 @@ pi install pi-cursor
 Or from source:
 
 ```bash
-git clone https://github.com/pschuegr/pi-cursor.git
-cd pi-cursor
+git clone https://github.com/schultzp2020/pi-extensions.git
+cd pi-extensions
 npm install
 npm run build
 ```
