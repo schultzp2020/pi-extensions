@@ -108,6 +108,11 @@ export async function handleInternalRequest(req: IncomingMessage, res: ServerRes
     return
   }
 
+  if (path === '/internal/models' && req.method === 'GET') {
+    jsonResponse(res, 200, { models: cachedModels })
+    return
+  }
+
   if (path === '/internal/refresh-models' && req.method === 'POST') {
     if (!currentAccessToken) {
       jsonResponse(res, 400, { error: 'no access token' })
