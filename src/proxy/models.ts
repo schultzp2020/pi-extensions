@@ -203,34 +203,49 @@ function decodeConnectResponse<T>(schema: Parameters<typeof fromBinary>[0], payl
 
 // ── Primary: AvailableModels RPC ──
 
-function normalizeAvailableModel(m: AvailableModelsResponse_AvailableModel): CursorModel | null {
+function normalizeAvailableModel(m: AvailableModelsResponse_AvailableModel): CursorModel[] {
   const id = m.name.trim()
   if (!id) {
-    return null
+    return []
   }
 
   // Filter out models that are hidden, chat-only, or cmd-k only
-  if (m.isHidden) {
-    return null
-  }
-  if (m.isChatOnly) {
-    return null
-  }
-  if (m.onlySupportsCmdK) {
-    return null
+  if (m.isHidden || m.isChatOnly || m.onlySupportsCmdK) {
+    return []
   }
 
   const context = m.contextTokenLimit ?? fallbackContext(id)
+  const name = resolveCursorModelName(id, m.clientDisplayName)
 
-  return {
+  const base: CursorModel = {
     id,
-    name: resolveCursorModelName(id, m.clientDisplayName),
+    name,
     reasoning: m.supportsThinking === true,
     contextWindow: context,
     maxTokens: DEFAULT_MAX_TOKENS,
     supportsImages: m.supportsImages === true,
-    supportsMaxMode: m.supportsMaxMode === true,
+    supportsMaxMode: false,
   }
+
+  // If the model already ends with -max, it's a max variant — register as-is
+  if (id.endsWith('-max')) {
+    return [{ ...base, supportsMaxMode: true }]
+  }
+
+  // If the model supports max mode, register both base and -max variant
+  if (m.supportsMaxMode) {
+    const maxContext = m.contextTokenLimitForMaxMode ?? context
+    const maxVariant: CursorModel = {
+      ...base,
+      id: `${id}-max`,
+      name: `${name} (Max)`,
+      contextWindow: maxContext,
+      supportsMaxMode: true,
+    }
+    return [base, maxVariant]
+  }
+
+  return [base]
 }
 
 async function fetchAvailableModels(accessToken: string): Promise<CursorModel[] | null> {
@@ -257,7 +272,7 @@ async function fetchAvailableModels(accessToken: string): Promise<CursorModel[] 
       return null
     }
 
-    const models = decoded.models.map((m) => normalizeAvailableModel(m)).filter((m): m is CursorModel => m !== null)
+    const models = decoded.models.flatMap((m) => normalizeAvailableModel(m))
 
     return models.length > 0 ? models.sort((a, b) => a.id.localeCompare(b.id)) : null
   } catch (error) {
