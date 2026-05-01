@@ -1,8 +1,26 @@
 {
   "name": "pi-cursor",
   "version": "0.1.0",
-  "private": true,
   "description": "Pi extension for Cursor subscription models via local OpenAI-compatible proxy",
+  "keywords": [
+    "cursor",
+    "extension",
+    "openai",
+    "pi",
+    "proxy"
+  ],
+  "license": "MIT",
+  "author": "Paul Schultz",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/pschuegr/pi-cursor.git"
+  },
+  "files": [
+    "dist/",
+    "proto/",
+    "README.md",
+    "LICENSE"
+  ],
   "type": "module",
   "scripts": {
     "generate": "npx @bufbuild/buf generate",
@@ -13,7 +31,8 @@
     "lint": "oxlint --type-aware --type-check --deny-warnings .",
     "lint:fix": "oxlint --type-aware --type-check --fix .",
     "prepare": "husky",
-    "build": "rolldown --config rolldown.config.ts"
+    "build": "rolldown --config rolldown.config.ts",
+    "prepublishOnly": "npm run build"
   },
   "dependencies": {
     "@bufbuild/protobuf": "^2.0.0"
