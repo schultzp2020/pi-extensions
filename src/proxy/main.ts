@@ -34,7 +34,12 @@ import {
   UserMessageActionSchema,
   UserMessageSchema,
 } from '../proto/agent_pb.ts'
-import { persistConversation, resolveConversationState, type ConversationConfig } from './conversation-state.ts'
+import {
+  getConversationState,
+  persistConversation,
+  resolveConversationState,
+  type ConversationConfig,
+} from './conversation-state.ts'
 import { CursorSession, type SessionOptions } from './cursor-session.ts'
 import {
   configureInternalApi,
@@ -307,7 +312,7 @@ async function handleChatCompletion(
         const readableStream = new ReadableStream({
           start(controller) {
             const ctx = createSSECtx(controller, modelId, completionId, created)
-            void pumpAndFinalize(existingSession, ctx, sessionKey, convKey, convConfig, mcpTools, systemPrompt)
+            void pumpAndFinalize(existingSession, ctx, sessionKey, convKey, convConfig)
           },
         })
         res.writeHead(200, SSE_HEADERS)
@@ -364,7 +369,7 @@ async function handleChatCompletion(
     const readableStream = new ReadableStream({
       start(controller) {
         const ctx = createSSECtx(controller, modelId, completionId, created)
-        void pumpAndFinalize(session, ctx, sessionKey, convKey, convConfig, mcpTools, systemPrompt)
+        void pumpAndFinalize(session, ctx, sessionKey, convKey, convConfig)
       },
     })
     res.writeHead(200, SSE_HEADERS)
@@ -386,10 +391,8 @@ async function pumpAndFinalize(
   session: CursorSession,
   ctx: ReturnType<typeof createSSECtx>,
   sessionKey: string,
-  _convKey: string,
-  _convConfig: ConversationConfig,
-  _mcpTools: McpToolDefinition[],
-  _cloudRule?: string,
+  convKey: string,
+  convConfig: ConversationConfig,
 ): Promise<void> {
   try {
     const result: PumpResult = await pumpSession(session, ctx)
@@ -398,7 +401,11 @@ async function pumpAndFinalize(
       // Keep session alive for tool-result continuation
       setActiveSession(sessionKey, session)
     } else {
-      // Done or retry — clean up
+      // Done or retry — persist conversation state and clean up
+      const stored = getConversationState(convKey)
+      if (stored) {
+        persistConversation(convKey, stored, convConfig)
+      }
       removeActiveSession(sessionKey)
       session.close()
     }
