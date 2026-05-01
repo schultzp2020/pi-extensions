@@ -1,15 +1,6 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": [
-    "eslint",
-    "typescript",
-    "unicorn",
-    "oxc",
-    "import",
-    "node",
-    "promise",
-    "vitest"
-  ],
+  "plugins": ["eslint", "typescript", "unicorn", "oxc", "import", "node", "promise", "vitest"],
   "rules": {
     "eslint/eqeqeq": "warn",
     "eslint/no-self-compare": "warn",
@@ -108,9 +99,5 @@
     "vitest/prefer-to-be-truthy": "warn",
     "vitest/prefer-to-be-falsy": "warn"
   },
-  "ignorePatterns": [
-    "**/node_modules",
-    "**/dist",
-    "**/src/proto/**"
-  ]
+  "ignorePatterns": ["**/node_modules", "**/dist", "**/src/proto/**"]
 }

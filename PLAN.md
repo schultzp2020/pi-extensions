@@ -9,6 +9,7 @@
 **Tech Stack:** TypeScript, Node.js (`node:http2`, `node:crypto`, `node:fs`), `@bufbuild/protobuf` (protobuf serialization), Pi extension API (`@mariozechner/pi-coding-agent`), `@bufbuild/buf` (proto generation, dev only), Vitest (testing), oxlint + oxfmt (linting/formatting), husky + lint-staged (pre-commit)
 
 **Reference implementations:**
+
 - `ephraimduncan/opencode-cursor` (MIT) — original OpenCode plugin
 - `Hardcode84/opencode-cursor` branch `cursor-persists` — improved fork with `.proto` source, batch state machine, native tool redirection, disk persistence, tests
 - See `CONTEXT.md` and `docs/adr/` for all design decisions
@@ -97,6 +98,7 @@ pi-cursor/
 **Phase: 1 (sequential — must complete before all other tasks)**
 
 **Files:**
+
 - Create: `package.json`
 - Create: `tsconfig.json`
 - Create: `.oxlintrc.json`
@@ -130,11 +132,7 @@ pi-cursor/
     "prepare": "husky"
   },
   "lint-staged": {
-    "*.ts": [
-      "oxfmt",
-      "oxlint --type-aware --type-check --deny-warnings --fix",
-      "vitest related --run"
-    ],
+    "*.ts": ["oxfmt", "oxlint --type-aware --type-check --deny-warnings --fix", "vitest related --run"],
     "*.{json,md}": "oxfmt"
   },
   "dependencies": {
@@ -184,16 +182,7 @@ Note: `@mariozechner/pi-coding-agent` is pinned to `^0.71.1` (current release). 
 ```json
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": [
-    "eslint",
-    "typescript",
-    "unicorn",
-    "oxc",
-    "import",
-    "node",
-    "promise",
-    "vitest"
-  ],
+  "plugins": ["eslint", "typescript", "unicorn", "oxc", "import", "node", "promise", "vitest"],
   "rules": {
     "eslint/eqeqeq": "warn",
     "eslint/no-self-compare": "warn",
@@ -292,11 +281,7 @@ Note: `@mariozechner/pi-coding-agent` is pinned to `^0.71.1` (current release). 
     "vitest/prefer-to-be-truthy": "warn",
     "vitest/prefer-to-be-falsy": "warn"
   },
-  "ignorePatterns": [
-    "**/node_modules",
-    "**/dist",
-    "**/src/proto/**"
-  ]
+  "ignorePatterns": ["**/node_modules", "**/dist", "**/src/proto/**"]
 }
 ```
 
@@ -312,11 +297,7 @@ The `src/proto/**` directory is ignored because vendored/generated proto types d
   "semi": false,
   "trailingComma": "all",
   "endOfLine": "lf",
-  "ignorePatterns": [
-    "dist/",
-    "node_modules/",
-    "src/proto/"
-  ],
+  "ignorePatterns": ["dist/", "node_modules/", "src/proto/"],
   "sortImports": {
     "groups": ["builtin", "external", "internal", ["parent", "sibling", "index"], "unknown"],
     "newlinesBetween": true
@@ -330,13 +311,13 @@ See https://oxc.rs/docs/guide/usage/linter/type-aware.html for type-aware config
 - [ ] **Step 5: Create vitest.config.ts**
 
 ```typescript
-import { defineConfig } from "vitest/config";
+import { defineConfig } from 'vitest/config'
 
 export default defineConfig({
   test: {
-    include: ["src/**/*.test.ts"],
+    include: ['src/**/*.test.ts'],
   },
-});
+})
 ```
 
 - [ ] **Step 6: Run npm install**
@@ -405,19 +386,19 @@ Create a temporary test file:
 
 ```typescript
 // src/proto/proto-smoke.test.ts
-import { describe, it, expect } from "vitest";
-import { AvailableModelsRequestSchema } from "./aiserver_pb.ts";
-import { AgentRunRequestSchema } from "./agent_pb.ts";
+import { describe, it, expect } from 'vitest'
+import { AvailableModelsRequestSchema } from './aiserver_pb.ts'
+import { AgentRunRequestSchema } from './agent_pb.ts'
 
-describe("proto smoke test", () => {
-  it("imports aiserver proto types", () => {
-    expect(AvailableModelsRequestSchema).toBeDefined();
-  });
+describe('proto smoke test', () => {
+  it('imports aiserver proto types', () => {
+    expect(AvailableModelsRequestSchema).toBeDefined()
+  })
 
-  it("imports agent proto types", () => {
-    expect(AgentRunRequestSchema).toBeDefined();
-  });
-});
+  it('imports agent proto types', () => {
+    expect(AgentRunRequestSchema).toBeDefined()
+  })
+})
 ```
 
 Run: `npm test`
@@ -437,6 +418,7 @@ git commit -m "feat: project scaffolding with oxlint, oxfmt, husky, vitest, and 
 **Phase: 2 (parallel with Tasks 3–9)**
 
 **Files:**
+
 - Create: `src/proxy/connect-protocol.ts`
 - Create: `src/proxy/connect-protocol.test.ts`
 
@@ -444,115 +426,113 @@ git commit -m "feat: project scaffolding with oxlint, oxfmt, husky, vitest, and 
 
 ```typescript
 // src/proxy/connect-protocol.test.ts
-import { describe, it, expect } from "vitest";
+import { describe, it, expect } from 'vitest'
 import {
   frameConnectMessage,
   createConnectFrameParser,
   parseConnectEndStream,
   decodeConnectUnaryBody,
   CONNECT_END_STREAM_FLAG,
-} from "./connect-protocol.ts";
+} from './connect-protocol.ts'
 
-describe("frameConnectMessage", () => {
-  it("creates a 5-byte header + payload", () => {
-    const data = new TextEncoder().encode("hello");
-    const frame = frameConnectMessage(data);
-    expect(frame[0]).toBe(0); // flags = 0
-    expect(frame.readUInt32BE(1)).toBe(5); // length
-    expect(frame.subarray(5)).toEqual(Buffer.from(data));
-  });
+describe('frameConnectMessage', () => {
+  it('creates a 5-byte header + payload', () => {
+    const data = new TextEncoder().encode('hello')
+    const frame = frameConnectMessage(data)
+    expect(frame[0]).toBe(0) // flags = 0
+    expect(frame.readUInt32BE(1)).toBe(5) // length
+    expect(frame.subarray(5)).toEqual(Buffer.from(data))
+  })
 
-  it("sets flags when provided", () => {
-    const data = new Uint8Array([1, 2, 3]);
-    const frame = frameConnectMessage(data, CONNECT_END_STREAM_FLAG);
-    expect(frame[0]).toBe(CONNECT_END_STREAM_FLAG);
-  });
-});
+  it('sets flags when provided', () => {
+    const data = new Uint8Array([1, 2, 3])
+    const frame = frameConnectMessage(data, CONNECT_END_STREAM_FLAG)
+    expect(frame[0]).toBe(CONNECT_END_STREAM_FLAG)
+  })
+})
 
-describe("createConnectFrameParser", () => {
-  it("parses a single complete frame", () => {
-    const messages: Uint8Array[] = [];
+describe('createConnectFrameParser', () => {
+  it('parses a single complete frame', () => {
+    const messages: Uint8Array[] = []
     const parser = createConnectFrameParser(
       (bytes) => messages.push(bytes),
       () => {},
-    );
-    const data = new TextEncoder().encode("test");
-    const frame = frameConnectMessage(data);
-    parser(Buffer.from(frame));
-    expect(messages).toHaveLength(1);
-    expect(Buffer.from(messages[0]!)).toEqual(Buffer.from(data));
-  });
+    )
+    const data = new TextEncoder().encode('test')
+    const frame = frameConnectMessage(data)
+    parser(Buffer.from(frame))
+    expect(messages).toHaveLength(1)
+    expect(Buffer.from(messages[0]!)).toEqual(Buffer.from(data))
+  })
 
-  it("handles partial frames across multiple chunks", () => {
-    const messages: Uint8Array[] = [];
+  it('handles partial frames across multiple chunks', () => {
+    const messages: Uint8Array[] = []
     const parser = createConnectFrameParser(
       (bytes) => messages.push(bytes),
       () => {},
-    );
-    const data = new TextEncoder().encode("hello world");
-    const frame = frameConnectMessage(data);
-    const mid = Math.floor(frame.length / 2);
-    parser(Buffer.from(frame.subarray(0, mid)));
-    expect(messages).toHaveLength(0); // not yet complete
-    parser(Buffer.from(frame.subarray(mid)));
-    expect(messages).toHaveLength(1);
-  });
+    )
+    const data = new TextEncoder().encode('hello world')
+    const frame = frameConnectMessage(data)
+    const mid = Math.floor(frame.length / 2)
+    parser(Buffer.from(frame.subarray(0, mid)))
+    expect(messages).toHaveLength(0) // not yet complete
+    parser(Buffer.from(frame.subarray(mid)))
+    expect(messages).toHaveLength(1)
+  })
 
-  it("routes end-stream frames to onEndStream", () => {
-    const endStreams: Uint8Array[] = [];
+  it('routes end-stream frames to onEndStream', () => {
+    const endStreams: Uint8Array[] = []
     const parser = createConnectFrameParser(
       () => {},
       (bytes) => endStreams.push(bytes),
-    );
-    const data = new TextEncoder().encode('{"error":{"code":"internal"}}');
-    const frame = frameConnectMessage(data, CONNECT_END_STREAM_FLAG);
-    parser(Buffer.from(frame));
-    expect(endStreams).toHaveLength(1);
-  });
+    )
+    const data = new TextEncoder().encode('{"error":{"code":"internal"}}')
+    const frame = frameConnectMessage(data, CONNECT_END_STREAM_FLAG)
+    parser(Buffer.from(frame))
+    expect(endStreams).toHaveLength(1)
+  })
 
-  it("parses multiple frames in one chunk", () => {
-    const messages: Uint8Array[] = [];
+  it('parses multiple frames in one chunk', () => {
+    const messages: Uint8Array[] = []
     const parser = createConnectFrameParser(
       (bytes) => messages.push(bytes),
       () => {},
-    );
-    const frame1 = frameConnectMessage(new TextEncoder().encode("one"));
-    const frame2 = frameConnectMessage(new TextEncoder().encode("two"));
-    parser(Buffer.concat([Buffer.from(frame1), Buffer.from(frame2)]));
-    expect(messages).toHaveLength(2);
-  });
-});
+    )
+    const frame1 = frameConnectMessage(new TextEncoder().encode('one'))
+    const frame2 = frameConnectMessage(new TextEncoder().encode('two'))
+    parser(Buffer.concat([Buffer.from(frame1), Buffer.from(frame2)]))
+    expect(messages).toHaveLength(2)
+  })
+})
 
-describe("parseConnectEndStream", () => {
-  it("returns Error for error payloads", () => {
-    const data = new TextEncoder().encode(
-      JSON.stringify({ error: { code: "internal", message: "Blob not found" } }),
-    );
-    const err = parseConnectEndStream(data);
-    expect(err).toBeInstanceOf(Error);
-    expect(err!.message).toContain("internal");
-    expect(err!.message).toContain("Blob not found");
-  });
+describe('parseConnectEndStream', () => {
+  it('returns Error for error payloads', () => {
+    const data = new TextEncoder().encode(JSON.stringify({ error: { code: 'internal', message: 'Blob not found' } }))
+    const err = parseConnectEndStream(data)
+    expect(err).toBeInstanceOf(Error)
+    expect(err!.message).toContain('internal')
+    expect(err!.message).toContain('Blob not found')
+  })
 
-  it("returns null for clean end stream", () => {
-    const data = new TextEncoder().encode(JSON.stringify({}));
-    expect(parseConnectEndStream(data)).toBeNull();
-  });
-});
+  it('returns null for clean end stream', () => {
+    const data = new TextEncoder().encode(JSON.stringify({}))
+    expect(parseConnectEndStream(data)).toBeNull()
+  })
+})
 
-describe("decodeConnectUnaryBody", () => {
-  it("extracts payload from a single data frame", () => {
-    const payload = new TextEncoder().encode("protobuf-bytes");
-    const frame = frameConnectMessage(payload);
-    const result = decodeConnectUnaryBody(new Uint8Array(frame));
-    expect(result).not.toBeNull();
-    expect(Buffer.from(result!)).toEqual(Buffer.from(payload));
-  });
+describe('decodeConnectUnaryBody', () => {
+  it('extracts payload from a single data frame', () => {
+    const payload = new TextEncoder().encode('protobuf-bytes')
+    const frame = frameConnectMessage(payload)
+    const result = decodeConnectUnaryBody(new Uint8Array(frame))
+    expect(result).not.toBeNull()
+    expect(Buffer.from(result!)).toEqual(Buffer.from(payload))
+  })
 
-  it("returns null for too-short input", () => {
-    expect(decodeConnectUnaryBody(new Uint8Array([1, 2]))).toBeNull();
-  });
-});
+  it('returns null for too-short input', () => {
+    expect(decodeConnectUnaryBody(new Uint8Array([1, 2]))).toBeNull()
+  })
+})
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -564,79 +544,79 @@ Expected: FAIL — module not found
 
 ```typescript
 // src/proxy/connect-protocol.ts
-export const CONNECT_END_STREAM_FLAG = 0b00000010;
-const MAX_FRAME_SIZE = 32 * 1024 * 1024; // 32 MiB
+export const CONNECT_END_STREAM_FLAG = 0b00000010
+const MAX_FRAME_SIZE = 32 * 1024 * 1024 // 32 MiB
 
 export function frameConnectMessage(data: Uint8Array, flags = 0): Buffer {
-  const header = Buffer.alloc(5);
-  header[0] = flags;
-  header.writeUInt32BE(data.length, 1);
-  return Buffer.concat([header, Buffer.from(data)]);
+  const header = Buffer.alloc(5)
+  header[0] = flags
+  header.writeUInt32BE(data.length, 1)
+  return Buffer.concat([header, Buffer.from(data)])
 }
 
 export function createConnectFrameParser(
   onMessage: (bytes: Uint8Array) => void,
   onEndStream: (bytes: Uint8Array) => void,
 ): (incoming: Buffer) => void {
-  let pending = Buffer.alloc(0);
+  let pending = Buffer.alloc(0)
   return (incoming: Buffer) => {
-    pending = Buffer.concat([pending, incoming]);
+    pending = Buffer.concat([pending, incoming])
     while (pending.length >= 5) {
-      const flags = pending[0]!;
-      const msgLen = pending.readUInt32BE(1);
+      const flags = pending[0]!
+      const msgLen = pending.readUInt32BE(1)
       if (msgLen > MAX_FRAME_SIZE) {
-        pending = Buffer.alloc(0);
+        pending = Buffer.alloc(0)
         onEndStream(
           new TextEncoder().encode(
             JSON.stringify({
-              error: { code: "frame_too_large", message: `Frame size ${msgLen} exceeds limit` },
+              error: { code: 'frame_too_large', message: `Frame size ${msgLen} exceeds limit` },
             }),
           ),
-        );
-        return;
+        )
+        return
       }
-      if (pending.length < 5 + msgLen) break;
-      const messageBytes = pending.subarray(5, 5 + msgLen);
-      pending = pending.subarray(5 + msgLen);
+      if (pending.length < 5 + msgLen) break
+      const messageBytes = pending.subarray(5, 5 + msgLen)
+      pending = pending.subarray(5 + msgLen)
       if (flags & CONNECT_END_STREAM_FLAG) {
-        onEndStream(messageBytes);
+        onEndStream(messageBytes)
       } else {
-        onMessage(messageBytes);
+        onMessage(messageBytes)
       }
     }
-  };
+  }
 }
 
 export function decodeConnectUnaryBody(payload: Uint8Array): Uint8Array | null {
-  if (payload.length < 5) return null;
-  let offset = 0;
+  if (payload.length < 5) return null
+  let offset = 0
   while (offset + 5 <= payload.length) {
-    const flags = payload[offset]!;
-    const view = new DataView(payload.buffer, payload.byteOffset + offset, payload.byteLength - offset);
-    const messageLength = view.getUint32(1, false);
-    const frameEnd = offset + 5 + messageLength;
-    if (frameEnd > payload.length) return null;
-    if ((flags & 0b0000_0001) !== 0) return null; // compressed
+    const flags = payload[offset]!
+    const view = new DataView(payload.buffer, payload.byteOffset + offset, payload.byteLength - offset)
+    const messageLength = view.getUint32(1, false)
+    const frameEnd = offset + 5 + messageLength
+    if (frameEnd > payload.length) return null
+    if ((flags & 0b0000_0001) !== 0) return null // compressed
     if ((flags & CONNECT_END_STREAM_FLAG) === 0) {
-      return payload.subarray(offset + 5, frameEnd);
+      return payload.subarray(offset + 5, frameEnd)
     }
-    offset = frameEnd;
+    offset = frameEnd
   }
-  return null;
+  return null
 }
 
 export function parseConnectEndStream(data: Uint8Array): Error | null {
   try {
-    const payload = JSON.parse(new TextDecoder().decode(data));
-    const error = payload?.error;
+    const payload = JSON.parse(new TextDecoder().decode(data))
+    const error = payload?.error
     if (error) {
-      const code = error.code ?? "unknown";
-      const message = error.message ?? "Unknown error";
-      return new Error(`Connect error ${code}: ${message}`);
+      const code = error.code ?? 'unknown'
+      const message = error.message ?? 'Unknown error'
+      return new Error(`Connect error ${code}: ${message}`)
     }
-    return null;
+    return null
   } catch {
-    return new Error("Failed to parse Connect end stream");
+    return new Error('Failed to parse Connect end stream')
   }
 }
 ```
@@ -660,6 +640,7 @@ git commit -m "feat: Connect protocol framing (encode/decode/parse)"
 **Phase: 2 (parallel with Tasks 2, 4–9)**
 
 **Files:**
+
 - Create: `src/proxy/event-queue.ts`
 - Create: `src/proxy/event-queue.test.ts`
 
@@ -667,52 +648,56 @@ git commit -m "feat: Connect protocol framing (encode/decode/parse)"
 
 ```typescript
 // src/proxy/event-queue.test.ts
-import { describe, it, expect } from "vitest";
-import { EventQueue, MAX_QUEUE_DEPTH } from "./event-queue.ts";
+import { describe, it, expect } from 'vitest'
+import { EventQueue, MAX_QUEUE_DEPTH } from './event-queue.ts'
 
-describe("EventQueue", () => {
-  it("delivers buffered events via next()", async () => {
-    const q = new EventQueue<string>();
-    q.push("a");
-    q.push("b");
-    expect(await q.next()).toBe("a");
-    expect(await q.next()).toBe("b");
-  });
+describe('EventQueue', () => {
+  it('delivers buffered events via next()', async () => {
+    const q = new EventQueue<string>()
+    q.push('a')
+    q.push('b')
+    expect(await q.next()).toBe('a')
+    expect(await q.next()).toBe('b')
+  })
 
-  it("waits for events when buffer is empty", async () => {
-    const q = new EventQueue<string>();
-    const promise = q.next();
-    q.push("delayed");
-    expect(await promise).toBe("delayed");
-  });
+  it('waits for events when buffer is empty', async () => {
+    const q = new EventQueue<string>()
+    const promise = q.next()
+    q.push('delayed')
+    expect(await promise).toBe('delayed')
+  })
 
-  it("delivers directly to waiter without buffering", async () => {
-    const q = new EventQueue<number>();
-    const promise = q.next();
-    q.push(42);
-    expect(await promise).toBe(42);
-    expect(q.length).toBe(0);
-  });
+  it('delivers directly to waiter without buffering', async () => {
+    const q = new EventQueue<number>()
+    const promise = q.next()
+    q.push(42)
+    expect(await promise).toBe(42)
+    expect(q.length).toBe(0)
+  })
 
-  it("calls onOverflow when buffer exceeds MAX_QUEUE_DEPTH", () => {
-    let overflowed = false;
-    const q = new EventQueue<number>({ onOverflow: () => { overflowed = true; } });
+  it('calls onOverflow when buffer exceeds MAX_QUEUE_DEPTH', () => {
+    let overflowed = false
+    const q = new EventQueue<number>({
+      onOverflow: () => {
+        overflowed = true
+      },
+    })
     for (let i = 0; i < MAX_QUEUE_DEPTH; i++) {
-      q.push(i);
+      q.push(i)
     }
-    expect(overflowed).toBe(false);
-    const accepted = q.push(MAX_QUEUE_DEPTH);
-    expect(accepted).toBe(false);
-    expect(overflowed).toBe(true);
-  });
+    expect(overflowed).toBe(false)
+    const accepted = q.push(MAX_QUEUE_DEPTH)
+    expect(accepted).toBe(false)
+    expect(overflowed).toBe(true)
+  })
 
-  it("pushForce bypasses overflow limit", () => {
-    const q = new EventQueue<number>();
-    for (let i = 0; i < MAX_QUEUE_DEPTH; i++) q.push(i);
-    q.pushForce(-1);
-    expect(q.length).toBe(MAX_QUEUE_DEPTH + 1);
-  });
-});
+  it('pushForce bypasses overflow limit', () => {
+    const q = new EventQueue<number>()
+    for (let i = 0; i < MAX_QUEUE_DEPTH; i++) q.push(i)
+    q.pushForce(-1)
+    expect(q.length).toBe(MAX_QUEUE_DEPTH + 1)
+  })
+})
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -724,50 +709,50 @@ Expected: FAIL — module not found
 
 ```typescript
 // src/proxy/event-queue.ts
-export const MAX_QUEUE_DEPTH = 10_000;
+export const MAX_QUEUE_DEPTH = 10_000
 
 export class EventQueue<T> {
-  private buffer: T[] = [];
-  private waiters: Array<(value: T) => void> = [];
-  private overflowCb?: () => void;
+  private buffer: T[] = []
+  private waiters: Array<(value: T) => void> = []
+  private overflowCb?: () => void
 
   constructor(opts?: { onOverflow?: () => void }) {
-    this.overflowCb = opts?.onOverflow;
+    this.overflowCb = opts?.onOverflow
   }
 
   get length(): number {
-    return this.buffer.length;
+    return this.buffer.length
   }
 
   push(event: T): boolean {
-    const waiter = this.waiters.shift();
+    const waiter = this.waiters.shift()
     if (waiter) {
-      waiter(event);
-      return true;
+      waiter(event)
+      return true
     }
     if (this.buffer.length >= MAX_QUEUE_DEPTH) {
-      this.overflowCb?.();
-      return false;
+      this.overflowCb?.()
+      return false
     }
-    this.buffer.push(event);
-    return true;
+    this.buffer.push(event)
+    return true
   }
 
   pushForce(event: T): void {
-    const waiter = this.waiters.shift();
+    const waiter = this.waiters.shift()
     if (waiter) {
-      waiter(event);
+      waiter(event)
     } else {
-      this.buffer.push(event);
+      this.buffer.push(event)
     }
   }
 
   next(): Promise<T> {
-    const head = this.buffer.shift();
-    if (head !== undefined) return Promise.resolve(head);
+    const head = this.buffer.shift()
+    if (head !== undefined) return Promise.resolve(head)
     return new Promise((resolve) => {
-      this.waiters.push(resolve);
-    });
+      this.waiters.push(resolve)
+    })
   }
 }
 ```
@@ -791,6 +776,7 @@ git commit -m "feat: async event queue with overflow protection"
 **Phase: 2 (parallel with Tasks 2–3, 5–9)**
 
 **Files:**
+
 - Create: `src/proxy/thinking-filter.ts`
 - Create: `src/proxy/thinking-filter.test.ts`
 
@@ -798,53 +784,53 @@ git commit -m "feat: async event queue with overflow protection"
 
 ```typescript
 // src/proxy/thinking-filter.test.ts
-import { describe, it, expect } from "vitest";
-import { createThinkingTagFilter } from "./thinking-filter.ts";
+import { describe, it, expect } from 'vitest'
+import { createThinkingTagFilter } from './thinking-filter.ts'
 
-describe("createThinkingTagFilter", () => {
-  it("passes plain text through as content", () => {
-    const filter = createThinkingTagFilter();
-    const result = filter.process("hello world");
-    expect(result.content).toBe("hello world");
-    expect(result.reasoning).toBe("");
-  });
+describe('createThinkingTagFilter', () => {
+  it('passes plain text through as content', () => {
+    const filter = createThinkingTagFilter()
+    const result = filter.process('hello world')
+    expect(result.content).toBe('hello world')
+    expect(result.reasoning).toBe('')
+  })
 
-  it("routes <thinking> tagged content to reasoning", () => {
-    const filter = createThinkingTagFilter();
-    const r1 = filter.process("<thinking>let me think");
-    expect(r1.content).toBe("");
-    expect(r1.reasoning).toBe("let me think");
-    const r2 = filter.process("</thinking>answer");
-    expect(r2.content).toBe("answer");
-    expect(r2.reasoning).toBe("");
-  });
+  it('routes <thinking> tagged content to reasoning', () => {
+    const filter = createThinkingTagFilter()
+    const r1 = filter.process('<thinking>let me think')
+    expect(r1.content).toBe('')
+    expect(r1.reasoning).toBe('let me think')
+    const r2 = filter.process('</thinking>answer')
+    expect(r2.content).toBe('answer')
+    expect(r2.reasoning).toBe('')
+  })
 
-  it("handles all tag variants", () => {
-    for (const tag of ["think", "thinking", "reasoning", "thought", "think_intent"]) {
-      const filter = createThinkingTagFilter();
-      const r = filter.process(`<${tag}>inside</${tag}>outside`);
-      expect(r.reasoning).toBe("inside");
-      expect(r.content).toBe("outside");
+  it('handles all tag variants', () => {
+    for (const tag of ['think', 'thinking', 'reasoning', 'thought', 'think_intent']) {
+      const filter = createThinkingTagFilter()
+      const r = filter.process(`<${tag}>inside</${tag}>outside`)
+      expect(r.reasoning).toBe('inside')
+      expect(r.content).toBe('outside')
     }
-  });
+  })
 
-  it("buffers partial tags across chunks", () => {
-    const filter = createThinkingTagFilter();
-    const r1 = filter.process("before<thi");
-    expect(r1.content).toBe("before");
-    expect(r1.reasoning).toBe("");
-    const r2 = filter.process("nking>inside</thinking>after");
-    expect(r2.reasoning).toBe("inside");
-    expect(r2.content).toBe("after");
-  });
+  it('buffers partial tags across chunks', () => {
+    const filter = createThinkingTagFilter()
+    const r1 = filter.process('before<thi')
+    expect(r1.content).toBe('before')
+    expect(r1.reasoning).toBe('')
+    const r2 = filter.process('nking>inside</thinking>after')
+    expect(r2.reasoning).toBe('inside')
+    expect(r2.content).toBe('after')
+  })
 
-  it("flush() emits buffered content", () => {
-    const filter = createThinkingTagFilter();
-    filter.process("text<thi");
-    const flushed = filter.flush();
-    expect(flushed.content).toBe("<thi");
-  });
-});
+  it('flush() emits buffered content', () => {
+    const filter = createThinkingTagFilter()
+    filter.process('text<thi')
+    const flushed = filter.flush()
+    expect(flushed.content).toBe('<thi')
+  })
+})
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -856,59 +842,55 @@ Expected: FAIL — module not found
 
 ```typescript
 // src/proxy/thinking-filter.ts
-const THINKING_TAG_NAMES = ["think", "thinking", "reasoning", "thought", "think_intent"];
-const MAX_THINKING_TAG_LEN = 16;
+const THINKING_TAG_NAMES = ['think', 'thinking', 'reasoning', 'thought', 'think_intent']
+const MAX_THINKING_TAG_LEN = 16
 
 export function createThinkingTagFilter(): {
-  process(text: string): { content: string; reasoning: string };
-  flush(): { content: string; reasoning: string };
+  process(text: string): { content: string; reasoning: string }
+  flush(): { content: string; reasoning: string }
 } {
-  let buffer = "";
-  let inThinking = false;
+  let buffer = ''
+  let inThinking = false
 
   return {
     process(text: string) {
-      const input = buffer + text;
-      buffer = "";
-      let content = "";
-      let reasoning = "";
-      let lastIdx = 0;
+      const input = buffer + text
+      buffer = ''
+      let content = ''
+      let reasoning = ''
+      let lastIdx = 0
 
-      const re = new RegExp(`<(/?)(?:${THINKING_TAG_NAMES.join("|")})\\s*>`, "gi");
-      let match: RegExpExecArray | null;
+      const re = new RegExp(`<(/?)(?:${THINKING_TAG_NAMES.join('|')})\\s*>`, 'gi')
+      let match: RegExpExecArray | null
       while ((match = re.exec(input)) !== null) {
-        const before = input.slice(lastIdx, match.index);
-        if (inThinking) reasoning += before;
-        else content += before;
-        inThinking = match[1] !== "/";
-        lastIdx = re.lastIndex;
+        const before = input.slice(lastIdx, match.index)
+        if (inThinking) reasoning += before
+        else content += before
+        inThinking = match[1] !== '/'
+        lastIdx = re.lastIndex
       }
 
-      const rest = input.slice(lastIdx);
-      const ltPos = rest.lastIndexOf("<");
-      if (
-        ltPos >= 0 &&
-        rest.length - ltPos < MAX_THINKING_TAG_LEN &&
-        /^<\/?[a-z_]*$/i.test(rest.slice(ltPos))
-      ) {
-        buffer = rest.slice(ltPos);
-        const before = rest.slice(0, ltPos);
-        if (inThinking) reasoning += before;
-        else content += before;
+      const rest = input.slice(lastIdx)
+      const ltPos = rest.lastIndexOf('<')
+      if (ltPos >= 0 && rest.length - ltPos < MAX_THINKING_TAG_LEN && /^<\/?[a-z_]*$/i.test(rest.slice(ltPos))) {
+        buffer = rest.slice(ltPos)
+        const before = rest.slice(0, ltPos)
+        if (inThinking) reasoning += before
+        else content += before
       } else {
-        if (inThinking) reasoning += rest;
-        else content += rest;
+        if (inThinking) reasoning += rest
+        else content += rest
       }
 
-      return { content, reasoning };
+      return { content, reasoning }
     },
     flush() {
-      const b = buffer;
-      buffer = "";
-      if (!b) return { content: "", reasoning: "" };
-      return inThinking ? { content: "", reasoning: b } : { content: b, reasoning: "" };
+      const b = buffer
+      buffer = ''
+      if (!b) return { content: '', reasoning: '' }
+      return inThinking ? { content: '', reasoning: b } : { content: b, reasoning: '' }
     },
-  };
+  }
 }
 ```
 
@@ -931,6 +913,7 @@ git commit -m "feat: XML thinking tag filter for streamed text"
 **Phase: 2 (parallel with Tasks 2–4, 6–9)**
 
 **Files:**
+
 - Create: `src/proxy/openai-messages.ts`
 - Create: `src/proxy/openai-messages.test.ts`
 
@@ -938,90 +921,88 @@ git commit -m "feat: XML thinking tag filter for streamed text"
 
 ```typescript
 // src/proxy/openai-messages.test.ts
-import { describe, it, expect } from "vitest";
-import { parseMessages, textContent, selectToolsForChoice } from "./openai-messages.ts";
-import type { OpenAIMessage, OpenAIToolDef } from "./openai-messages.ts";
+import { describe, it, expect } from 'vitest'
+import { parseMessages, textContent, selectToolsForChoice } from './openai-messages.ts'
+import type { OpenAIMessage, OpenAIToolDef } from './openai-messages.ts'
 
-describe("textContent", () => {
-  it("handles string content", () => {
-    expect(textContent("hello")).toBe("hello");
-  });
+describe('textContent', () => {
+  it('handles string content', () => {
+    expect(textContent('hello')).toBe('hello')
+  })
 
-  it("handles null content", () => {
-    expect(textContent(null)).toBe("");
-  });
+  it('handles null content', () => {
+    expect(textContent(null)).toBe('')
+  })
 
-  it("handles content parts array", () => {
-    const parts = [
-      { type: "text", text: "hello" },
-      { type: "image" },
-      { type: "text", text: "world" },
-    ];
-    expect(textContent(parts)).toBe("hello\nworld");
-  });
-});
+  it('handles content parts array', () => {
+    const parts = [{ type: 'text', text: 'hello' }, { type: 'image' }, { type: 'text', text: 'world' }]
+    expect(textContent(parts)).toBe('hello\nworld')
+  })
+})
 
-describe("parseMessages", () => {
-  it("extracts system prompt", () => {
+describe('parseMessages', () => {
+  it('extracts system prompt', () => {
     const messages: OpenAIMessage[] = [
-      { role: "system", content: "You are helpful." },
-      { role: "user", content: "Hi" },
-    ];
-    const result = parseMessages(messages);
-    expect(result.systemPrompt).toBe("You are helpful.");
-    expect(result.userText).toBe("Hi");
-  });
+      { role: 'system', content: 'You are helpful.' },
+      { role: 'user', content: 'Hi' },
+    ]
+    const result = parseMessages(messages)
+    expect(result.systemPrompt).toBe('You are helpful.')
+    expect(result.userText).toBe('Hi')
+  })
 
-  it("extracts tool results", () => {
+  it('extracts tool results', () => {
     const messages: OpenAIMessage[] = [
-      { role: "user", content: "Do something" },
-      { role: "assistant", content: null, tool_calls: [
-        { id: "tc1", type: "function", function: { name: "read", arguments: '{"path":"f.ts"}' } }
-      ]},
-      { role: "tool", content: "file contents", tool_call_id: "tc1" },
-    ];
-    const result = parseMessages(messages);
-    expect(result.toolResults).toHaveLength(1);
-    expect(result.toolResults[0]!.toolCallId).toBe("tc1");
-    expect(result.toolResults[0]!.content).toBe("file contents");
-  });
+      { role: 'user', content: 'Do something' },
+      {
+        role: 'assistant',
+        content: null,
+        tool_calls: [{ id: 'tc1', type: 'function', function: { name: 'read', arguments: '{"path":"f.ts"}' } }],
+      },
+      { role: 'tool', content: 'file contents', tool_call_id: 'tc1' },
+    ]
+    const result = parseMessages(messages)
+    expect(result.toolResults).toHaveLength(1)
+    expect(result.toolResults[0]!.toolCallId).toBe('tc1')
+    expect(result.toolResults[0]!.content).toBe('file contents')
+  })
 
-  it("builds conversation turns from user/assistant pairs", () => {
+  it('builds conversation turns from user/assistant pairs', () => {
     const messages: OpenAIMessage[] = [
-      { role: "user", content: "First question" },
-      { role: "assistant", content: "First answer" },
-      { role: "user", content: "Second question" },
-    ];
-    const result = parseMessages(messages);
-    expect(result.turns).toHaveLength(1);
-    expect(result.turns[0]!.userText).toBe("First question");
-    expect(result.turns[0]!.assistantText).toBe("First answer");
-    expect(result.userText).toBe("Second question");
-  });
-});
+      { role: 'user', content: 'First question' },
+      { role: 'assistant', content: 'First answer' },
+      { role: 'user', content: 'Second question' },
+    ]
+    const result = parseMessages(messages)
+    expect(result.turns).toHaveLength(1)
+    expect(result.turns[0]!.userText).toBe('First question')
+    expect(result.turns[0]!.assistantText).toBe('First answer')
+    expect(result.userText).toBe('Second question')
+  })
+})
 
-describe("selectToolsForChoice", () => {
+describe('selectToolsForChoice', () => {
   const tools: OpenAIToolDef[] = [
-    { type: "function", function: { name: "read", description: "Read a file" } },
-    { type: "function", function: { name: "write", description: "Write a file" } },
-  ];
+    { type: 'function', function: { name: 'read', description: 'Read a file' } },
+    { type: 'function', function: { name: 'write', description: 'Write a file' } },
+  ]
 
-  it("returns all tools for auto/required/undefined", () => {
-    expect(selectToolsForChoice(tools, "auto")).toHaveLength(2);
-    expect(selectToolsForChoice(tools, "required")).toHaveLength(2);
-    expect(selectToolsForChoice(tools, undefined)).toHaveLength(2);
-  });
+  it('returns all tools for auto/required/undefined', () => {
+    expect(selectToolsForChoice(tools, 'auto')).toHaveLength(2)
+    expect(selectToolsForChoice(tools, 'required')).toHaveLength(2)
+    expect(selectToolsForChoice(tools, undefined)).toHaveLength(2)
+  })
 
-  it("returns empty for none", () => {
-    expect(selectToolsForChoice(tools, "none")).toHaveLength(0);
-  });
+  it('returns empty for none', () => {
+    expect(selectToolsForChoice(tools, 'none')).toHaveLength(0)
+  })
 
-  it("filters to specific function", () => {
-    const result = selectToolsForChoice(tools, { type: "function", function: { name: "read" } });
-    expect(result).toHaveLength(1);
-    expect(result[0]!.function.name).toBe("read");
-  });
-});
+  it('filters to specific function', () => {
+    const result = selectToolsForChoice(tools, { type: 'function', function: { name: 'read' } })
+    expect(result).toHaveLength(1)
+    expect(result[0]!.function.name).toBe('read')
+  })
+})
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -1032,6 +1013,7 @@ Expected: FAIL — module not found
 - [ ] **Step 3: Implement openai-messages.ts**
 
 Port `openai-messages.ts` from the Hardcode84 fork. This is a pure, side-effect-free module (~168 lines) containing:
+
 - `OpenAIMessage`, `OpenAIToolDef`, `OpenAIToolCall`, `ContentPart`, `ToolResultInfo`, `ParsedMessages` type definitions
 - `textContent()` — normalize message content to plain string
 - `parseMessages()` — extract system prompt, turns, user text, and tool results from OpenAI message array
@@ -1056,6 +1038,7 @@ git commit -m "feat: OpenAI message parsing and tool choice filtering"
 **Phase: 2 (parallel with Tasks 2–5, 7–9)**
 
 **Files:**
+
 - Create: `src/proxy/conversation-state.ts`
 - Create: `src/proxy/conversation-state.test.ts`
 
@@ -1063,59 +1046,59 @@ git commit -m "feat: OpenAI message parsing and tool choice filtering"
 
 ```typescript
 // src/proxy/conversation-state.test.ts
-import { describe, it, beforeEach, afterEach, expect } from "vitest";
-import { mkdirSync, rmSync, existsSync } from "node:fs";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
+import { describe, it, beforeEach, afterEach, expect } from 'vitest'
+import { mkdirSync, rmSync, existsSync } from 'node:fs'
+import { join } from 'node:path'
+import { tmpdir } from 'node:os'
 import {
   getConversationState,
   persistConversation,
   resolveConversationState,
   invalidateConversationState,
   type StoredConversation,
-} from "./conversation-state.ts";
+} from './conversation-state.ts'
 
-const TEST_DIR = join(tmpdir(), `pi-cursor-test-${process.pid}`);
+const TEST_DIR = join(tmpdir(), `pi-cursor-test-${process.pid}`)
 
 beforeEach(() => {
-  mkdirSync(TEST_DIR, { recursive: true });
-});
+  mkdirSync(TEST_DIR, { recursive: true })
+})
 
 afterEach(() => {
-  rmSync(TEST_DIR, { recursive: true, force: true });
-  invalidateConversationState("test-key");
-});
+  rmSync(TEST_DIR, { recursive: true, force: true })
+  invalidateConversationState('test-key')
+})
 
-describe("conversation-state", () => {
-  it("creates a fresh conversation when none exists", () => {
-    const stored = resolveConversationState("test-key", { conversationDiskDir: TEST_DIR });
-    expect(stored.conversationId).toBeTruthy();
-    expect(stored.checkpoint).toBeNull();
-    expect(stored.blobStore.size).toBe(0);
-  });
+describe('conversation-state', () => {
+  it('creates a fresh conversation when none exists', () => {
+    const stored = resolveConversationState('test-key', { conversationDiskDir: TEST_DIR })
+    expect(stored.conversationId).toBeTruthy()
+    expect(stored.checkpoint).toBeNull()
+    expect(stored.blobStore.size).toBe(0)
+  })
 
-  it("persists and restores from disk", () => {
-    const stored = resolveConversationState("test-key", { conversationDiskDir: TEST_DIR });
-    stored.checkpoint = new Uint8Array([1, 2, 3]);
-    stored.blobStore.set("abc", new Uint8Array([4, 5, 6]));
-    persistConversation("test-key", stored, { conversationDiskDir: TEST_DIR });
+  it('persists and restores from disk', () => {
+    const stored = resolveConversationState('test-key', { conversationDiskDir: TEST_DIR })
+    stored.checkpoint = new Uint8Array([1, 2, 3])
+    stored.blobStore.set('abc', new Uint8Array([4, 5, 6]))
+    persistConversation('test-key', stored, { conversationDiskDir: TEST_DIR })
 
     // Clear in-memory cache
-    invalidateConversationState("test-key");
+    invalidateConversationState('test-key')
 
     // Should restore from disk
-    const restored = resolveConversationState("test-key", { conversationDiskDir: TEST_DIR });
-    expect(Buffer.from(restored.checkpoint!)).toEqual(Buffer.from([1, 2, 3]));
-    expect(Buffer.from(restored.blobStore.get("abc")!)).toEqual(Buffer.from([4, 5, 6]));
-    expect(restored.conversationId).toBe(stored.conversationId);
-  });
+    const restored = resolveConversationState('test-key', { conversationDiskDir: TEST_DIR })
+    expect(Buffer.from(restored.checkpoint!)).toEqual(Buffer.from([1, 2, 3]))
+    expect(Buffer.from(restored.blobStore.get('abc')!)).toEqual(Buffer.from([4, 5, 6]))
+    expect(restored.conversationId).toBe(stored.conversationId)
+  })
 
-  it("returns same instance from in-memory cache", () => {
-    const a = resolveConversationState("test-key", { conversationDiskDir: TEST_DIR });
-    const b = resolveConversationState("test-key", { conversationDiskDir: TEST_DIR });
-    expect(a).toBe(b); // same reference
-  });
-});
+  it('returns same instance from in-memory cache', () => {
+    const a = resolveConversationState('test-key', { conversationDiskDir: TEST_DIR })
+    const b = resolveConversationState('test-key', { conversationDiskDir: TEST_DIR })
+    expect(a).toBe(b) // same reference
+  })
+})
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -1126,6 +1109,7 @@ Expected: FAIL — module not found
 - [ ] **Step 3: Implement conversation-state.ts**
 
 Port from the Hardcode84 fork (~246 lines). Key functions:
+
 - `resolveConversationState(convKey, config)` — returns cached or disk-loaded or fresh `StoredConversation`
 - `persistConversation(convKey, stored, config)` — atomic write to disk (temp file + rename)
 - `getConversationState(convKey)` — get from in-memory cache only
@@ -1133,14 +1117,15 @@ Port from the Hardcode84 fork (~246 lines). Key functions:
 - `evictStaleConversations()` — TTL-based cleanup
 
 The `StoredConversation` type:
+
 ```typescript
 export interface StoredConversation {
-  conversationId: string;
-  checkpoint: Uint8Array | null;
-  blobStore: Map<string, Uint8Array>;
-  lastAccessMs: number;
-  checkpointHistory: Map<string, Uint8Array>;
-  checkpointArchive: Map<string, Uint8Array>;
+  conversationId: string
+  checkpoint: Uint8Array | null
+  blobStore: Map<string, Uint8Array>
+  lastAccessMs: number
+  checkpointHistory: Map<string, Uint8Array>
+  checkpointArchive: Map<string, Uint8Array>
 }
 ```
 
@@ -1165,24 +1150,21 @@ git commit -m "feat: conversation state persistence to disk"
 **Phase: 2 (parallel with Tasks 2–6, 8–9)**
 
 **Files:**
+
 - Create: `src/proxy/request-context.ts`
 
 - [ ] **Step 1: Implement request-context.ts**
 
 ```typescript
 // src/proxy/request-context.ts
-import { create } from "@bufbuild/protobuf";
-import {
-  McpInstructionsSchema,
-  type McpToolDefinition,
-  RequestContextSchema,
-} from "../proto/agent_pb.ts";
+import { create } from '@bufbuild/protobuf'
+import { McpInstructionsSchema, type McpToolDefinition, RequestContextSchema } from '../proto/agent_pb.ts'
 
-const MCP_SERVER_NAME = "pi";
+const MCP_SERVER_NAME = 'pi'
 const MCP_INSTRUCTIONS =
-  "This environment provides tools prefixed with mcp_pi_ (e.g. mcp_pi_read, " +
-  "mcp_pi_grep, mcp_pi_bash). Always prefer these mcp_pi_* tools over any " +
-  "built-in native tools.";
+  'This environment provides tools prefixed with mcp_pi_ (e.g. mcp_pi_read, ' +
+  'mcp_pi_grep, mcp_pi_bash). Always prefer these mcp_pi_* tools over any ' +
+  'built-in native tools.'
 
 export function buildRequestContext(mcpTools: McpToolDefinition[], cloudRule?: string) {
   return create(RequestContextSchema, {
@@ -1200,7 +1182,7 @@ export function buildRequestContext(mcpTools: McpToolDefinition[], cloudRule?: s
     cloudRule: cloudRule || undefined,
     fileContents: {},
     customSubagents: [],
-  });
+  })
 }
 ```
 
@@ -1223,6 +1205,7 @@ git commit -m "feat: RequestContext builder with MCP tools and cloud rule"
 **Phase: 2 (parallel with Tasks 2–7, 9)**
 
 **Files:**
+
 - Create: `src/proxy/native-tools.ts`
 - Create: `src/proxy/native-tools.test.ts`
 
@@ -1230,71 +1213,66 @@ git commit -m "feat: RequestContext builder with MCP tools and cloud rule"
 
 ```typescript
 // src/proxy/native-tools.test.ts
-import { describe, it, expect } from "vitest";
-import {
-  classifyExecMessage,
-  MCP_TOOL_PREFIX,
-  stripMcpToolPrefix,
-  fixMcpArgNames,
-} from "./native-tools.ts";
+import { describe, it, expect } from 'vitest'
+import { classifyExecMessage, MCP_TOOL_PREFIX, stripMcpToolPrefix, fixMcpArgNames } from './native-tools.ts'
 
-describe("stripMcpToolPrefix", () => {
-  it("strips the prefix", () => {
-    expect(stripMcpToolPrefix(`${MCP_TOOL_PREFIX}read`)).toBe("read");
-  });
+describe('stripMcpToolPrefix', () => {
+  it('strips the prefix', () => {
+    expect(stripMcpToolPrefix(`${MCP_TOOL_PREFIX}read`)).toBe('read')
+  })
 
-  it("returns unchanged if no prefix", () => {
-    expect(stripMcpToolPrefix("read")).toBe("read");
-  });
-});
+  it('returns unchanged if no prefix', () => {
+    expect(stripMcpToolPrefix('read')).toBe('read')
+  })
+})
 
-describe("fixMcpArgNames", () => {
-  it("renames path to filePath for read", () => {
-    const args: Record<string, unknown> = { path: "foo.ts" };
-    fixMcpArgNames("read", args);
-    expect(args.filePath).toBe("foo.ts");
-    expect(args.path).toBeUndefined();
-  });
+describe('fixMcpArgNames', () => {
+  it('renames path to filePath for read', () => {
+    const args: Record<string, unknown> = { path: 'foo.ts' }
+    fixMcpArgNames('read', args)
+    expect(args.filePath).toBe('foo.ts')
+    expect(args.path).toBeUndefined()
+  })
 
-  it("does not overwrite existing filePath", () => {
-    const args: Record<string, unknown> = { filePath: "bar.ts", path: "foo.ts" };
-    fixMcpArgNames("read", args);
-    expect(args.filePath).toBe("bar.ts");
-  });
+  it('does not overwrite existing filePath', () => {
+    const args: Record<string, unknown> = { filePath: 'bar.ts', path: 'foo.ts' }
+    fixMcpArgNames('read', args)
+    expect(args.filePath).toBe('bar.ts')
+  })
 
-  it("renames path to filePath for write", () => {
-    const args: Record<string, unknown> = { path: "out.ts", content: "hello" };
-    fixMcpArgNames("write", args);
-    expect(args.filePath).toBe("out.ts");
-  });
-});
+  it('renames path to filePath for write', () => {
+    const args: Record<string, unknown> = { path: 'out.ts', content: 'hello' }
+    fixMcpArgNames('write', args)
+    expect(args.filePath).toBe('out.ts')
+  })
+})
 
-describe("classifyExecMessage", () => {
-  it("classifies readArgs as redirectable", () => {
-    const result = classifyExecMessage("readArgs");
-    expect(result).toBe("redirect");
-  });
+describe('classifyExecMessage', () => {
+  it('classifies readArgs as redirectable', () => {
+    const result = classifyExecMessage('readArgs')
+    expect(result).toBe('redirect')
+  })
 
-  it("classifies shellArgs as redirectable", () => {
-    expect(classifyExecMessage("shellArgs")).toBe("redirect");
-  });
+  it('classifies shellArgs as redirectable', () => {
+    expect(classifyExecMessage('shellArgs')).toBe('redirect')
+  })
 
-  it("classifies mcpArgs as passthrough", () => {
-    expect(classifyExecMessage("mcpArgs")).toBe("passthrough");
-  });
+  it('classifies mcpArgs as passthrough', () => {
+    expect(classifyExecMessage('mcpArgs')).toBe('passthrough')
+  })
 
-  it("classifies requestContextArgs as internal", () => {
-    expect(classifyExecMessage("requestContextArgs")).toBe("internal");
-  });
+  it('classifies requestContextArgs as internal', () => {
+    expect(classifyExecMessage('requestContextArgs')).toBe('internal')
+  })
 
-  it("classifies diagnosticsArgs as reject", () => {
-    expect(classifyExecMessage("diagnosticsArgs")).toBe("reject");
-  });
+  it('classifies diagnosticsArgs as reject', () => {
+    expect(classifyExecMessage('diagnosticsArgs')).toBe('reject')
+  })
 
-  it("classifies unknown exec types as reject", () => {
-    expect(classifyExecMessage("unknownArgs")).toBe("reject");
-  });
-});
+  it('classifies unknown exec types as reject', () => {
+    expect(classifyExecMessage('unknownArgs')).toBe('reject')
+  })
+})
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -1349,6 +1327,7 @@ git commit -m "feat: native tool redirection and rejection"
 **Phase: 2 (parallel with Tasks 2–8)**
 
 **Files:**
+
 - Create: `src/pkce.ts`
 - Create: `src/auth.ts`
 
@@ -1357,26 +1336,23 @@ git commit -m "feat: native tool redirection and rejection"
 ```typescript
 // src/pkce.ts
 export async function generatePKCE(): Promise<{ verifier: string; challenge: string }> {
-  const array = new Uint8Array(32);
-  crypto.getRandomValues(array);
-  const verifier = Buffer.from(array)
-    .toString("base64url")
-    .replace(/=+$/, "");
+  const array = new Uint8Array(32)
+  crypto.getRandomValues(array)
+  const verifier = Buffer.from(array).toString('base64url').replace(/=+$/, '')
 
-  const encoder = new TextEncoder();
-  const data = encoder.encode(verifier);
-  const hash = await crypto.subtle.digest("SHA-256", data);
-  const challenge = Buffer.from(new Uint8Array(hash))
-    .toString("base64url")
-    .replace(/=+$/, "");
+  const encoder = new TextEncoder()
+  const data = encoder.encode(verifier)
+  const hash = await crypto.subtle.digest('SHA-256', data)
+  const challenge = Buffer.from(new Uint8Array(hash)).toString('base64url').replace(/=+$/, '')
 
-  return { verifier, challenge };
+  return { verifier, challenge }
 }
 ```
 
 - [ ] **Step 2: Implement auth.ts**
 
 Port from the Hardcode84 fork / original repo (~141 lines). Key exports:
+
 - `generateCursorAuthParams()` — generate PKCE verifier/challenge, UUID, login URL
 - `pollCursorAuth(uuid, verifier)` — poll `api2.cursor.sh/auth/poll` with backoff until user completes login
 - `refreshCursorToken(refreshToken)` — exchange refresh token for new access token
@@ -1403,6 +1379,7 @@ git commit -m "feat: Cursor PKCE OAuth (login, poll, token refresh)"
 **Phase: 3 (depends on Tasks 2, 7, 8)**
 
 **Files:**
+
 - Create: `src/proxy/cursor-messages.ts`
 
 - [ ] **Step 1: Implement cursor-messages.ts**
@@ -1440,6 +1417,7 @@ git commit -m "feat: Cursor protobuf message processing and dispatch"
 **Phase: 3 (depends on Tasks 2, 3, 10)**
 
 **Files:**
+
 - Create: `src/proxy/cursor-session.ts`
 
 - [ ] **Step 1: Implement cursor-session.ts**
@@ -1448,14 +1426,15 @@ Port from the Hardcode84 fork (~521 lines). This is the core session class:
 
 ```typescript
 export type SessionEvent =
-  | { type: "text"; text: string; isThinking: boolean }
-  | { type: "toolCall"; exec: PendingExec }
-  | { type: "batchReady" }
-  | { type: "usage"; outputTokens: number; totalTokens: number }
-  | { type: "done"; error?: string; retryHint?: RetryHint };
+  | { type: 'text'; text: string; isThinking: boolean }
+  | { type: 'toolCall'; exec: PendingExec }
+  | { type: 'batchReady' }
+  | { type: 'usage'; outputTokens: number; totalTokens: number }
+  | { type: 'done'; error?: string; retryHint?: RetryHint }
 ```
 
 **CursorSession class:**
+
 - Constructor: opens H2 connection to `api2.cursor.sh`, sends `AgentRunRequest` frame, starts heartbeat timer
 - Batch state machine: `STREAMING → COLLECTING → FLUSHED`
   - `STREAMING`: text deltas flow, no pending tool calls
@@ -1468,19 +1447,20 @@ export type SessionEvent =
 - Auto-resume: on timeout or blob-not-found, restart from checkpoint (up to 5 attempts)
 
 Uses `node:http2` directly (no child process). Connect protocol headers:
+
 ```typescript
 const headers = {
-  ":method": "POST",
-  ":path": "/agent.v1.AgentService/Run",
-  "content-type": "application/connect+proto",
-  "connect-protocol-version": "1",
-  "te": "trailers",
-  "authorization": `Bearer ${accessToken}`,
-  "x-ghost-mode": "true",
-  "x-cursor-client-version": "cli-2026.01.09-231024f",
-  "x-cursor-client-type": "cli",
-  "x-request-id": randomUUID(),
-};
+  ':method': 'POST',
+  ':path': '/agent.v1.AgentService/Run',
+  'content-type': 'application/connect+proto',
+  'connect-protocol-version': '1',
+  te: 'trailers',
+  authorization: `Bearer ${accessToken}`,
+  'x-ghost-mode': 'true',
+  'x-cursor-client-version': 'cli-2026.01.09-231024f',
+  'x-cursor-client-type': 'cli',
+  'x-request-id': randomUUID(),
+}
 ```
 
 Also export `callCursorUnaryRpc()` for model discovery (unary `application/proto` requests).
@@ -1504,6 +1484,7 @@ git commit -m "feat: CursorSession with H2 connection, batch state machine, auto
 **Phase: 3 (depends on Tasks 4, 11)**
 
 **Files:**
+
 - Create: `src/proxy/openai-stream.ts`
 
 - [ ] **Step 1: Implement openai-stream.ts**
@@ -1518,48 +1499,51 @@ Port from the Hardcode84 fork (~315 lines). This module consumes `SessionEvent` 
   - SSE keepalive every 15s (`: keep-alive\n\n`)
 
 - `pumpSession(session, ctx)` — main loop:
+
   ```typescript
   async function pumpSession(session: CursorSession, ctx: SSECtx): Promise<PumpResult> {
-    const tagFilter = createThinkingTagFilter();
-    let toolCallIndex = 0;
+    const tagFilter = createThinkingTagFilter()
+    let toolCallIndex = 0
     for (;;) {
-      const event = await session.next();
+      const event = await session.next()
       switch (event.type) {
-        case "text":
+        case 'text':
           if (event.isThinking) {
-            ctx.sendChunk({ reasoning_content: event.text });
+            ctx.sendChunk({ reasoning_content: event.text })
           } else {
-            const { content, reasoning } = tagFilter.process(event.text);
-            if (reasoning) ctx.sendChunk({ reasoning_content: reasoning });
-            if (content) ctx.sendChunk({ content });
+            const { content, reasoning } = tagFilter.process(event.text)
+            if (reasoning) ctx.sendChunk({ reasoning_content: reasoning })
+            if (content) ctx.sendChunk({ content })
           }
-          break;
-        case "toolCall":
+          break
+        case 'toolCall':
           // flush any buffered thinking
-          const flushed = tagFilter.flush();
-          if (flushed.reasoning) ctx.sendChunk({ reasoning_content: flushed.reasoning });
-          if (flushed.content) ctx.sendChunk({ content: flushed.content });
+          const flushed = tagFilter.flush()
+          if (flushed.reasoning) ctx.sendChunk({ reasoning_content: flushed.reasoning })
+          if (flushed.content) ctx.sendChunk({ content: flushed.content })
           ctx.sendChunk({
-            tool_calls: [{
-              index: toolCallIndex++,
-              id: event.exec.toolCallId,
-              type: "function",
-              function: { name: event.exec.toolName, arguments: event.exec.decodedArgs },
-            }],
-          });
-          break;
-        case "batchReady":
-          ctx.sendChunk({}, "tool_calls");
-          return "batchReady";
-        case "usage":
+            tool_calls: [
+              {
+                index: toolCallIndex++,
+                id: event.exec.toolCallId,
+                type: 'function',
+                function: { name: event.exec.toolName, arguments: event.exec.decodedArgs },
+              },
+            ],
+          })
+          break
+        case 'batchReady':
+          ctx.sendChunk({}, 'tool_calls')
+          return 'batchReady'
+        case 'usage':
           // accumulated, emitted at done
-          break;
-        case "done":
-          const f = tagFilter.flush();
-          if (f.reasoning) ctx.sendChunk({ reasoning_content: f.reasoning });
-          if (f.content) ctx.sendChunk({ content: f.content });
-          ctx.sendChunk({}, "stop");
-          return event.error ? "error" : "done";
+          break
+        case 'done':
+          const f = tagFilter.flush()
+          if (f.reasoning) ctx.sendChunk({ reasoning_content: f.reasoning })
+          if (f.content) ctx.sendChunk({ content: f.content })
+          ctx.sendChunk({}, 'stop')
+          return event.error ? 'error' : 'done'
       }
     }
   }
@@ -1584,6 +1568,7 @@ git commit -m "feat: OpenAI SSE stream writer consuming CursorSession events"
 **Phase: 3 (depends on Tasks 5, 11)**
 
 **Files:**
+
 - Create: `src/proxy/session-manager.ts`
 
 - [ ] **Step 1: Implement session-manager.ts**
@@ -1592,73 +1577,73 @@ This module manages active `CursorSession` instances, keyed by session ID + conv
 
 ```typescript
 // src/proxy/session-manager.ts
-import { createHash } from "node:crypto";
-import type { CursorSession } from "./cursor-session.ts";
-import type { OpenAIMessage } from "./openai-messages.ts";
-import { textContent } from "./openai-messages.ts";
+import { createHash } from 'node:crypto'
+import type { CursorSession } from './cursor-session.ts'
+import type { OpenAIMessage } from './openai-messages.ts'
+import { textContent } from './openai-messages.ts'
 
 interface ActiveSession {
-  session: CursorSession;
-  lastAccessMs: number;
+  session: CursorSession
+  lastAccessMs: number
 }
 
-const activeSessions = new Map<string, ActiveSession>();
-const SESSION_TTL_MS = 30 * 60 * 1000; // 30 minutes
+const activeSessions = new Map<string, ActiveSession>()
+const SESSION_TTL_MS = 30 * 60 * 1000 // 30 minutes
 
 export function deriveSessionKey(sessionId: string, messages: OpenAIMessage[]): string {
-  const firstUserMsg = messages.find((m) => m.role === "user");
-  const firstUserText = firstUserMsg ? textContent(firstUserMsg.content) : "";
-  return createHash("sha256")
+  const firstUserMsg = messages.find((m) => m.role === 'user')
+  const firstUserText = firstUserMsg ? textContent(firstUserMsg.content) : ''
+  return createHash('sha256')
     .update(`session:${sessionId}:${firstUserText.slice(0, 200)}`)
-    .digest("hex")
-    .slice(0, 16);
+    .digest('hex')
+    .slice(0, 16)
 }
 
 export function deriveConversationKey(sessionId: string, messages: OpenAIMessage[]): string {
-  const firstUserMsg = messages.find((m) => m.role === "user");
-  const firstUserText = firstUserMsg ? textContent(firstUserMsg.content) : "";
-  return createHash("sha256")
+  const firstUserMsg = messages.find((m) => m.role === 'user')
+  const firstUserText = firstUserMsg ? textContent(firstUserMsg.content) : ''
+  return createHash('sha256')
     .update(`conv:${sessionId}:${firstUserText.slice(0, 200)}`)
-    .digest("hex")
-    .slice(0, 16);
+    .digest('hex')
+    .slice(0, 16)
 }
 
 export function getActiveSession(key: string): CursorSession | undefined {
-  const entry = activeSessions.get(key);
+  const entry = activeSessions.get(key)
   if (entry) {
-    entry.lastAccessMs = Date.now();
-    return entry.session;
+    entry.lastAccessMs = Date.now()
+    return entry.session
   }
-  return undefined;
+  return undefined
 }
 
 export function setActiveSession(key: string, session: CursorSession): void {
-  activeSessions.set(key, { session, lastAccessMs: Date.now() });
+  activeSessions.set(key, { session, lastAccessMs: Date.now() })
 }
 
 export function removeActiveSession(key: string): void {
-  const entry = activeSessions.get(key);
+  const entry = activeSessions.get(key)
   if (entry) {
-    entry.session.close();
-    activeSessions.delete(key);
+    entry.session.close()
+    activeSessions.delete(key)
   }
 }
 
 export function evictStaleSessions(): void {
-  const now = Date.now();
+  const now = Date.now()
   for (const [key, entry] of activeSessions) {
     if (now - entry.lastAccessMs > SESSION_TTL_MS) {
-      entry.session.close();
-      activeSessions.delete(key);
+      entry.session.close()
+      activeSessions.delete(key)
     }
   }
 }
 
 export function closeAllSessions(): void {
   for (const [key, entry] of activeSessions) {
-    entry.session.close();
+    entry.session.close()
   }
-  activeSessions.clear();
+  activeSessions.clear()
 }
 ```
 
@@ -1681,6 +1666,7 @@ git commit -m "feat: session manager with TTL eviction and session isolation"
 **Phase: 3 (depends on Task 11)**
 
 **Files:**
+
 - Create: `src/proxy/models.ts`
 
 - [ ] **Step 1: Implement models.ts**
@@ -1692,24 +1678,24 @@ Port from the Hardcode84 fork (~492 lines). Two discovery strategies:
 
 ```typescript
 export interface CursorModel {
-  id: string;
-  name: string;
-  reasoning: boolean;
-  contextWindow: number;
-  maxTokens: number;
-  supportsImages: boolean;
+  id: string
+  name: string
+  reasoning: boolean
+  contextWindow: number
+  maxTokens: number
+  supportsImages: boolean
 }
 
 export async function discoverCursorModels(accessToken: string): Promise<CursorModel[]> {
   // Try AvailableModels first (richer data)
-  const primary = await fetchAvailableModels(accessToken);
-  if (primary && primary.length > 0) return primary;
+  const primary = await fetchAvailableModels(accessToken)
+  if (primary && primary.length > 0) return primary
 
   // Fallback to GetUsableModels
-  const fallback = await fetchUsableModels(accessToken);
-  if (fallback && fallback.length > 0) return fallback;
+  const fallback = await fetchUsableModels(accessToken)
+  if (fallback && fallback.length > 0) return fallback
 
-  return []; // No models available — auth may be wrong
+  return [] // No models available — auth may be wrong
 }
 ```
 
@@ -1736,134 +1722,131 @@ git commit -m "feat: model discovery via AvailableModels + GetUsableModels gRPC"
 **Phase: 4 (depends on Task 14)**
 
 **Files:**
+
 - Create: `src/proxy/internal-api.ts`
 
 - [ ] **Step 1: Implement internal-api.ts**
 
 ```typescript
 // src/proxy/internal-api.ts
-import type { IncomingMessage, ServerResponse } from "node:http";
-import { discoverCursorModels, type CursorModel } from "./models.ts";
+import type { IncomingMessage, ServerResponse } from 'node:http'
+import { discoverCursorModels, type CursorModel } from './models.ts'
 
 interface SessionHeartbeat {
-  sessionId: string;
-  lastHeartbeatMs: number;
+  sessionId: string
+  lastHeartbeatMs: number
 }
 
-const activeSessions = new Map<string, SessionHeartbeat>();
-const HEARTBEAT_TIMEOUT_MS = 30_000;
+const activeSessions = new Map<string, SessionHeartbeat>()
+const HEARTBEAT_TIMEOUT_MS = 30_000
 
-let currentAccessToken: string | null = null;
-let cachedModels: CursorModel[] = [];
-let onModelsRefreshed: ((models: CursorModel[]) => void) | null = null;
-let shutdownCallback: (() => void) | null = null;
+let currentAccessToken: string | null = null
+let cachedModels: CursorModel[] = []
+let onModelsRefreshed: ((models: CursorModel[]) => void) | null = null
+let shutdownCallback: (() => void) | null = null
 
 export function configureInternalApi(opts: {
-  initialToken: string | null;
-  initialModels: CursorModel[];
-  onModelsRefreshed?: (models: CursorModel[]) => void;
-  onShutdown?: () => void;
+  initialToken: string | null
+  initialModels: CursorModel[]
+  onModelsRefreshed?: (models: CursorModel[]) => void
+  onShutdown?: () => void
 }) {
-  currentAccessToken = opts.initialToken;
-  cachedModels = opts.initialModels;
-  onModelsRefreshed = opts.onModelsRefreshed ?? null;
-  shutdownCallback = opts.onShutdown ?? null;
+  currentAccessToken = opts.initialToken
+  cachedModels = opts.initialModels
+  onModelsRefreshed = opts.onModelsRefreshed ?? null
+  shutdownCallback = opts.onShutdown ?? null
 }
 
 export function getAccessToken(): string | null {
-  return currentAccessToken;
+  return currentAccessToken
 }
 
 export function getCachedModels(): CursorModel[] {
-  return cachedModels;
+  return cachedModels
 }
 
 export function startHeartbeatMonitor(): NodeJS.Timeout {
   const timer = setInterval(() => {
-    const now = Date.now();
+    const now = Date.now()
     for (const [id, session] of activeSessions) {
       if (now - session.lastHeartbeatMs > HEARTBEAT_TIMEOUT_MS) {
-        activeSessions.delete(id);
+        activeSessions.delete(id)
       }
     }
     if (activeSessions.size === 0) {
-      console.error("[proxy] No active sessions, shutting down");
-      shutdownCallback?.();
+      console.error('[proxy] No active sessions, shutting down')
+      shutdownCallback?.()
     }
-  }, 10_000);
-  if (typeof timer === "object" && "unref" in timer) timer.unref();
-  return timer;
+  }, 10_000)
+  if (typeof timer === 'object' && 'unref' in timer) timer.unref()
+  return timer
 }
 
 function jsonResponse(res: ServerResponse, status: number, body: unknown): void {
-  res.writeHead(status, { "Content-Type": "application/json" });
-  res.end(JSON.stringify(body));
+  res.writeHead(status, { 'Content-Type': 'application/json' })
+  res.end(JSON.stringify(body))
 }
 
 function readBody(req: IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
-    const chunks: Buffer[] = [];
-    req.on("data", (chunk) => chunks.push(chunk));
-    req.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
-    req.on("error", reject);
-  });
+    const chunks: Buffer[] = []
+    req.on('data', (chunk) => chunks.push(chunk))
+    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')))
+    req.on('error', reject)
+  })
 }
 
-export async function handleInternalRequest(
-  req: IncomingMessage,
-  res: ServerResponse,
-  path: string,
-): Promise<void> {
-  if (path === "/internal/health" && req.method === "GET") {
+export async function handleInternalRequest(req: IncomingMessage, res: ServerResponse, path: string): Promise<void> {
+  if (path === '/internal/health' && req.method === 'GET') {
     jsonResponse(res, 200, {
-      status: "ok",
+      status: 'ok',
       sessions: activeSessions.size,
       hasToken: currentAccessToken !== null,
       modelCount: cachedModels.length,
-    });
-    return;
+    })
+    return
   }
 
-  if (path === "/internal/heartbeat" && req.method === "POST") {
-    const body = JSON.parse(await readBody(req));
-    const sessionId = body.sessionId;
+  if (path === '/internal/heartbeat' && req.method === 'POST') {
+    const body = JSON.parse(await readBody(req))
+    const sessionId = body.sessionId
     if (!sessionId) {
-      jsonResponse(res, 400, { error: "sessionId required" });
-      return;
+      jsonResponse(res, 400, { error: 'sessionId required' })
+      return
     }
-    activeSessions.set(sessionId, { sessionId, lastHeartbeatMs: Date.now() });
-    jsonResponse(res, 200, { ok: true });
-    return;
+    activeSessions.set(sessionId, { sessionId, lastHeartbeatMs: Date.now() })
+    jsonResponse(res, 200, { ok: true })
+    return
   }
 
-  if (path === "/internal/token" && req.method === "POST") {
-    const body = JSON.parse(await readBody(req));
+  if (path === '/internal/token' && req.method === 'POST') {
+    const body = JSON.parse(await readBody(req))
     if (body.access) {
-      currentAccessToken = body.access;
-      jsonResponse(res, 200, { ok: true });
+      currentAccessToken = body.access
+      jsonResponse(res, 200, { ok: true })
     } else {
-      jsonResponse(res, 400, { error: "access token required" });
+      jsonResponse(res, 400, { error: 'access token required' })
     }
-    return;
+    return
   }
 
-  if (path === "/internal/refresh-models" && req.method === "POST") {
+  if (path === '/internal/refresh-models' && req.method === 'POST') {
     if (!currentAccessToken) {
-      jsonResponse(res, 400, { error: "no access token" });
-      return;
+      jsonResponse(res, 400, { error: 'no access token' })
+      return
     }
     try {
-      const models = await discoverCursorModels(currentAccessToken);
-      cachedModels = models;
-      onModelsRefreshed?.(models);
-      jsonResponse(res, 200, { models });
+      const models = await discoverCursorModels(currentAccessToken)
+      cachedModels = models
+      onModelsRefreshed?.(models)
+      jsonResponse(res, 200, { models })
     } catch (err) {
-      jsonResponse(res, 500, { error: String(err) });
+      jsonResponse(res, 500, { error: String(err) })
     }
-    return;
+    return
   }
 
-  jsonResponse(res, 404, { error: "not found" });
+  jsonResponse(res, 404, { error: 'not found' })
 }
 ```
 
@@ -1886,6 +1869,7 @@ git commit -m "feat: internal API (heartbeat, token, health, model refresh)"
 **Phase: 4 (depends on Tasks 10–15)**
 
 **Files:**
+
 - Create: `src/proxy/main.ts`
 
 - [ ] **Step 1: Implement main.ts**
@@ -1912,74 +1896,75 @@ This is the proxy entry point. It:
 
 ```typescript
 // src/proxy/main.ts — structure outline
-import { createServer } from "node:http";
-import { createInterface } from "node:readline";
+import { createServer } from 'node:http'
+import { createInterface } from 'node:readline'
 // ... imports for all proxy modules
 
 async function main() {
   // 1. Read config from stdin
-  const rl = createInterface({ input: process.stdin });
+  const rl = createInterface({ input: process.stdin })
   const configLine = await new Promise<string>((resolve) => {
-    rl.once("line", resolve);
-  });
-  rl.close();
-  const config = JSON.parse(configLine);
+    rl.once('line', resolve)
+  })
+  rl.close()
+  const config = JSON.parse(configLine)
 
   // 2. Configure internal API
   configureInternalApi({
     initialToken: config.accessToken,
     initialModels: [],
     onShutdown: () => process.exit(0),
-  });
+  })
 
   // 3. Discover models
-  let models: CursorModel[] = [];
+  let models: CursorModel[] = []
   try {
-    models = await discoverCursorModels(config.accessToken);
+    models = await discoverCursorModels(config.accessToken)
   } catch (err) {
-    console.error("[proxy] Model discovery failed:", err);
+    console.error('[proxy] Model discovery failed:', err)
   }
 
   // 4. Start HTTP server
   const server = createServer(async (req, res) => {
-    const url = new URL(req.url ?? "/", `http://localhost`);
-    
-    if (url.pathname.startsWith("/internal/")) {
-      await handleInternalRequest(req, res, url.pathname);
-      return;
+    const url = new URL(req.url ?? '/', `http://localhost`)
+
+    if (url.pathname.startsWith('/internal/')) {
+      await handleInternalRequest(req, res, url.pathname)
+      return
     }
 
-    if (req.method === "GET" && url.pathname === "/v1/models") {
+    if (req.method === 'GET' && url.pathname === '/v1/models') {
       // Return model list
-      return;
+      return
     }
 
-    if (req.method === "POST" && url.pathname === "/v1/chat/completions") {
+    if (req.method === 'POST' && url.pathname === '/v1/chat/completions') {
       // Handle chat completion — main logic
-      return;
+      return
     }
 
-    res.writeHead(404);
-    res.end("Not Found");
-  });
+    res.writeHead(404)
+    res.end('Not Found')
+  })
 
   server.listen(0, () => {
-    const port = (server.address() as any).port;
+    const port = (server.address() as any).port
     // 5. Write ready signal to stdout
-    console.log(JSON.stringify({ type: "ready", port, models }));
+    console.log(JSON.stringify({ type: 'ready', port, models }))
 
     // 6. Start heartbeat monitor
-    startHeartbeatMonitor();
-  });
+    startHeartbeatMonitor()
+  })
 }
 
 main().catch((err) => {
-  console.error("[proxy] Fatal:", err);
-  process.exit(1);
-});
+  console.error('[proxy] Fatal:', err)
+  process.exit(1)
+})
 ```
 
 The chat completion handler is the most complex part (~200 lines). It:
+
 - Parses the request body as `ChatCompletionRequest`
 - Reads `X-Session-Id` header (defaults to `"default"`)
 - Derives session key and conversation key
@@ -2019,6 +2004,7 @@ git commit -m "feat: proxy HTTP server with chat completion routing"
 **Phase: 4 (depends on Task 14)**
 
 **Files:**
+
 - Create: `src/proxy-lifecycle.ts`
 
 - [ ] **Step 1: Implement proxy-lifecycle.ts**
@@ -2027,98 +2013,100 @@ This module manages the proxy process from the extension side:
 
 ```typescript
 // src/proxy-lifecycle.ts
-import { spawn, type ChildProcess } from "node:child_process";
-import { readFileSync, writeFileSync, unlinkSync, existsSync } from "node:fs";
-import { join, resolve } from "node:path";
-import { homedir } from "node:os";
-import { createInterface } from "node:readline";
-import type { CursorModel } from "./proxy/models.ts";
+import { spawn, type ChildProcess } from 'node:child_process'
+import { readFileSync, writeFileSync, unlinkSync, existsSync } from 'node:fs'
+import { join, resolve } from 'node:path'
+import { homedir } from 'node:os'
+import { createInterface } from 'node:readline'
+import type { CursorModel } from './proxy/models.ts'
 
-const PORT_FILE = join(homedir(), ".pi", "agent", "cursor-proxy.json");
-const PROXY_ENTRY = resolve(import.meta.dirname, "proxy", "main.ts");
-const HEARTBEAT_INTERVAL_MS = 10_000;
+const PORT_FILE = join(homedir(), '.pi', 'agent', 'cursor-proxy.json')
+const PROXY_ENTRY = resolve(import.meta.dirname, 'proxy', 'main.ts')
+const HEARTBEAT_INTERVAL_MS = 10_000
 
 interface ProxyInfo {
-  port: number;
-  pid: number;
+  port: number
+  pid: number
 }
 
 interface ProxyConnection {
-  port: number;
-  pid: number;
-  heartbeatTimer: NodeJS.Timeout;
-  sessionId: string;
+  port: number
+  pid: number
+  heartbeatTimer: NodeJS.Timeout
+  sessionId: string
 }
 
-let activeConnection: ProxyConnection | null = null;
+let activeConnection: ProxyConnection | null = null
 
 function isProcessAlive(pid: number): boolean {
   try {
-    process.kill(pid, 0); // signal 0 = check existence
-    return true;
+    process.kill(pid, 0) // signal 0 = check existence
+    return true
   } catch {
-    return false;
+    return false
   }
 }
 
 export function readPortFile(): ProxyInfo | null {
   try {
-    if (!existsSync(PORT_FILE)) return null;
-    const data = JSON.parse(readFileSync(PORT_FILE, "utf8"));
-    if (data.port && data.pid && isProcessAlive(data.pid)) return data;
+    if (!existsSync(PORT_FILE)) return null
+    const data = JSON.parse(readFileSync(PORT_FILE, 'utf8'))
+    if (data.port && data.pid && isProcessAlive(data.pid)) return data
     // Stale port file — clean up
-    try { unlinkSync(PORT_FILE); } catch {}
-    return null;
+    try {
+      unlinkSync(PORT_FILE)
+    } catch {}
+    return null
   } catch {
-    return null;
+    return null
   }
 }
 
 function writePortFile(info: ProxyInfo): void {
-  const dir = join(homedir(), ".pi", "agent");
-  const { mkdirSync } = require("node:fs");
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(PORT_FILE, JSON.stringify(info));
+  const dir = join(homedir(), '.pi', 'agent')
+  const { mkdirSync } = require('node:fs')
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(PORT_FILE, JSON.stringify(info))
 }
 
 async function checkProxyHealth(port: number): Promise<boolean> {
   try {
-    const res = await fetch(`http://localhost:${port}/internal/health`, { signal: AbortSignal.timeout(2000) });
-    return res.ok;
+    const res = await fetch(`http://localhost:${port}/internal/health`, { signal: AbortSignal.timeout(2000) })
+    return res.ok
   } catch {
-    return false;
+    return false
   }
 }
 
 async function sendHeartbeat(port: number, sessionId: string): Promise<void> {
   try {
     await fetch(`http://localhost:${port}/internal/heartbeat`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ sessionId }),
       signal: AbortSignal.timeout(2000),
-    });
+    })
   } catch {}
 }
 
 async function pushToken(port: number, accessToken: string): Promise<void> {
   try {
     await fetch(`http://localhost:${port}/internal/token`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ access: accessToken }),
       signal: AbortSignal.timeout(2000),
-    });
+    })
   } catch {}
 }
 
 export async function refreshModels(port: number): Promise<CursorModel[]> {
   const res = await fetch(`http://localhost:${port}/internal/refresh-models`, {
-    method: "POST",
+    method: 'POST',
     signal: AbortSignal.timeout(10000),
-  });
-  const data = (await res.json()) as { models: CursorModel[] };
-  return data.models;
+  })
+  const data = (await res.json()) as { models: CursorModel[] }
+  return data.models
 }
 
 export async function connectToProxy(
@@ -2126,84 +2114,87 @@ export async function connectToProxy(
   accessToken: string | null,
 ): Promise<{ port: number; models: CursorModel[] }> {
   // 1. Try existing proxy via port file
-  const existing = readPortFile();
-  if (existing && await checkProxyHealth(existing.port)) {
-    if (accessToken) await pushToken(existing.port, accessToken);
-    startHeartbeat(existing.port, existing.pid, sessionId);
-    const models = await refreshModels(existing.port);
-    return { port: existing.port, models };
+  const existing = readPortFile()
+  if (existing && (await checkProxyHealth(existing.port))) {
+    if (accessToken) await pushToken(existing.port, accessToken)
+    startHeartbeat(existing.port, existing.pid, sessionId)
+    const models = await refreshModels(existing.port)
+    return { port: existing.port, models }
   }
 
   // 2. Spawn new proxy
-  if (!accessToken) throw new Error("No access token and no existing proxy");
-  return spawnProxy(sessionId, accessToken);
+  if (!accessToken) throw new Error('No access token and no existing proxy')
+  return spawnProxy(sessionId, accessToken)
 }
 
-async function spawnProxy(
-  sessionId: string,
-  accessToken: string,
-): Promise<{ port: number; models: CursorModel[] }> {
-  const child = spawn("node", ["--experimental-strip-types", PROXY_ENTRY], {
-    stdio: ["pipe", "pipe", "pipe"],
+async function spawnProxy(sessionId: string, accessToken: string): Promise<{ port: number; models: CursorModel[] }> {
+  const child = spawn('node', ['--experimental-strip-types', PROXY_ENTRY], {
+    stdio: ['pipe', 'pipe', 'pipe'],
     detached: false,
-  });
+  })
 
   // Send config on stdin
-  child.stdin!.write(JSON.stringify({ accessToken }) + "\n");
-  child.stdin!.end();
+  child.stdin!.write(JSON.stringify({ accessToken }) + '\n')
+  child.stdin!.end()
 
   // Read ready signal from stdout
-  const rl = createInterface({ input: child.stdout! });
+  const rl = createInterface({ input: child.stdout! })
   const readyLine = await new Promise<string>((resolve, reject) => {
-    const timeout = setTimeout(() => reject(new Error("Proxy startup timeout")), 15000);
-    rl.once("line", (line) => { clearTimeout(timeout); resolve(line); });
-    child.on("exit", (code) => { clearTimeout(timeout); reject(new Error(`Proxy exited with code ${code}`)); });
-  });
-  rl.close();
+    const timeout = setTimeout(() => reject(new Error('Proxy startup timeout')), 15000)
+    rl.once('line', (line) => {
+      clearTimeout(timeout)
+      resolve(line)
+    })
+    child.on('exit', (code) => {
+      clearTimeout(timeout)
+      reject(new Error(`Proxy exited with code ${code}`))
+    })
+  })
+  rl.close()
 
-  const ready = JSON.parse(readyLine);
-  if (ready.type !== "ready" || !ready.port) {
-    throw new Error(`Unexpected proxy output: ${readyLine}`);
+  const ready = JSON.parse(readyLine)
+  if (ready.type !== 'ready' || !ready.port) {
+    throw new Error(`Unexpected proxy output: ${readyLine}`)
   }
 
   // Write port file
-  writePortFile({ port: ready.port, pid: child.pid! });
+  writePortFile({ port: ready.port, pid: child.pid! })
 
   // Start heartbeat
-  startHeartbeat(ready.port, child.pid!, sessionId);
+  startHeartbeat(ready.port, child.pid!, sessionId)
 
   // Log proxy stderr
-  child.stderr?.on("data", (chunk: Buffer) => {
-    console.error(`[cursor-proxy] ${chunk.toString().trimEnd()}`);
-  });
+  child.stderr?.on('data', (chunk: Buffer) => {
+    console.error(`[cursor-proxy] ${chunk.toString().trimEnd()}`)
+  })
 
   // Don't let the child keep the parent alive
-  child.unref();
+  child.unref()
 
-  return { port: ready.port, models: ready.models ?? [] };
+  return { port: ready.port, models: ready.models ?? [] }
 }
 
 function startHeartbeat(port: number, pid: number, sessionId: string): void {
-  stopHeartbeat();
-  sendHeartbeat(port, sessionId); // immediate first heartbeat
-  const timer = setInterval(() => sendHeartbeat(port, sessionId), HEARTBEAT_INTERVAL_MS);
-  if (typeof timer === "object" && "unref" in timer) timer.unref();
-  activeConnection = { port, pid, heartbeatTimer: timer, sessionId };
+  stopHeartbeat()
+  sendHeartbeat(port, sessionId) // immediate first heartbeat
+  const timer = setInterval(() => sendHeartbeat(port, sessionId), HEARTBEAT_INTERVAL_MS)
+  if (typeof timer === 'object' && 'unref' in timer) timer.unref()
+  activeConnection = { port, pid, heartbeatTimer: timer, sessionId }
 }
 
 export function stopHeartbeat(): void {
   if (activeConnection) {
-    clearInterval(activeConnection.heartbeatTimer);
-    activeConnection = null;
+    clearInterval(activeConnection.heartbeatTimer)
+    activeConnection = null
   }
 }
 
 export function getActivePort(): number | null {
-  return activeConnection?.port ?? null;
+  return activeConnection?.port ?? null
 }
 
 export function getActivePid(): number | null {
-  return activeConnection?.pid ?? null;
+  return activeConnection?.pid ?? null
 }
 ```
 
@@ -2226,20 +2217,16 @@ git commit -m "feat: proxy lifecycle (spawn, discover, reconnect, heartbeat)"
 **Phase: 4 (depends on Tasks 9, 17)**
 
 **Files:**
+
 - Create: `src/index.ts`
 
 - [ ] **Step 1: Implement index.ts**
 
 ```typescript
 // src/index.ts
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import type { OAuthCredentials, OAuthLoginCallbacks } from "@mariozechner/pi-ai";
-import {
-  generateCursorAuthParams,
-  getTokenExpiry,
-  pollCursorAuth,
-  refreshCursorToken,
-} from "./auth.ts";
+import type { ExtensionAPI } from '@mariozechner/pi-coding-agent'
+import type { OAuthCredentials, OAuthLoginCallbacks } from '@mariozechner/pi-ai'
+import { generateCursorAuthParams, getTokenExpiry, pollCursorAuth, refreshCursorToken } from './auth.ts'
 import {
   connectToProxy,
   stopHeartbeat,
@@ -2247,29 +2234,29 @@ import {
   getActivePid,
   readPortFile,
   refreshModels,
-} from "./proxy-lifecycle.ts";
-import { readFileSync, existsSync } from "node:fs";
-import { join } from "node:path";
-import { homedir } from "node:os";
-import type { CursorModel } from "./proxy/models.ts";
+} from './proxy-lifecycle.ts'
+import { readFileSync, existsSync } from 'node:fs'
+import { join } from 'node:path'
+import { homedir } from 'node:os'
+import type { CursorModel } from './proxy/models.ts'
 
-const PROVIDER_ID = "cursor";
-const MODEL_CACHE_PATH = join(homedir(), ".pi", "agent", "cursor-model-cache.json");
+const PROVIDER_ID = 'cursor'
+const MODEL_CACHE_PATH = join(homedir(), '.pi', 'agent', 'cursor-model-cache.json')
 
 function loadModelCache(): CursorModel[] {
   try {
-    if (!existsSync(MODEL_CACHE_PATH)) return [];
-    return JSON.parse(readFileSync(MODEL_CACHE_PATH, "utf8"));
+    if (!existsSync(MODEL_CACHE_PATH)) return []
+    return JSON.parse(readFileSync(MODEL_CACHE_PATH, 'utf8'))
   } catch {
-    return [];
+    return []
   }
 }
 
 function saveModelCache(models: CursorModel[]): void {
   try {
-    const { mkdirSync, writeFileSync } = require("node:fs");
-    mkdirSync(join(homedir(), ".pi", "agent"), { recursive: true });
-    writeFileSync(MODEL_CACHE_PATH, JSON.stringify(models));
+    const { mkdirSync, writeFileSync } = require('node:fs')
+    mkdirSync(join(homedir(), '.pi', 'agent'), { recursive: true })
+    writeFileSync(MODEL_CACHE_PATH, JSON.stringify(models))
   } catch {}
 }
 
@@ -2278,63 +2265,63 @@ function cursorModelsToProviderModels(models: CursorModel[], port: number) {
     id: m.id,
     name: m.name,
     reasoning: m.reasoning,
-    input: (m.supportsImages ? ["text", "image"] : ["text"]) as ("text" | "image")[],
+    input: (m.supportsImages ? ['text', 'image'] : ['text']) as ('text' | 'image')[],
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow: m.contextWindow,
     maxTokens: m.maxTokens,
-  }));
+  }))
 }
 
 export default async function (pi: ExtensionAPI) {
-  const sessionId = crypto.randomUUID();
-  let currentPort: number | null = null;
+  const sessionId = crypto.randomUUID()
+  let currentPort: number | null = null
 
   // --- OAuth ---
   async function loginCursor(callbacks: OAuthLoginCallbacks): Promise<OAuthCredentials> {
-    const { verifier, uuid, loginUrl } = await generateCursorAuthParams();
-    callbacks.onAuth({ url: loginUrl });
-    const { accessToken, refreshToken } = await pollCursorAuth(uuid, verifier);
+    const { verifier, uuid, loginUrl } = await generateCursorAuthParams()
+    callbacks.onAuth({ url: loginUrl })
+    const { accessToken, refreshToken } = await pollCursorAuth(uuid, verifier)
     return {
       refresh: refreshToken,
       access: accessToken,
       expires: getTokenExpiry(accessToken),
-    };
+    }
   }
 
   async function refreshToken(credentials: OAuthCredentials): Promise<OAuthCredentials> {
-    const result = await refreshCursorToken(credentials.refresh);
+    const result = await refreshCursorToken(credentials.refresh)
     // Push new token to proxy if running
-    const port = getActivePort();
+    const port = getActivePort()
     if (port) {
       try {
         await fetch(`http://localhost:${port}/internal/token`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ access: result.access }),
           signal: AbortSignal.timeout(2000),
-        });
+        })
       } catch {}
     }
-    return result;
+    return result
   }
 
   // --- Try to connect to existing proxy or spawn new one ---
   // Use cached models for fast startup, refresh in background
-  const cachedModels = loadModelCache();
+  const cachedModels = loadModelCache()
 
   // On startup, try to connect to an existing proxy (no token needed — just health check).
   // If no proxy exists, we wait until /login provides credentials.
-  let models: CursorModel[] = loadModelCache();
-  let accessToken: string | null = null;
+  let models: CursorModel[] = loadModelCache()
+  let accessToken: string | null = null
 
-  const existing = readPortFile();
+  const existing = readPortFile()
   if (existing) {
     try {
-      const result = await connectToProxy(sessionId, null);
-      currentPort = result.port;
+      const result = await connectToProxy(sessionId, null)
+      currentPort = result.port
       if (result.models.length > 0) {
-        models = result.models;
-        saveModelCache(models);
+        models = result.models
+        saveModelCache(models)
       }
     } catch {
       // No existing proxy — wait for /login
@@ -2345,104 +2332,104 @@ export default async function (pi: ExtensionAPI) {
   // modifyModels is called by Pi after login/refresh with fresh credentials.
   // We use it to push the token to the proxy and spawn it if needed.
   const oauthConfig = {
-    name: "Cursor",
+    name: 'Cursor',
     login: loginCursor,
     refreshToken,
     getApiKey: (cred: OAuthCredentials) => cred.access,
     async modifyModels(registeredModels: any[], credentials: OAuthCredentials) {
-      accessToken = credentials.access;
+      accessToken = credentials.access
       try {
-        const result = await connectToProxy(sessionId, credentials.access);
-        currentPort = result.port;
+        const result = await connectToProxy(sessionId, credentials.access)
+        currentPort = result.port
         if (result.models.length > 0) {
-          models = result.models;
-          saveModelCache(models);
+          models = result.models
+          saveModelCache(models)
           // Re-register with discovered models
           pi.registerProvider(PROVIDER_ID, {
-            name: "Cursor",
+            name: 'Cursor',
             baseUrl: `http://localhost:${currentPort}/v1`,
-            apiKey: "cursor-proxy",
-            api: "openai-completions",
+            apiKey: 'cursor-proxy',
+            api: 'openai-completions',
             models: cursorModelsToProviderModels(models, currentPort),
             oauth: oauthConfig,
-          });
+          })
         }
       } catch (err) {
-        console.error(`[pi-cursor] Failed to connect to proxy: ${err}`);
+        console.error(`[pi-cursor] Failed to connect to proxy: ${err}`)
       }
-      return registeredModels;
+      return registeredModels
     },
-  };
+  }
 
   pi.registerProvider(PROVIDER_ID, {
-    name: "Cursor",
-    baseUrl: currentPort ? `http://localhost:${currentPort}/v1` : "http://localhost:0/v1",
-    apiKey: "cursor-proxy",
-    api: "openai-completions",
+    name: 'Cursor',
+    baseUrl: currentPort ? `http://localhost:${currentPort}/v1` : 'http://localhost:0/v1',
+    apiKey: 'cursor-proxy',
+    api: 'openai-completions',
     models: currentPort ? cursorModelsToProviderModels(models, currentPort) : [],
     oauth: oauthConfig,
-  });
+  })
 
   // --- Add X-Session-Id header to all requests ---
-  pi.on("before_provider_request", (event, ctx) => {
+  pi.on('before_provider_request', (event, ctx) => {
     if (ctx.model?.provider === PROVIDER_ID && event.payload) {
       // Pi's openai-completions handler passes headers through
       // We rely on the proxy reading X-Session-Id from the request
     }
-  });
+  })
 
   // --- Lifecycle events ---
-  pi.on("session_start", async (event, ctx) => {
-    if (event.reason === "reload") {
+  pi.on('session_start', async (event, ctx) => {
+    if (event.reason === 'reload') {
       // Reconnect to existing proxy
-      const port = getActivePort();
+      const port = getActivePort()
       if (!port && accessToken) {
         try {
-          const result = await connectToProxy(sessionId, accessToken);
-          currentPort = result.port;
+          const result = await connectToProxy(sessionId, accessToken)
+          currentPort = result.port
         } catch {}
       }
     }
 
     // Restore proxy info from session state
     for (const entry of ctx.sessionManager.getEntries()) {
-      if (entry.type === "custom" && entry.customType === "cursor-proxy") {
-        const { port, pid } = entry.data as { port: number; pid: number };
+      if (entry.type === 'custom' && entry.customType === 'cursor-proxy') {
+        const { port, pid } = entry.data as { port: number; pid: number }
         try {
-          const result = await connectToProxy(sessionId, accessToken);
-          currentPort = result.port;
+          const result = await connectToProxy(sessionId, accessToken)
+          currentPort = result.port
           if (result.models.length > 0) {
-            models = result.models;
-            saveModelCache(models);
+            models = result.models
+            saveModelCache(models)
             pi.registerProvider(PROVIDER_ID, {
-              name: "Cursor",
+              name: 'Cursor',
               baseUrl: `http://localhost:${currentPort}/v1`,
-              apiKey: "cursor-proxy",
-              api: "openai-completions",
+              apiKey: 'cursor-proxy',
+              api: 'openai-completions',
               models: cursorModelsToProviderModels(models, currentPort),
               oauth: {
-                name: "Cursor",
+                name: 'Cursor',
                 login: loginCursor,
                 refreshToken,
                 getApiKey: (cred) => cred.access,
               },
-            });
+            })
           }
         } catch {}
-        break;
+        break
       }
     }
-  });
+  })
 
-  pi.on("session_shutdown", async (event, ctx) => {
+  pi.on('session_shutdown', async (event, ctx) => {
     // Persist proxy info for reconnect
-    const port = getActivePort();
-    const pid = getActivePid();
+    const port = getActivePort()
+    const pid = getActivePid()
     if (port && pid) {
-      pi.appendEntry("cursor-proxy", { port, pid });
+      pi.appendEntry('cursor-proxy', { port, pid })
     }
-    stopHeartbeat();
-  });
+    stopHeartbeat()
+  })
 }
 ```
 
@@ -2495,9 +2482,11 @@ Expected: Cursor models appear in the model list (e.g., `cursor/composer-2`, `cu
 - [ ] **Step 4: Test basic conversation**
 
 Select a Cursor model and send a simple prompt:
+
 ```
 Say hello and tell me what model you are.
 ```
+
 Expected: Model responds with text streamed via SSE.
 
 - [ ] **Step 5: Test tool usage**
@@ -2505,22 +2494,27 @@ Expected: Model responds with text streamed via SSE.
 ```
 Read the file package.json and tell me what dependencies it has.
 ```
+
 Expected: Model calls `read` tool (via native redirection or MCP), Pi executes it, result flows back, model summarizes the file.
 
 - [ ] **Step 6: Test thinking/reasoning**
 
 Select a reasoning-capable model (e.g., `composer-2`) and send:
+
 ```
 Think step by step about what 127 * 33 equals.
 ```
+
 Expected: Thinking content appears as reasoning, followed by the answer.
 
 - [ ] **Step 7: Test /reload survival**
 
 While connected:
+
 ```
 /reload
 ```
+
 Then send another prompt.
 Expected: Proxy survives reload. New extension instance reconnects. Conversation continues.
 

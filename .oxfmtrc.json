@@ -5,11 +5,7 @@
   "semi": false,
   "trailingComma": "all",
   "endOfLine": "lf",
-  "ignorePatterns": [
-    "dist/",
-    "node_modules/",
-    "src/proto/"
-  ],
+  "ignorePatterns": ["dist/", "node_modules/", "src/proto/"],
   "sortImports": {
     "groups": ["builtin", "external", "internal", ["parent", "sibling", "index"], "unknown"],
     "newlinesBetween": true
