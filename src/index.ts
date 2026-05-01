@@ -154,13 +154,9 @@ export default async function (pi: ExtensionAPI): Promise<void> {
 
   // ── Connect to proxy and refresh models ──
 
-  let isConnecting = false
+  let providerRegistered = false
 
   async function connectAndRefresh(accessToken: string): Promise<void> {
-    if (isConnecting) {
-      return
-    }
-    isConnecting = true
     try {
       log('connectAndRefresh: connecting to proxy...')
       const result = await connectToProxy(sessionId, accessToken)
@@ -168,13 +164,15 @@ export default async function (pi: ExtensionAPI): Promise<void> {
       log(`Proxy on port ${String(result.port)}, got ${String(result.models.length)} models`)
       if (result.models.length > 0) {
         updateModels(result.models)
+      }
+      // Only re-register once to avoid modifyModels → registerProvider → modifyModels loop
+      if (!providerRegistered) {
+        providerRegistered = true
         pi.registerProvider(PROVIDER_ID, buildProviderConfig())
-        log(`Provider re-registered with ${String(result.models.length)} models`)
+        log(`Provider registered with ${String(models.length)} models`)
       }
     } catch (error) {
       log(`Failed to connect to proxy: ${String(error)}`)
-    } finally {
-      isConnecting = false
     }
   }
 
@@ -220,9 +218,12 @@ export default async function (pi: ExtensionAPI): Promise<void> {
 
   // ── Register provider ──
 
-  pi.registerProvider(PROVIDER_ID, buildProviderConfig())
-  log(`Provider registered (${String(models.length)} models, port=${String(currentPort)})`)
-  log('Extension loaded. Run /login cursor to authenticate.')
+  if (!providerRegistered) {
+    providerRegistered = true
+    pi.registerProvider(PROVIDER_ID, buildProviderConfig())
+    log(`Provider registered (${String(models.length)} models, port=${String(currentPort)})`)
+  }
+  log('Extension loaded.')
 
   // ── Lifecycle: stop heartbeat on shutdown ──
 
