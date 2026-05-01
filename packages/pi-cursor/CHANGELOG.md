@@ -1,5 +1,17 @@
 # @schultzp2020/pi-cursor
 
+## 0.1.4
+
+### Patch Changes
+
+- [#8](https://github.com/schultzp2020/pi-extensions/pull/8) [`5694cc1`](https://github.com/schultzp2020/pi-extensions/commit/5694cc1dbb60f706d0777581157fa232929b7f53) Thanks [@schultzp2020](https://github.com/schultzp2020)! - Fix native tool argument mapping for Pi MCP tools
+
+  Several native Cursor tool redirects sent incorrect arguments to Pi's MCP tools, causing validation failures:
+  - **`readArgs`/`writeArgs`**: Sent `filePath` instead of `path`, causing `Validation failed for tool "read": path: must have required properties path`
+  - **`lsArgs`**: Redirected to nonexistent `glob` tool instead of Pi's `ls` tool
+  - **`deleteArgs`/`fetchArgs`**: Sent extra `description` parameter not in `bash` tool schema
+  - **`fixMcpArgNames`**: Converted `path` → `filePath` (backwards) — now correctly converts `filePath` → `path` and covers all Pi tools with a `path` parameter (`read`, `write`, `edit`, `grep`, `find`, `ls`)
+
 ## 0.1.3
 
 ### Patch Changes

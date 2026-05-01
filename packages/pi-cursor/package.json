@@ -1,6 +1,6 @@
 {
   "name": "@schultzp2020/pi-cursor",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Pi extension for Cursor subscription models via local OpenAI-compatible proxy",
   "keywords": [
     "cursor",
