@@ -131,7 +131,9 @@ function looksLikeRawModelName(name: string, modelId: string): boolean {
 
 function formatClaudeName(parts: string[]): string {
   const [version, family, ...rest] = parts
-  return ['Claude', family ? formatToken(family) : '', version || '', ...rest.map(formatToken)].filter(Boolean).join(' ')
+  return ['Claude', family ? formatToken(family) : '', version || '', ...rest.map(formatToken)]
+    .filter(Boolean)
+    .join(' ')
 }
 
 function formatGptName(parts: string[]): string {
@@ -181,10 +183,7 @@ function fallbackContext(modelId: string): number {
 
 // ── Connect-protocol decode helper ──
 
-function decodeConnectResponse<T>(
-  schema: Parameters<typeof fromBinary>[0],
-  payload: Uint8Array,
-): T | null {
+function decodeConnectResponse<T>(schema: Parameters<typeof fromBinary>[0], payload: Uint8Array): T | null {
   try {
     return fromBinary(schema, payload) as T
   } catch {

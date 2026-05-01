@@ -364,7 +364,10 @@ export async function collectNonStreamingResponse(session: CursorSession, modelI
       usage = pickBetterUsage(usage, buildUsage(event.outputTokens, event.totalTokens))
     } else if (event.type === 'toolCall' || event.type === 'batchReady') {
       finalizeSession()
-      return nonStreamingErrorResponse('Unexpected tool activity while collecting a non-streaming response', 'unexpected_tool_activity')
+      return nonStreamingErrorResponse(
+        'Unexpected tool activity while collecting a non-streaming response',
+        'unexpected_tool_activity',
+      )
     } else if (event.type === 'done') {
       if (event.retryHint || event.error) {
         finalizeSession()

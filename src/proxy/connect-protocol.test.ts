@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest'
+
 import {
   frameConnectMessage,
   createConnectFrameParser,
@@ -34,7 +35,7 @@ describe('createConnectFrameParser', () => {
     const frame = frameConnectMessage(data)
     parser(Buffer.from(frame))
     expect(messages).toHaveLength(1)
-    expect(Buffer.from(messages[0]!)).toEqual(Buffer.from(data))
+    expect(Buffer.from(messages[0])).toEqual(Buffer.from(data))
   })
 
   it('handles partial frames across multiple chunks', () => {
@@ -82,8 +83,8 @@ describe('parseConnectEndStream', () => {
     const data = new TextEncoder().encode(JSON.stringify({ error: { code: 'internal', message: 'Blob not found' } }))
     const err = parseConnectEndStream(data)
     expect(err).toBeInstanceOf(Error)
-    expect(err!.message).toContain('internal')
-    expect(err!.message).toContain('Blob not found')
+    expect((err as Error).message).toContain('internal')
+    expect((err as Error).message).toContain('Blob not found')
   })
 
   it('returns null for clean end stream', () => {
@@ -98,7 +99,7 @@ describe('decodeConnectUnaryBody', () => {
     const frame = frameConnectMessage(payload)
     const result = decodeConnectUnaryBody(new Uint8Array(frame))
     expect(result).not.toBeNull()
-    expect(Buffer.from(result!)).toEqual(Buffer.from(payload))
+    expect(Buffer.from(result as Uint8Array)).toEqual(Buffer.from(payload))
   })
 
   it('returns null for too-short input', () => {

@@ -32,7 +32,12 @@ import {
   WriteResultSchema,
   WriteSuccessSchema,
 } from '../proto/agent_pb.ts'
-import { createConnectFrameParser, decodeConnectUnaryBody, frameConnectMessage, parseConnectEndStream } from './connect-protocol.ts'
+import {
+  createConnectFrameParser,
+  decodeConnectUnaryBody,
+  frameConnectMessage,
+  parseConnectEndStream,
+} from './connect-protocol.ts'
 import { type PendingExec, type StreamState, createStreamState, processServerMessage } from './cursor-messages.ts'
 import { EventQueue } from './event-queue.ts'
 
@@ -142,8 +147,8 @@ function sendMcpResultFrame(
   const execClientMessage = create(ExecClientMessageSchema, {
     id: exec.execMsgId,
     execId: exec.execId,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    message: { case: 'mcpResult' as any, value: mcpResult as any },
+    // oxlint-disable-next-line typescript/no-unsafe-assignment -- protobuf discriminated union requires dynamic case
+    message: { case: 'mcpResult' as const, value: mcpResult as never },
   })
   write(
     frameConnectMessage(
@@ -165,10 +170,11 @@ function sendNativeResultFrame(write: (data: Uint8Array) => void, exec: PendingE
   const { nativeResultType } = exec
   const args = exec.nativeArgs ?? {}
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let resultValue: any
+  // oxlint-disable-next-line typescript/no-explicit-any -- protobuf discriminated union requires dynamic case
+  let resultValue: unknown
   let resultCase: string
 
+  // oxlint-disable-next-line typescript/switch-exhaustiveness-check -- fallback default handles remaining cases
   switch (nativeResultType) {
     case 'readResult': {
       const lines = content.split('\n')
@@ -176,7 +182,7 @@ function sendNativeResultFrame(write: (data: Uint8Array) => void, exec: PendingE
         result: {
           case: 'success',
           value: create(ReadSuccessSchema, {
-            path: args.path ?? '',
+            path: args.path || '',
             totalLines: lines.length,
             fileSize: BigInt(new TextEncoder().encode(content).byteLength),
             truncated: false,
@@ -193,7 +199,7 @@ function sendNativeResultFrame(write: (data: Uint8Array) => void, exec: PendingE
         result: {
           case: 'success',
           value: create(WriteSuccessSchema, {
-            path: args.path ?? '',
+            path: args.path || '',
             linesCreated: content.split('\n').length,
             fileSize: bytes.byteLength,
           }),
@@ -206,7 +212,7 @@ function sendNativeResultFrame(write: (data: Uint8Array) => void, exec: PendingE
       resultValue = create(DeleteResultSchema, {
         result: {
           case: 'success',
-          value: create(DeleteSuccessSchema, { path: args.path ?? '' }),
+          value: create(DeleteSuccessSchema, { path: args.path || '' }),
         },
       })
       resultCase = 'deleteResult'
@@ -231,7 +237,7 @@ function sendNativeResultFrame(write: (data: Uint8Array) => void, exec: PendingE
         result: {
           case: 'success',
           value: create(FetchSuccessSchema, {
-            url: args.url ?? '',
+            url: args.url || '',
             content,
             statusCode: 200,
           }),
@@ -252,8 +258,8 @@ function sendNativeResultFrame(write: (data: Uint8Array) => void, exec: PendingE
   const execClientMessage = create(ExecClientMessageSchema, {
     id: exec.execMsgId,
     execId: exec.execId,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    message: { case: resultCase as any, value: resultValue as any },
+    // oxlint-disable-next-line typescript/no-unsafe-assignment -- protobuf discriminated union requires dynamic case
+    message: { case: resultCase as 'mcpResult', value: resultValue as never },
   })
   write(
     frameConnectMessage(
@@ -347,7 +353,7 @@ export class CursorSession {
    * Send tool results back to Cursor for the pending execs.
    * After results are sent, the session resumes streaming.
    */
-  sendToolResults(results: Array<{ toolCallId: string; content: string; isError?: boolean }>): void {
+  sendToolResults(results: { toolCallId: string; content: string; isError?: boolean }[]): void {
     const remaining: PendingExec[] = []
 
     for (const exec of this.pendingExecs) {
@@ -404,8 +410,8 @@ export class CursorSession {
 
     this.h2Session = h2Connect(CURSOR_API_URL)
 
-    this.h2Session.on('error', (err) => {
-      console.error('[cursor-session] H2 session error:', err?.message ?? err)
+    this.h2Session.on('error', (error: Error) => {
+      console.error('[cursor-session] H2 session error:', error.message)
       this.closeTransport()
       this.finish(CLOSE_ERR)
     })
@@ -448,8 +454,8 @@ export class CursorSession {
       this.finish(CLOSE_OK)
     })
 
-    this.h2Stream.on('error', (err) => {
-      console.error('[cursor-session] H2 stream error:', err?.message ?? err)
+    this.h2Stream.on('error', (error: Error) => {
+      console.error('[cursor-session] H2 stream error:', error.message)
       this.closeTransport()
       this.finish(CLOSE_ERR)
     })
@@ -520,8 +526,8 @@ export class CursorSession {
       if (recognized) {
         this.resetInactivityTimer()
       }
-    } catch (err) {
-      console.error('[cursor-session] processServerMessage failed:', err)
+    } catch (error) {
+      console.error('[cursor-session] processServerMessage failed:', error)
       this.pushDone({ type: 'done', error: 'Failed to process server message' })
       this.close()
     }
@@ -595,8 +601,8 @@ export class CursorSession {
     }
     try {
       this.h2Stream.write(data)
-    } catch (err) {
-      console.error('[cursor-session] write failed:', err)
+    } catch (error) {
+      console.error('[cursor-session] write failed:', error)
       this.closeTransport()
       this.finish(CLOSE_ERR)
     }
@@ -604,12 +610,12 @@ export class CursorSession {
 
   private closeTransport(): void {
     try {
-      this.h2Stream?.close()
+      this.h2Stream.close()
     } catch {
       /* ignore */
     }
     try {
-      this.h2Session?.close()
+      this.h2Session.close()
     } catch {
       /* ignore */
     }
@@ -721,7 +727,7 @@ export async function callCursorUnaryRpc(options: CursorUnaryRpcOptions): Promis
     if (!settled) {
       settled = true
       clearTimeout(timeout)
-      reject(new Error(`H2 session error: ${err?.message ?? String(err)}`))
+      reject(new Error(`H2 session error: ${err instanceof Error ? err.message : String(err)}`))
     }
   })
 
@@ -772,7 +778,7 @@ export async function callCursorUnaryRpc(options: CursorUnaryRpcOptions): Promis
       } catch {
         /* ignore */
       }
-      reject(new Error(`H2 stream error: ${err?.message ?? String(err)}`))
+      reject(new Error(`H2 stream error: ${err instanceof Error ? err.message : String(err)}`))
     }
   })
 

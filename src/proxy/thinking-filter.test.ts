@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest'
+
 import { createThinkingTagFilter } from './thinking-filter.ts'
 
 describe('createThinkingTagFilter', () => {

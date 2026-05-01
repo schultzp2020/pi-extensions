@@ -36,10 +36,10 @@ describe('EventQueue', () => {
     for (let i = 0; i < MAX_QUEUE_DEPTH; i++) {
       q.push(i)
     }
-    expect(overflowed).toBe(false)
+    expect(overflowed).toBeFalsy()
     const accepted = q.push(MAX_QUEUE_DEPTH)
-    expect(accepted).toBe(false)
-    expect(overflowed).toBe(true)
+    expect(accepted).toBeFalsy()
+    expect(overflowed).toBeTruthy()
   })
 
   it('pushForce bypasses overflow limit', () => {

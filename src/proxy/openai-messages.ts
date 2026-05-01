@@ -49,7 +49,7 @@ export interface ParsedMessages {
  * - ContentPart[] → join text parts with newline
  */
 export function textContent(content: string | ContentPart[] | null | undefined): string {
-  if (content == null) {
+  if (content === null || content === undefined) {
     return ''
   }
   if (typeof content === 'string') {
@@ -87,24 +87,27 @@ export function parseMessages(messages: OpenAIMessage[]): ParsedMessages {
   }
 
   // Collect user messages for turn pairing
-  const userMessages: Array<{ index: number; text: string }> = []
-  const assistantMessages: Array<{ index: number; text: string }> = []
+  const userMessages: { index: number; text: string }[] = []
+  const assistantMessages: { index: number; text: string }[] = []
 
   for (let i = 0; i < messages.length; i++) {
-    const msg = messages[i]!
+    const msg = messages[i]
     switch (msg.role) {
-      case 'system':
+      case 'system': {
         if (!systemPrompt) {
           systemPrompt = textContent(msg.content)
         }
         break
-      case 'user':
+      }
+      case 'user': {
         userMessages.push({ index: i, text: textContent(msg.content) })
         break
-      case 'assistant':
+      }
+      case 'assistant': {
         assistantMessages.push({ index: i, text: textContent(msg.content) })
         break
-      case 'tool':
+      }
+      case 'tool': {
         if (msg.tool_call_id) {
           toolResults.push({
             toolCallId: msg.tool_call_id,
@@ -113,21 +116,22 @@ export function parseMessages(messages: OpenAIMessage[]): ParsedMessages {
           })
         }
         break
+      }
     }
   }
 
   // Pair user/assistant messages into turns.
   // The last user message becomes userText; earlier ones pair with assistants.
   if (userMessages.length > 0) {
-    userText = userMessages.at(-1)!.text
+    userText = userMessages.at(-1)?.text ?? ''
   }
 
   // Build turns from sequential user→assistant pairs
   let userIdx = 0
   let assistantIdx = 0
   while (userIdx < userMessages.length - 1 && assistantIdx < assistantMessages.length) {
-    const user = userMessages[userIdx]!
-    const assistant = assistantMessages[assistantIdx]!
+    const user = userMessages[userIdx]
+    const assistant = assistantMessages[assistantIdx]
     // Only pair if assistant comes after user
     if (assistant.index > user.index) {
       turns.push({
@@ -157,7 +161,7 @@ export function selectToolsForChoice(
   if (choice === 'none') {
     return []
   }
-  if (choice == null || choice === 'auto' || choice === 'required') {
+  if (choice === undefined || choice === 'auto' || choice === 'required') {
     return tools
   }
   if (typeof choice === 'object' && choice.type === 'function') {

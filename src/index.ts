@@ -1,3 +1,7 @@
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
+
 /**
  * Pi extension entry point for Cursor subscription models.
  *
@@ -8,9 +12,6 @@
  */
 import type { OAuthCredentials, OAuthLoginCallbacks } from '@mariozechner/pi-ai'
 import type { ExtensionAPI, ProviderConfig, ProviderModelConfig } from '@mariozechner/pi-coding-agent'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { homedir } from 'node:os'
-import { join } from 'node:path'
 
 import { generateCursorAuthParams, getTokenExpiry, pollCursorAuth, refreshCursorToken } from './auth.ts'
 import { connectToProxy, getActivePort, readPortFile, stopHeartbeat } from './proxy-lifecycle.ts'

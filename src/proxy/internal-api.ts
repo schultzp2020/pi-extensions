@@ -93,11 +93,7 @@ function readBody(req: IncomingMessage): Promise<string> {
 
 // ── Route handler ──
 
-export async function handleInternalRequest(
-  req: IncomingMessage,
-  res: ServerResponse,
-  path: string,
-): Promise<void> {
+export async function handleInternalRequest(req: IncomingMessage, res: ServerResponse, path: string): Promise<void> {
   if (path === '/internal/health' && req.method === 'GET') {
     jsonResponse(res, 200, {
       status: 'ok',

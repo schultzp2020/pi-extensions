@@ -172,20 +172,15 @@ export async function connectToProxy(
 
 // ── Spawn ──
 
-async function spawnProxy(
-  sessionId: string,
-  accessToken: string,
-): Promise<{ port: number; models: CursorModel[] }> {
+async function spawnProxy(sessionId: string, accessToken: string): Promise<{ port: number; models: CursorModel[] }> {
   const child = spawn('node', ['--experimental-transform-types', PROXY_ENTRY], {
     stdio: ['pipe', 'pipe', 'pipe'],
     detached: false,
   })
 
   // Send config on stdin
+  // stdio: ['pipe','pipe','pipe'] guarantees these are non-null
   const { stdin, stdout, stderr, pid: childPid } = child
-  if (!stdin || !stdout) {
-    throw new Error('Failed to open proxy stdio pipes')
-  }
   stdin.write(`${JSON.stringify({ accessToken })}\n`)
   stdin.end()
 
@@ -218,7 +213,7 @@ async function spawnProxy(
   startHeartbeat(ready.port, childPid, sessionId)
 
   // Log proxy stderr (non-blocking)
-  stderr?.on('data', (chunk: Buffer) => {
+  stderr.on('data', (chunk: Buffer) => {
     console.error(`[cursor-proxy] ${chunk.toString().trimEnd()}`)
   })
 

@@ -2,7 +2,7 @@ export const MAX_QUEUE_DEPTH = 10_000
 
 export class EventQueue<T> {
   private buffer: T[] = []
-  private waiters: Array<(value: T) => void> = []
+  private waiters: ((value: T) => void)[] = []
   private overflowCb?: () => void
 
   constructor(opts?: { onOverflow?: () => void }) {

@@ -4,7 +4,13 @@
  * Processes interactionUpdate (text/thinking deltas, tool lifecycle),
  * execServerMessage (tool calls, request context), kvServerMessage (blobs),
  * interactionQuery (web search, questions), and checkpoints.
+ *
+ * This module is fundamentally protobuf dispatch code — it pattern-matches on
+ * discriminated unions from `@bufbuild/protobuf`. The library's generated types
+ * use `any` in union positions, making `no-unsafe-*` rules fire on nearly every
+ * line. These are intentional and safe; we suppress them at file level.
  */
+/* oxlint-disable typescript/no-unsafe-member-access, typescript/no-unsafe-assignment, typescript/no-unsafe-argument */
 import { create, fromBinary, toBinary, toJson } from '@bufbuild/protobuf'
 import { ValueSchema } from '@bufbuild/protobuf/wkt'
 
@@ -15,7 +21,6 @@ import {
   AskQuestionRejectedSchema,
   AskQuestionResultSchema,
   BackgroundShellSpawnResultSchema,
-  type ConversationStateStructure,
   ConversationStateStructureSchema,
   CreatePlanRequestResponseSchema,
   DiagnosticsResultSchema,
@@ -24,7 +29,6 @@ import {
   ExecClientControlMessageSchema,
   ExecClientMessageSchema,
   ExecClientStreamCloseSchema,
-  type ExecServerControlMessage,
   type ExecServerMessage,
   GetBlobResultSchema,
   InteractionResponseSchema,
@@ -130,10 +134,7 @@ interface NativeRedirectInfo {
   nativeArgs: Record<string, string>
 }
 
-function nativeToMcpRedirect(
-  execCase: string,
-  execMsg: ExecServerMessage,
-): NativeRedirectInfo | null {
+function nativeToMcpRedirect(execCase: string, execMsg: ExecServerMessage): NativeRedirectInfo | null {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const args = execMsg.message.value as any
   const toolCallId: string = (args?.toolCallId as string) || crypto.randomUUID()
@@ -347,7 +348,7 @@ function handleInteractionUpdate(
     }
   } else if (updateCase === 'tokenDelta') {
     // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-    state.outputTokens += (update.message.value.tokens as number) ?? 0
+    state.outputTokens += (update.message.value.tokens as number) || 0
   } else if (updateCase === 'toolCallStarted') {
     // Just a notification — not a batch delimiter
   } else if (updateCase === 'toolCallCompleted') {
@@ -407,10 +408,8 @@ export function handleExecMessage(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const mcpArgs = execMsg.message.value as any
     // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
-    const decoded = decodeMcpArgsMap((mcpArgs.args as Record<string, Uint8Array>) ?? {})
-    const resolvedToolName = stripMcpToolPrefix(
-      (mcpArgs.toolName as string) || (mcpArgs.name as string) || '',
-    )
+    const decoded = decodeMcpArgsMap(mcpArgs.args as Record<string, Uint8Array>)
+    const resolvedToolName = stripMcpToolPrefix((mcpArgs.toolName as string) || (mcpArgs.name as string) || '')
     fixMcpArgNames(resolvedToolName, decoded)
     onMcpExec({
       execId: execMsg.execId,
@@ -467,8 +466,8 @@ export function handleExecMessage(
       result: {
         case: 'rejected',
         value: create(ShellRejectedSchema, {
-          command: (args.command as string) ?? '',
-          workingDirectory: (args.workingDirectory as string) ?? '',
+          command: (args.command as string) || '',
+          workingDirectory: (args.workingDirectory as string) || '',
           reason: REJECT_REASON,
           isReadonly: false,
         }),
@@ -511,12 +510,12 @@ function handleInteractionQuery(
   onNotify?: (text: string) => void,
 ): void {
   // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-  const queryId: number = (query.id as number) ?? 0
+  const queryId: number = (query.id as number) || 0
   // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-  const queryCase: string = (query.query?.case as string) ?? 'unknown'
+  const queryCase: string = (query.query?.case as string) || 'unknown'
   // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
   const searchTerm: string =
-    queryCase === 'webSearchRequestQuery' ? ((query.query?.value?.args?.searchTerm as string) ?? '') : ''
+    queryCase === 'webSearchRequestQuery' ? (query.query?.value?.args?.searchTerm as string) || '' : ''
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let responseResult: { case: string; value: unknown } | undefined
@@ -564,7 +563,9 @@ function handleInteractionQuery(
     }
   } else {
     // Unknown query type — send empty interaction response
-    console.error(`[cursor-messages] interactionQuery: unknown type ${queryCase} -- sending empty response for id=${String(queryId)}`)
+    console.error(
+      `[cursor-messages] interactionQuery: unknown type ${queryCase} -- sending empty response for id=${String(queryId)}`,
+    )
   }
 
   // Build and send the interaction response
@@ -602,24 +603,17 @@ export function processServerMessage(
   }
 
   if (msgCase === 'kvServerMessage') {
-    handleKvMessage(msg.message.value as KvServerMessage, blobStore, sendFrame)
+    handleKvMessage(msg.message.value, blobStore, sendFrame)
     return true
   }
 
   if (msgCase === 'execServerMessage') {
-    handleExecMessage(
-      msg.message.value as ExecServerMessage,
-      mcpTools,
-      cloudRule,
-      sendFrame,
-      onMcpExec,
-      state,
-    )
+    handleExecMessage(msg.message.value, mcpTools, cloudRule, sendFrame, onMcpExec, state)
     return true
   }
 
   if (msgCase === 'conversationCheckpointUpdate') {
-    const stateStructure = msg.message.value as ConversationStateStructure
+    const stateStructure = msg.message.value
     if (stateStructure.tokenDetails) {
       state.totalTokens = stateStructure.tokenDetails.usedTokens
     }
@@ -630,7 +624,7 @@ export function processServerMessage(
   }
 
   if (msgCase === 'execServerControlMessage') {
-    const ctrl = msg.message.value as ExecServerControlMessage
+    const ctrl = msg.message.value
     if (ctrl.message.case === 'abort') {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       console.error(`[cursor-messages] exec ABORT for id=${String((ctrl.message.value as any).id)}`)
@@ -643,6 +637,6 @@ export function processServerMessage(
     return true
   }
 
-  console.error(`[cursor-messages] unrecognized server message case: ${msgCase ?? 'undefined'}`)
+  console.error(`[cursor-messages] unrecognized server message case: ${String(msgCase)}`)
   return false
 }

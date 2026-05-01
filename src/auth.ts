@@ -31,7 +31,9 @@ export async function pollCursorAuth(
   let consecutiveErrors = 0
 
   for (let attempt = 0; attempt < POLL_MAX_ATTEMPTS; attempt++) {
-    await new Promise((r) => setTimeout(r, delay))
+    await new Promise<void>((r) => {
+      setTimeout(r, delay)
+    })
     try {
       const response = await fetch(`${CURSOR_POLL_URL}?uuid=${uuid}&verifier=${verifier}`)
       if (response.status === 404) {
@@ -79,9 +81,14 @@ export function getTokenExpiry(token: string): number {
     if (parts.length !== 3 || !parts[1]) {
       return Date.now() + 3600 * 1000
     }
-    const decoded = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')))
-    if (decoded?.exp) {
-      return decoded.exp * 1000 - 5 * 60 * 1000
+    const decoded: unknown = JSON.parse(atob(parts[1].replaceAll('-', '+').replaceAll('_', '/')))
+    if (
+      typeof decoded === 'object' &&
+      decoded !== null &&
+      'exp' in decoded &&
+      typeof (decoded as { exp: unknown }).exp === 'number'
+    ) {
+      return (decoded as { exp: number }).exp * 1000 - 5 * 60 * 1000
     }
   } catch {}
   return Date.now() + 3600 * 1000

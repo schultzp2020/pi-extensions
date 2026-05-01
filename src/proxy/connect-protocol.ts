@@ -16,7 +16,7 @@ export function createConnectFrameParser(
   return (incoming: Buffer) => {
     pending = Buffer.concat([pending, incoming])
     while (pending.length >= 5) {
-      const flags = pending[0]!
+      const [flags] = pending
       const msgLen = pending.readUInt32BE(1)
       if (msgLen > MAX_FRAME_SIZE) {
         pending = Buffer.alloc(0)
@@ -49,7 +49,7 @@ export function decodeConnectUnaryBody(payload: Uint8Array): Uint8Array | null {
   }
   let offset = 0
   while (offset + 5 <= payload.length) {
-    const flags = payload[offset]!
+    const flags = payload[offset]
     const view = new DataView(payload.buffer, payload.byteOffset + offset, payload.byteLength - offset)
     const messageLength = view.getUint32(1, false)
     const frameEnd = offset + 5 + messageLength
@@ -70,7 +70,7 @@ export function decodeConnectUnaryBody(payload: Uint8Array): Uint8Array | null {
 export function parseConnectEndStream(data: Uint8Array): Error | null {
   try {
     const payload = JSON.parse(new TextDecoder().decode(data)) as { error?: { code?: string; message?: string } }
-    const error = payload?.error
+    const { error } = payload
     if (error) {
       const code = error.code ?? 'unknown'
       const message = error.message ?? 'Unknown error'

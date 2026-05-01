@@ -1,12 +1,10 @@
-import { describe, it, beforeEach, afterEach, expect } from 'vitest'
 import { mkdirSync, rmSync } from 'node:fs'
-import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import {
-  resolveConversationState,
-  persistConversation,
-  invalidateConversationState,
-} from './conversation-state.ts'
+import { join } from 'node:path'
+
+import { describe, it, beforeEach, afterEach, expect } from 'vitest'
+
+import { resolveConversationState, persistConversation, invalidateConversationState } from './conversation-state.ts'
 
 const TEST_DIR = join(tmpdir(), `pi-cursor-test-${process.pid}`)
 
@@ -38,8 +36,8 @@ describe('conversation-state', () => {
 
     // Should restore from disk
     const restored = resolveConversationState('test-key', { conversationDiskDir: TEST_DIR })
-    expect(Buffer.from(restored.checkpoint!)).toEqual(Buffer.from([1, 2, 3]))
-    expect(Buffer.from(restored.blobStore.get('abc')!)).toEqual(Buffer.from([4, 5, 6]))
+    expect(Buffer.from(restored.checkpoint as Uint8Array)).toEqual(Buffer.from([1, 2, 3]))
+    expect(Buffer.from(restored.blobStore.get('abc') as Uint8Array)).toEqual(Buffer.from([4, 5, 6]))
     expect(restored.conversationId).toBe(stored.conversationId)
   })
 

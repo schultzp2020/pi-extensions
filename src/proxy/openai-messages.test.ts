@@ -66,9 +66,9 @@ describe('parseMessages', () => {
     ]
     const result = parseMessages(messages)
     expect(result.toolResults).toHaveLength(1)
-    expect(result.toolResults[0]!.toolCallId).toBe('tc1')
-    expect(result.toolResults[0]!.name).toBe('read')
-    expect(result.toolResults[0]!.content).toBe('file contents')
+    expect(result.toolResults[0].toolCallId).toBe('tc1')
+    expect(result.toolResults[0].name).toBe('read')
+    expect(result.toolResults[0].content).toBe('file contents')
   })
 
   it('builds conversation turns from user/assistant pairs', () => {
@@ -79,8 +79,8 @@ describe('parseMessages', () => {
     ]
     const result = parseMessages(messages)
     expect(result.turns).toHaveLength(1)
-    expect(result.turns[0]!.userText).toBe('First question')
-    expect(result.turns[0]!.assistantText).toBe('First answer')
+    expect(result.turns[0].userText).toBe('First question')
+    expect(result.turns[0].assistantText).toBe('First answer')
     expect(result.userText).toBe('Second question')
   })
 
@@ -94,10 +94,10 @@ describe('parseMessages', () => {
     ]
     const result = parseMessages(messages)
     expect(result.turns).toHaveLength(2)
-    expect(result.turns[0]!.userText).toBe('Q1')
-    expect(result.turns[0]!.assistantText).toBe('A1')
-    expect(result.turns[1]!.userText).toBe('Q2')
-    expect(result.turns[1]!.assistantText).toBe('A2')
+    expect(result.turns[0].userText).toBe('Q1')
+    expect(result.turns[0].assistantText).toBe('A1')
+    expect(result.turns[1].userText).toBe('Q2')
+    expect(result.turns[1].assistantText).toBe('A2')
     expect(result.userText).toBe('Q3')
   })
 
@@ -134,7 +134,7 @@ describe('selectToolsForChoice', () => {
   it('filters to specific function', () => {
     const result = selectToolsForChoice(tools, { type: 'function', function: { name: 'read' } })
     expect(result).toHaveLength(1)
-    expect(result[0]!.function.name).toBe('read')
+    expect(result[0].function.name).toBe('read')
   })
 
   it('returns empty when specific function not found', () => {

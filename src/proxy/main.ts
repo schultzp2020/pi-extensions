@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 /**
  * Proxy HTTP server — main entry point.
  *
@@ -10,10 +11,9 @@
  *   *                          → 404
  */
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
-import { createInterface } from 'node:readline'
-import { randomUUID } from 'node:crypto'
-import { join } from 'node:path'
 import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { createInterface } from 'node:readline'
 
 import { create, fromBinary, fromJson, toBinary } from '@bufbuild/protobuf'
 import type { JsonValue } from '@bufbuild/protobuf'
@@ -31,13 +31,29 @@ import {
   McpToolDefinitionSchema,
   type McpToolDefinition,
   ModelDetailsSchema,
-  ResumeActionSchema,
   UserMessageActionSchema,
   UserMessageSchema,
 } from '../proto/agent_pb.ts'
-import { configureInternalApi, getAccessToken, getCachedModels, handleInternalRequest, startHeartbeatMonitor } from './internal-api.ts'
+import { persistConversation, resolveConversationState, type ConversationConfig } from './conversation-state.ts'
+import { CursorSession, type SessionOptions } from './cursor-session.ts'
+import {
+  configureInternalApi,
+  getAccessToken,
+  getCachedModels,
+  handleInternalRequest,
+  startHeartbeatMonitor,
+} from './internal-api.ts'
 import { discoverCursorModels, type CursorModel } from './models.ts'
-import { type OpenAIMessage, type OpenAIToolDef, parseMessages, selectToolsForChoice, textContent } from './openai-messages.ts'
+import { MCP_TOOL_PREFIX } from './native-tools.ts'
+import { type OpenAIMessage, type OpenAIToolDef, parseMessages, selectToolsForChoice } from './openai-messages.ts'
+import {
+  collectNonStreamingResponse,
+  createSSECtx,
+  type PumpResult,
+  pumpSession,
+  SSE_HEADERS,
+} from './openai-stream.ts'
+import { buildRequestContext } from './request-context.ts'
 import {
   closeAllSessions,
   deriveConversationKey,
@@ -47,11 +63,6 @@ import {
   removeActiveSession,
   setActiveSession,
 } from './session-manager.ts'
-import { CursorSession, type SessionOptions } from './cursor-session.ts'
-import { collectNonStreamingResponse, createSSECtx, type PumpResult, pumpSession, SSE_HEADERS } from './openai-stream.ts'
-import { persistConversation, resolveConversationState, type ConversationConfig } from './conversation-state.ts'
-import { buildRequestContext } from './request-context.ts'
-import { MCP_TOOL_PREFIX } from './native-tools.ts'
 
 // ── Types ──
 
@@ -147,7 +158,7 @@ function buildCursorRequest(
   modelId: string,
   systemPrompt: string,
   userText: string,
-  turns: Array<{ userText: string; assistantText: string }>,
+  turns: { userText: string; assistantText: string }[],
   conversationId: string,
   checkpoint: Uint8Array | null,
   blobStore: Map<string, Uint8Array>,
@@ -229,35 +240,8 @@ function buildCursorRequest(
   }
 }
 
-function buildResumeRequest(
-  conversationId: string,
-  checkpoint: Uint8Array | null,
-  mcpTools: McpToolDefinition[],
-  cloudRule?: string,
-): { requestBytes: Uint8Array } {
-  const conversationState = (checkpoint ? decodeCheckpointState(checkpoint) : null) ?? create(ConversationStateStructureSchema, {})
-
-  const action = create(ConversationActionSchema, {
-    action: {
-      case: 'resumeAction',
-      value: create(ResumeActionSchema, {
-        requestContext: buildRequestContext(mcpTools, cloudRule),
-      }),
-    },
-  })
-
-  const runRequest = create(AgentRunRequestSchema, {
-    conversationState,
-    action,
-    conversationId,
-  })
-
-  const clientMessage = create(AgentClientMessageSchema, {
-    message: { case: 'runRequest', value: runRequest },
-  })
-
-  return { requestBytes: toBinary(AgentClientMessageSchema, clientMessage) }
-}
+// buildResumeRequest is reserved for future checkpoint resume functionality.
+// It requires conversationId, checkpoint, mcpTools, and cloudRule parameters.
 
 // ── Models endpoint ──
 
@@ -298,7 +282,7 @@ async function handleChatCompletion(
   }
 
   const { model: modelId, messages, stream = true, tools = [], tool_choice } = body
-  const sessionId = (req.headers['x-session-id'] as string) ?? 'default'
+  const sessionId = (req.headers['x-session-id'] as string | undefined) ?? 'default'
   const sessionKey = deriveSessionKey(sessionId, messages)
   const convKey = deriveConversationKey(sessionId, messages)
 
@@ -327,7 +311,7 @@ async function handleChatCompletion(
           },
         })
         res.writeHead(200, SSE_HEADERS)
-        const reader = readableStream.getReader()
+        const reader = readableStream.getReader() as ReadableStreamDefaultReader<Uint8Array>
         void pipeReaderToResponse(reader, res)
       } else {
         const response = await collectNonStreamingResponse(existingSession, modelId)
@@ -384,7 +368,7 @@ async function handleChatCompletion(
       },
     })
     res.writeHead(200, SSE_HEADERS)
-    const reader = readableStream.getReader()
+    const reader = readableStream.getReader() as ReadableStreamDefaultReader<Uint8Array>
     void pipeReaderToResponse(reader, res)
   } else {
     const response = await collectNonStreamingResponse(session, modelId)
@@ -402,10 +386,10 @@ async function pumpAndFinalize(
   session: CursorSession,
   ctx: ReturnType<typeof createSSECtx>,
   sessionKey: string,
-  convKey: string,
-  convConfig: ConversationConfig,
-  mcpTools: McpToolDefinition[],
-  cloudRule?: string,
+  _convKey: string,
+  _convConfig: ConversationConfig,
+  _mcpTools: McpToolDefinition[],
+  _cloudRule?: string,
 ): Promise<void> {
   try {
     const result: PumpResult = await pumpSession(session, ctx)
@@ -418,8 +402,8 @@ async function pumpAndFinalize(
       removeActiveSession(sessionKey)
       session.close()
     }
-  } catch (err) {
-    console.error('[proxy] pumpSession error:', err)
+  } catch (error) {
+    console.error('[proxy] pumpSession error:', error)
     removeActiveSession(sessionKey)
     session.close()
     ctx.close()
@@ -495,8 +479,8 @@ async function main(): Promise<void> {
   try {
     models = await discoverCursorModels(config.accessToken)
     console.error(`[proxy] Discovered ${String(models.length)} models`)
-  } catch (err) {
-    console.error('[proxy] Model discovery failed:', err)
+  } catch (error) {
+    console.error('[proxy] Model discovery failed:', error)
   }
 
   // Update internal API with discovered models
@@ -525,8 +509,8 @@ async function main(): Promise<void> {
     }
 
     if (req.method === 'POST' && url.pathname === '/v1/chat/completions') {
-      void handleChatCompletion(req, res, convConfig).catch((err) => {
-        console.error('[proxy] Chat completion error:', err)
+      void handleChatCompletion(req, res, convConfig).catch((error) => {
+        console.error('[proxy] Chat completion error:', error)
         if (!res.headersSent) {
           errorResponse(res, 500, 'Internal server error')
         }
@@ -572,7 +556,7 @@ async function main(): Promise<void> {
   })
 }
 
-main().catch((err) => {
-  console.error('[proxy] Fatal:', err)
+main().catch((error) => {
+  console.error('[proxy] Fatal:', error)
   process.exit(1)
 })
