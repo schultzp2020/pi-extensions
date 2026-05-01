@@ -115,9 +115,8 @@ export async function pushToken(port: number, accessToken: string): Promise<void
   }
 }
 
-async function refreshModels(port: number): Promise<CursorModel[]> {
-  const res = await fetch(`http://localhost:${String(port)}/internal/refresh-models`, {
-    method: 'POST',
+async function getModels(port: number): Promise<CursorModel[]> {
+  const res = await fetch(`http://localhost:${String(port)}/internal/models`, {
     signal: AbortSignal.timeout(MODEL_REFRESH_TIMEOUT_MS),
   })
   const data = (await res.json()) as { models: CursorModel[] }
@@ -142,7 +141,7 @@ export async function connectToProxy(
       await pushToken(existing.port, accessToken)
     }
     startHeartbeat(existing.port, existing.pid, sessionId)
-    const models = await refreshModels(existing.port)
+    const models = await getModels(existing.port)
     return { port: existing.port, models }
   }
 
