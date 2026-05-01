@@ -78,9 +78,11 @@ async function pushTokenToProxy(port: number, accessToken: string): Promise<void
 // ── Extension factory ──
 
 export default async function (pi: ExtensionAPI): Promise<void> {
+  console.error('[pi-cursor] Extension loading...')
   const sessionId = crypto.randomUUID()
   let currentPort: number | null = null
   let models: CursorModel[] = loadModelCache()
+  console.error(`[pi-cursor] Loaded ${String(models.length)} cached models`)
 
   // ── OAuth login ──
 
@@ -123,9 +125,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
         refreshToken: onRefreshToken,
         getApiKey: (cred) => cred.access,
         modifyModels(registeredModels, credentials) {
-          // Fire-and-forget: connect to proxy and refresh models
-          // modifyModels is sync return but we need async work,
-          // so we kick off the connection and re-register once ready
+          console.error('[pi-cursor] modifyModels called, launching proxy...')
           void connectAndRefresh(credentials.access)
           return registeredModels
         },
@@ -144,12 +144,14 @@ export default async function (pi: ExtensionAPI): Promise<void> {
 
   async function connectAndRefresh(accessToken: string): Promise<void> {
     try {
+      console.error('[pi-cursor] connectAndRefresh: connecting to proxy...')
       const result = await connectToProxy(sessionId, accessToken)
       currentPort = result.port
+      console.error(`[pi-cursor] Proxy on port ${String(result.port)}, got ${String(result.models.length)} models`)
       if (result.models.length > 0) {
         updateModels(result.models)
-        // Re-register with discovered models
         pi.registerProvider(PROVIDER_ID, buildProviderConfig())
+        console.error(`[pi-cursor] Provider re-registered with ${String(result.models.length)} models`)
       }
     } catch (error) {
       console.error(`[pi-cursor] Failed to connect to proxy: ${String(error)}`)
@@ -160,20 +162,26 @@ export default async function (pi: ExtensionAPI): Promise<void> {
 
   const existing = readPortFile()
   if (existing) {
+    console.error('[pi-cursor] Found existing proxy, attempting reconnect...')
     try {
       const result = await connectToProxy(sessionId, null)
       currentPort = result.port
       if (result.models.length > 0) {
         updateModels(result.models)
       }
+      console.error(`[pi-cursor] Reconnected to existing proxy on port ${String(result.port)}`)
     } catch {
-      // No existing proxy — wait for /login to provide credentials
+      console.error('[pi-cursor] No existing proxy available, waiting for /login')
     }
+  } else {
+    console.error('[pi-cursor] No existing proxy found, waiting for /login')
   }
 
   // ── Register provider ──
 
   pi.registerProvider(PROVIDER_ID, buildProviderConfig())
+  console.error(`[pi-cursor] Provider registered (${String(models.length)} models, port=${String(currentPort)})`)
+  console.error('[pi-cursor] Extension loaded. Run /login cursor to authenticate.')
 
   // ── Lifecycle: stop heartbeat on shutdown ──
 
