@@ -18,29 +18,8 @@ A [Pi](https://github.com/badlogic/pi) extension that gives you access to all yo
 
 ## Installation
 
-From npm:
-
 ```bash
-pi install @schultzp2020/pi-cursor
-```
-
-Or from source:
-
-```bash
-git clone https://github.com/schultzp2020/pi-extensions.git
-cd pi-extensions
-npm install
-npm run build
-```
-
-Then load via symlink:
-
-```bash
-# Windows
-mklink /D "%USERPROFILE%\.pi\agent\extensions\pi-cursor" "C:\path\to\pi-cursor"
-
-# macOS / Linux
-ln -s /path/to/pi-cursor ~/.pi/agent/extensions/pi-cursor
+pi install npm:@schultzp2020/pi-cursor
 ```
 
 ## Usage
@@ -50,10 +29,12 @@ ln -s /path/to/pi-cursor ~/.pi/agent/extensions/pi-cursor
 Inside Pi, run:
 
 ```
-/login cursor
+/login
 ```
 
-Your browser opens to Cursor's OAuth page. After you log in, Pi polls until authentication completes. Tokens are stored and refreshed automatically.
+Select **Cursor** from the provider dropdown, then your browser opens to Cursor's OAuth page. After you log in, Pi polls until authentication completes. Tokens are stored and refreshed automatically.
+
+> **Windows note:** A console window may appear briefly when the browser opens. This is harmless — you can close it safely.
 
 ### 2. Select a model
 
