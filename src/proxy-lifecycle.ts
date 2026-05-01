@@ -17,7 +17,7 @@ import { createInterface } from 'node:readline'
 import type { CursorModel } from './proxy/models.ts'
 
 const PORT_FILE = join(homedir(), '.pi', 'agent', 'cursor-proxy.json')
-const PROXY_ENTRY = resolve(import.meta.dirname, 'proxy', 'main.ts')
+const PROXY_ENTRY = resolve(import.meta.dirname, 'proxy', 'main.js')
 const HEARTBEAT_INTERVAL_MS = 10_000
 const PROXY_STARTUP_TIMEOUT_MS = 15_000
 const HEALTH_CHECK_TIMEOUT_MS = 2_000
@@ -154,7 +154,7 @@ export async function connectToProxy(
 }
 
 async function spawnProxy(sessionId: string, accessToken: string): Promise<{ port: number; models: CursorModel[] }> {
-  const child = spawn('node', ['--experimental-transform-types', PROXY_ENTRY], {
+  const child = spawn('node', [PROXY_ENTRY], {
     stdio: ['pipe', 'pipe', 'pipe'],
     detached: false,
     windowsHide: true,

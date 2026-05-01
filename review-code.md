@@ -15,13 +15,14 @@ The codebase is well-structured, cleanly layered, and demonstrates solid enginee
 
 ## Critical
 
-*None.*
+_None._
 
 ---
 
 ## High
 
 ### H1. Command injection via `fetchArgs` URL
+
 **File:** `src/proxy/cursor-messages.ts:221-226`  
 **Category:** Security
 
@@ -38,6 +39,7 @@ A malicious URL like `http://example.com'; rm -rf / #` would break out of the si
 ---
 
 ### H2. Missing `try/catch` on `JSON.parse` in internal API heartbeat and token endpoints
+
 **File:** `src/proxy/internal-api.ts:94, 106`  
 **Category:** Robustness / Error handling
 
@@ -58,6 +60,7 @@ The chat completion handler in `main.ts:270` correctly wraps its parse in try/ca
 ---
 
 ### H3. `EventQueue.next()` creates unresolvable promises on session close
+
 **File:** `src/proxy/event-queue.ts:45-49`, `src/proxy/cursor-session.ts`  
 **Category:** Resource leak / Correctness
 
@@ -72,6 +75,7 @@ The `pushForce` on the `done` event (cursor-session.ts:628) handles the normal c
 ---
 
 ### H4. Conversation state module-level cache never evicted
+
 **File:** `src/proxy/conversation-state.ts` (entire module)  
 **Category:** Resource leak
 
@@ -86,6 +90,7 @@ For long-running proxy processes with many conversation keys, this accumulates i
 ## Medium
 
 ### M1. `pumpAndFinalize` doesn't handle `retry` outcome
+
 **File:** `src/proxy/main.ts:391-413`  
 **Category:** Correctness
 
@@ -98,10 +103,12 @@ The `pumpSession` function explicitly returns without writing stop/DONE for retr
 ---
 
 ### M2. `deriveSessionKey` and `deriveConversationKey` are nearly identical
+
 **File:** `src/proxy/session-manager.ts:20-34`  
 **Category:** Correctness / Subtle bug risk
 
 Both functions hash a string derived from `sessionId` + first user message text. The only difference is the prefix `session:` vs `conv:`. This means:
+
 - A conversation is identified solely by the first user message (first 200 chars). Subsequent messages don't affect the key.
 - Two completely different conversations that happen to start with the same first user message will collide.
 
@@ -110,6 +117,7 @@ This is a design tradeoff, not a bug per se, but it can cause incorrect conversa
 ---
 
 ### M3. Non-streaming response doesn't handle tool calls gracefully
+
 **File:** `src/proxy/openai-stream.ts:285-290`  
 **Category:** API contract
 
@@ -120,6 +128,7 @@ This means `stream: false` cannot work with any model that decides to use tools.
 ---
 
 ### M4. `configureInternalApi` called twice in `main.ts` — second call overwrites `onModelsRefreshed`
+
 **File:** `src/proxy/main.ts:460-467, 475-483`  
 **Category:** Correctness
 
@@ -130,6 +139,7 @@ This means `stream: false` cannot work with any model that decides to use tools.
 ---
 
 ### M5. `readBody` has no size limit — potential DoS
+
 **File:** `src/proxy/main.ts:82-91`, `src/proxy/internal-api.ts:75-83`  
 **Category:** Robustness / Security
 
@@ -140,6 +150,7 @@ Both `readBody` implementations read the entire request body into memory with no
 ---
 
 ### M6. `getTokenExpiry` base64 decode uses `atob` with incorrect URL-safe reversal
+
 **File:** `src/auth.ts:89`  
 **Category:** Correctness
 
@@ -152,6 +163,7 @@ The `atob()` function expects standard base64 and the code reverses URL-safe cha
 ---
 
 ### M7. `WriteResultSchema` uses raw `byteLength` instead of the actual written size
+
 **File:** `src/proxy/cursor-session.ts:208`  
 **Category:** Correctness
 
@@ -164,6 +176,7 @@ This measures the size of the _tool result content_ string, not the actual file 
 ---
 
 ### M8. H2 session not properly cleaned up on spawn failure
+
 **File:** `src/proxy/cursor-session.ts:394-413`  
 **Category:** Resource leak
 
@@ -174,6 +187,7 @@ If `h2Connect` succeeds but `session.request(headers)` throws (e.g., invalid hea
 ## Low
 
 ### L1. `flags` extracted via array indexing has inconsistent typing
+
 **File:** `src/proxy/connect-protocol.ts:26`  
 **Category:** Code quality
 
@@ -186,6 +200,7 @@ This is fine for Buffer (returns `number`), but the destructuring style is unusu
 ---
 
 ### L2. `formatClaudeName` produces odd spacing for some model IDs
+
 **File:** `src/proxy/models.ts:120-125`  
 **Category:** Code quality
 
@@ -193,7 +208,8 @@ This is fine for Buffer (returns `number`), but the destructuring style is unusu
 function formatClaudeName(parts: string[]): string {
   const [version, family, ...rest] = parts
   return ['Claude', family ? formatToken(family) : '', version || '', ...rest.map(formatToken)]
-    .filter(Boolean).join(' ')
+    .filter(Boolean)
+    .join(' ')
 }
 ```
 
@@ -202,6 +218,7 @@ For `claude-4-sonnet`, parts = `['4', 'sonnet']`, producing `Claude Sonnet 4`. F
 ---
 
 ### L3. Dead `_flushedExecs` field partially redundant with `pendingExecs`
+
 **File:** `src/proxy/cursor-session.ts:298, 370-371, 512, 537`  
 **Category:** Code quality
 
@@ -210,6 +227,7 @@ For `claude-4-sonnet`, parts = `['4', 'sonnet']`, producing `Claude Sonnet 4`. F
 ---
 
 ### L4. `removeActiveSession` calls `session.close()` — double-close with `pumpAndFinalize`
+
 **File:** `src/proxy/session-manager.ts:50-54`, `src/proxy/main.ts:405`
 
 `removeActiveSession` calls `entry.session.close()`, and `pumpAndFinalize` also calls `session.close()` (line 405) after `removeActiveSession`. The `CursorSession.close()` method is idempotent (guarded by `if (this._alive)`), so this is harmless but indicates a confused ownership pattern.
@@ -217,6 +235,7 @@ For `claude-4-sonnet`, parts = `['4', 'sonnet']`, producing `Claude Sonnet 4`. F
 ---
 
 ### L5. `isMaxMode` / model ID stripping in `buildCursorRequest` duplicated with `models.ts` logic
+
 **File:** `src/proxy/main.ts:221-224`  
 **Category:** Code quality
 
@@ -230,10 +249,12 @@ The `-max` suffix convention is also encoded in `models.ts:188-195` where max va
 ---
 
 ### L6. `collectNonStreamingResponse` returns a `Response` object (web API) from a Node.js HTTP server
+
 **File:** `src/proxy/openai-stream.ts:278, main.ts:315-317`  
 **Category:** Code quality
 
 The function returns a `Response` (Fetch API), which is then manually decomposed in `main.ts`:
+
 ```typescript
 res.writeHead(response.status, Object.fromEntries(response.headers.entries()))
 res.end(await response.text())
@@ -244,6 +265,7 @@ This works but adds unnecessary overhead (serialization to Response, then deseri
 ---
 
 ### L7. `looksLikeRawModelName` has a fragile heuristic
+
 **File:** `src/proxy/models.ts:107-113`
 
 The regex `RAW_NAME_PATTERN = /^[a-z0-9][a-z0-9._-]*$/` classifies any lowercase-with-dots name as "raw" and triggers the pretty-name generator. A display name like `o4-mini` would be treated as raw and pretty-printed, which might not always be desirable.
@@ -253,27 +275,35 @@ The regex `RAW_NAME_PATTERN = /^[a-z0-9][a-z0-9._-]*$/` classifies any lowercase
 ## Test Coverage Gaps
 
 ### T1. No tests for `CursorSession` batch state machine
+
 The most complex component — the three-state batch machine (`streaming → collecting → flushed`) with its flush guards, checkpoint tracking, and tool result routing — has zero unit tests. This is the highest-risk untested code.
 
 ### T2. No tests for `cursor-messages.ts` dispatch
+
 The 600-line message processing module (`processServerMessage`, `handleExecMessage`, `nativeToMcpRedirect`, etc.) has no tests. This is critical correctness code that translates between two protocols.
 
 ### T3. No tests for `openai-stream.ts` SSE output format
+
 The SSE stream writer's output format (chunk structure, `finish_reason`, keepalive, usage aggregation) is untested. OpenAI API conformance depends on this.
 
 ### T4. No tests for `session-manager.ts` key derivation or eviction
+
 `deriveSessionKey` and `deriveConversationKey` collision behavior is untested. TTL eviction is untested.
 
 ### T5. No tests for `models.ts` model normalization
+
 `normalizeAvailableModel`, `prettyCursorModelName`, and the dual-strategy fallback are untested despite containing significant logic.
 
 ### T6. No tests for `main.ts` request handling
+
 The chat completion handler, `buildCursorRequest`, `pumpAndFinalize`, and the request routing logic are all untested.
 
 ### T7. No tests for `auth.ts` or `pkce.ts`
+
 OAuth polling, token refresh, and PKCE generation are untested.
 
 ### T8. No tests for `proxy-lifecycle.ts`
+
 Proxy spawning, port file management, and heartbeat lifecycle are untested.
 
 ---

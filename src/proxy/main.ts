@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { unlinkSync } from 'node:fs'
 /**
  * Proxy HTTP server — main entry point.
  *
@@ -11,8 +12,6 @@ import { randomUUID } from 'node:crypto'
  *   *                          → 404
  */
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
-import { jsonResponse, readBody } from './http-helpers.ts'
-import { unlinkSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createInterface } from 'node:readline'
@@ -44,6 +43,7 @@ import {
   evictStaleConversations,
 } from './conversation-state.ts'
 import { CursorSession, type SessionOptions } from './cursor-session.ts'
+import { jsonResponse, readBody } from './http-helpers.ts'
 import {
   configureInternalApi,
   getAccessToken,
@@ -86,7 +86,6 @@ interface ChatCompletionRequest {
   tools?: OpenAIToolDef[]
   tool_choice?: string | { type: string; function: { name: string } }
 }
-
 
 function errorResponse(res: ServerResponse, status: number, message: string, code = 'server_error'): void {
   jsonResponse(res, status, { error: { message, type: 'server_error', code } })

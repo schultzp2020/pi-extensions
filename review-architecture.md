@@ -9,17 +9,17 @@
 
 ## Scorecard
 
-| Dimension | Score | Summary |
-|---|:---:|---|
-| Module boundaries | 4/5 | Clean separation, no circular deps, one oversized module |
-| Coupling | 4/5 | Transport and auth are isolatable; main.ts is a thick orchestrator |
-| Scalability | 3/5 | Port-file approach works for ~10 sessions; fragile beyond that |
-| Extension API usage | 4/5 | Correct OAuth + provider registration; minor gaps |
-| Proto vendoring | 2/5 | 16K generated file without .proto source is a maintenance liability |
-| Error propagation | 4/5 | ADR 0002 split works well in practice; some silent swallows |
-| State management | 3/5 | Module-level mutable state in 4 files; testability suffers |
-| Process lifecycle | 3/5 | Solid happy path; zombie risk on Windows, no PID reuse guard |
-| Testability | 3/5 | Pure utilities well-tested; integration & protocol layers untested |
+| Dimension           | Score | Summary                                                             |
+| ------------------- | :---: | ------------------------------------------------------------------- |
+| Module boundaries   |  4/5  | Clean separation, no circular deps, one oversized module            |
+| Coupling            |  4/5  | Transport and auth are isolatable; main.ts is a thick orchestrator  |
+| Scalability         |  3/5  | Port-file approach works for ~10 sessions; fragile beyond that      |
+| Extension API usage |  4/5  | Correct OAuth + provider registration; minor gaps                   |
+| Proto vendoring     |  2/5  | 16K generated file without .proto source is a maintenance liability |
+| Error propagation   |  4/5  | ADR 0002 split works well in practice; some silent swallows         |
+| State management    |  3/5  | Module-level mutable state in 4 files; testability suffers          |
+| Process lifecycle   |  3/5  | Solid happy path; zombie risk on Windows, no PID reuse guard        |
+| Testability         |  3/5  | Pure utilities well-tested; integration & protocol layers untested  |
 
 **Overall: 3.3 / 5** — A well-structured first implementation with clear module boundaries and good separation of concerns at the macro level. The main risks are: vendored proto maintenance, module-level global state hindering testability, and some gaps in process lifecycle robustness.
 
@@ -28,6 +28,7 @@
 ## 1. Module Boundaries (4/5)
 
 **What's good:**
+
 - **Zero circular dependencies** confirmed via import graph analysis. The dependency DAG flows cleanly:
   ```
   index.ts → auth.ts, proxy-lifecycle.ts
@@ -40,6 +41,7 @@
 - **CONTEXT.md** provides excellent domain language definitions that keep naming consistent.
 
 **Concerns:**
+
 - **`proxy/main.ts` (559 lines)** is a fat orchestrator. It imports 10 internal modules and contains both HTTP routing, request building (`buildCursorRequest` at ~80 lines), and the pump/finalize lifecycle. The request building logic (protobuf construction from OpenAI messages) should be extracted into its own module (e.g., `request-builder.ts`).
 - **`proxy/cursor-messages.ts` (602 lines)** mixes three distinct responsibilities: (a) interaction update handling, (b) KV blob handling, (c) exec dispatch with native-to-MCP redirection. The `nativeToMcpRedirect()` function (~130 lines) duplicates classification logic that also exists in `native-tools.ts:classifyExecMessage()`. The native redirection logic in cursor-messages.ts could live in native-tools.ts instead.
 - **`proxy/cursor-session.ts` (772 lines)** is the largest non-proto file. It mixes two concerns: (a) the `CursorSession` class with H2 + batch state machine, and (b) result-sending functions (`sendMcpResultFrame`, `sendNativeResultFrame`) that are protocol serialization. These result-sending functions (~150 lines) could move to a `result-framing.ts` module.
@@ -47,23 +49,27 @@
 ## 2. Coupling (4/5)
 
 **What's good:**
+
 - **Transport is abstractable.** The H2 connection is encapsulated in `CursorSession`. The rest of the proxy only sees `SessionEvent` (a simple discriminated union). Swapping H2 for WebSocket or a mock would only require changing `cursor-session.ts`.
 - **Auth is isolated.** `auth.ts` + `pkce.ts` are pure functions with no proxy knowledge. The extension pushes tokens to the proxy via `/internal/token` HTTP endpoint — a clean boundary.
 - **Connect protocol** is a standalone framing library with no business logic dependency.
 - **The proxy talks to the extension only via stdout (startup) and HTTP (runtime)** — no shared memory, no direct function calls.
 
 **Concerns:**
+
 - **`proxy/models.ts` imports `callCursorUnaryRpc` from `cursor-session.ts`** (line 23). This creates a coupling between model discovery and the session module. `callCursorUnaryRpc` is a standalone H2 helper that doesn't use `CursorSession` at all — it should live in its own module (e.g., `cursor-rpc.ts`).
 - **`proxy/main.ts` directly instantiates `CursorSession`** with raw protobuf bytes, blob stores, and MCP tools. There's no factory or abstraction — making it hard to test `handleChatCompletion` without a real H2 connection.
 
 ## 3. Scalability (3/5)
 
 **What's good:**
+
 - **Shared proxy via port file** is architecturally sound for the target use case (1 user, 1-10 Pi sessions). One proxy process, one H2 connection pool, shared model cache.
 - **Session eviction** (30-min TTL) and heartbeat timeout (30s) prevent resource leaks.
 - **Conversation persistence** to disk means proxy restarts don't lose state.
 
 **Limits and risks:**
+
 - **Port file is not atomic on Windows.** `writeFileSync` + `readFileSync` can race between extension instances. Two extensions launching simultaneously could both try to spawn a proxy (the second spawn would either fail or create a zombie).
 - **No file locking.** The port file doesn't use `flock` or equivalent. Concurrent writes could produce partial reads.
 - **Health check + spawn is not an atomic operation.** Between `checkProxyHealth()` returning false and `spawnProxy()` starting, another extension could have already spawned one.
@@ -74,12 +80,14 @@
 ## 4. Extension API Usage (4/5)
 
 **What's good:**
+
 - **`pi.registerProvider()`** is used correctly with `api: 'openai-completions'`, proper model configs, and `baseUrl` pointing at the local proxy.
 - **OAuth integration** follows Pi's `OAuthLoginCallbacks` contract: `onAuth({url})` → browser open, then poll.
 - **`modifyModels` callback** is cleverly used to push fresh tokens to the proxy on every model access — ensuring the proxy always has a valid token.
 - **`pi.on('session_shutdown')` properly cleans up heartbeat timers.**
 
 **Concerns:**
+
 - **Provider re-registration after model refresh is missing.** When `connectToProxy` discovers models and calls `updateModels()`, it saves to cache but never calls `register()` again. The provider's model list is stale until the next extension load. The `modifyModels` hook could handle this, but currently it only calls `ensureProxy` and returns `registeredModels` unchanged.
 - **No `pi.appendEntry()` usage** for user-visible status messages during proxy startup. The 2-5 second startup delay is silent — the user sees nothing until models appear.
 - **`loadStoredToken()` reads `~/.pi/agent/auth.json` directly** rather than using Pi's credential API. This is a fragile coupling to Pi's internal storage format that could break if Pi changes its auth storage.
@@ -89,12 +97,14 @@
 **The problem:** `src/proto/agent_pb.ts` is a 16,135-line generated TypeScript file vendored without its source `.proto` file. The `aiserver.proto` (49 lines) is properly sourced and can be regenerated.
 
 **Why this is risky:**
+
 - **No `.proto` source means no regeneration.** When Cursor updates their protobuf schema (new fields, renamed types, changed field numbers), someone must manually diff the generated TypeScript to understand what changed. This is error-prone and time-consuming.
 - **No semantic understanding.** Generated code obscures the actual wire format. Debugging protocol issues requires reverse-engineering field numbers.
 - **Version pinning is implicit.** There's no record of which Cursor client version this proto corresponds to. The `CURSOR_CLIENT_VERSION = 'cli-2026.01.09-231024f'` in cursor-session.ts is a hint, but it's not tied to the proto file.
 - **16K lines of unauditable code.** Lint rules are globally disabled for `src/proto/**` (correct), but you can't meaningfully review or audit this file.
 
 **Mitigations in place:**
+
 - The code treats proto types defensively, using `as any` casts in cursor-messages.ts where the generated unions require it.
 - The `sendUnknownExecResult()` function handles proto fields not in the current schema by inspecting `$unknown` wire data — a good forward-compatibility measure.
 
@@ -104,19 +114,21 @@
 
 **ADR 0002's three-layer split works well in practice:**
 
-| Layer | Handles | Evidence |
-|---|---|---|
+| Layer                  | Handles                                                     | Evidence                                                                             |
+| ---------------------- | ----------------------------------------------------------- | ------------------------------------------------------------------------------------ |
 | Proxy (cursor-session) | H2 errors, stream death, blob-not-found, inactivity timeout | `classifyConnectError()` maps to `RetryHint`; `finish()` always emits a `done` event |
-| Extension (index.ts) | Token refresh, proxy re-spawn | `onRefreshToken()` refreshes and pushes to proxy |
-| Pi | User-visible errors | Only sees HTTP 4xx/5xx from proxy |
+| Extension (index.ts)   | Token refresh, proxy re-spawn                               | `onRefreshToken()` refreshes and pushes to proxy                                     |
+| Pi                     | User-visible errors                                         | Only sees HTTP 4xx/5xx from proxy                                                    |
 
 **What's good:**
+
 - **`EventQueue.pushForce()`** ensures the terminal `done` event is never dropped, even if the queue is full.
 - **`doneEventSent` flag** prevents duplicate done events.
 - **`pumpSession` surfaces retryable errors** separately from terminal ones via `PumpResult.outcome === 'retry'`.
 - **Connect end-stream errors** are parsed and classified with specific retry hints.
 
 **Concerns:**
+
 - **Silent `catch {}` blocks** appear in 12+ locations across `index.ts`, `proxy-lifecycle.ts`, and `internal-api.ts`. Examples:
   - `proxy-lifecycle.ts:sendHeartbeat()` — heartbeat failure is completely silent. If the proxy dies, the extension won't know until the next `ensureProxy` call.
   - `index.ts:pushToken()` — token push failure is silent. The proxy might be using an expired token.
@@ -128,19 +140,21 @@
 
 **Module-level mutable state exists in 4 files:**
 
-| File | Mutable state | Scope |
-|---|---|---|
-| `proxy-lifecycle.ts` | `activeConnection` (1 var) | Extension process — single active proxy connection |
-| `internal-api.ts` | `activeSessions`, `currentAccessToken`, `cachedModels`, `onModelsRefreshed`, `shutdownCallback` (5 vars) | Proxy process |
-| `session-manager.ts` | `activeSessions` (1 map) | Proxy process |
-| `conversation-state.ts` | `cache` (1 map) | Proxy process |
+| File                    | Mutable state                                                                                            | Scope                                              |
+| ----------------------- | -------------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
+| `proxy-lifecycle.ts`    | `activeConnection` (1 var)                                                                               | Extension process — single active proxy connection |
+| `internal-api.ts`       | `activeSessions`, `currentAccessToken`, `cachedModels`, `onModelsRefreshed`, `shutdownCallback` (5 vars) | Proxy process                                      |
+| `session-manager.ts`    | `activeSessions` (1 map)                                                                                 | Proxy process                                      |
+| `conversation-state.ts` | `cache` (1 map)                                                                                          | Proxy process                                      |
 
 **Why this matters:**
+
 - **Testing requires module-level reset.** `conversation-state.ts` exports `invalidateConversationState()` specifically for tests, but `internal-api.ts` and `session-manager.ts` have no reset mechanism. You can't test `handleInternalRequest` in isolation without the module-level state leaking between tests.
 - **`configureInternalApi()` is called twice** during startup (lines in main.ts: first with empty models, then again after discovery). The second call silently overwrites the shutdown callback and models, but `activeSessions` from the first call persists — correct by accident, not by design.
 - **No encapsulation.** `currentAccessToken` in `internal-api.ts` is a bare `let` that any code with access to `getAccessToken()` reads. If two concurrent requests trigger token refresh, there's a potential TOCTOU race (though unlikely in practice since Node is single-threaded for I/O callbacks).
 
 **What's good:**
+
 - Within `CursorSession`, state is properly instance-scoped. Each session owns its own H2 connection, event queue, blob store reference, and batch state machine. No shared mutable state between sessions.
 - The extension side (`index.ts`) uses closure-scoped state (`currentPort`, `models`, `sessionId`) inside the exported function, avoiding true globals.
 
@@ -149,6 +163,7 @@
 ## 8. Process Lifecycle (3/5)
 
 **Happy path is solid:**
+
 1. Extension reads port file → health check → connect, OR spawn → read stdout ready signal → write port file.
 2. Extension sends heartbeats every 10s.
 3. Proxy monitors heartbeats — exits 30s after last heartbeat stops.
@@ -169,10 +184,12 @@
 ## 9. Testability (3/5)
 
 **Well-tested (with evidence):**
+
 - 7 test files, 54 tests, all passing.
 - Pure utility modules are thoroughly tested: `connect-protocol` (10 tests), `event-queue` (5 tests), `thinking-filter` (5 tests), `openai-messages` (8 tests), `native-tools` (7 tests), `conversation-state` (3 tests), proto smoke test (2 tests).
 
 **Untested and hard to test:**
+
 - **`cursor-session.ts`** — 772 lines, zero tests. The H2 connection and batch state machine are the most complex parts of the system. Testing requires either mocking `node:http2` or running a fake gRPC server. The tight coupling to H2 makes unit testing impractical without extracting the batch state machine into a pure function.
 - **`cursor-messages.ts`** — 602 lines, zero tests. The `processServerMessage` function takes 10 parameters (callbacks + state). It could be tested with mock protobuf messages, but the `any` casts and protobuf gymnastics make test setup verbose.
 - **`main.ts`** — 559 lines, zero tests. The HTTP handler, request builder, and pump lifecycle are all untested. `handleChatCompletion` is a 100-line function with 5 branches.
@@ -180,6 +197,7 @@
 - **`proxy-lifecycle.ts`** — 228 lines, zero tests. Process management is inherently hard to test, but the port file read/write and health check logic could be tested.
 
 **Integration testing story:**
+
 - No integration tests exist.
 - The plan (Task 19) mentions integration testing but provides no detail.
 - A useful integration test would: (a) start the proxy with a mock Cursor gRPC server, (b) send an OpenAI chat completion request, (c) verify SSE output. This requires a mock H2 server implementing the Connect protocol.
@@ -190,12 +208,14 @@
 ## Summary of Recommendations
 
 ### High Priority
+
 1. **Reconstruct `agent.proto`** from the generated TS. Track the Cursor client version it corresponds to.
 2. **Extract `ProxyContext`** to encapsulate module-level mutable state in `internal-api.ts`, `session-manager.ts`, and `conversation-state.ts`.
 3. **Add tests for `cursor-session.ts` batch state machine** by extracting it as a pure state transition function.
 4. **Fix JSON.parse without try/catch** in `internal-api.ts:handleInternalRequest()` (lines ~80, ~90).
 
 ### Medium Priority
+
 5. **Extract `callCursorUnaryRpc`** from `cursor-session.ts` into a standalone `cursor-rpc.ts` module.
 6. **Extract `buildCursorRequest`** from `main.ts` into `request-builder.ts`.
 7. **Add structured error types** (`CursorAuthError`, `CursorProtocolError`, `CursorTransientError`).
@@ -204,6 +224,7 @@
 10. **Start HTTP server before model discovery** in `main.ts` to reduce startup latency.
 
 ### Low Priority
+
 11. **Add `pi.appendEntry()` calls** during proxy startup for user-visible progress.
 12. **Add file locking** to port file read/write for robustness with concurrent launches.
 13. **Replace `loadStoredToken()` direct file access** with Pi's credential API if one exists.

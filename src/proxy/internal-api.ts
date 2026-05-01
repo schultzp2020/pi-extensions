@@ -6,8 +6,8 @@
  */
 import type { IncomingMessage, ServerResponse } from 'node:http'
 
-import { discoverCursorModels, type CursorModel } from './models.ts'
 import { jsonResponse, readBody } from './http-helpers.ts'
+import { discoverCursorModels, type CursorModel } from './models.ts'
 
 interface SessionHeartbeat {
   sessionId: string
@@ -61,7 +61,6 @@ export function startHeartbeatMonitor(): NodeJS.Timeout {
   }
   return timer
 }
-
 
 export async function handleInternalRequest(req: IncomingMessage, res: ServerResponse, path: string): Promise<void> {
   if (path === '/internal/health' && req.method === 'GET') {

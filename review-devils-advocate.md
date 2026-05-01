@@ -13,6 +13,7 @@ _Methodology: Adversarial — every design decision challenged, every failure mo
 ### Challenges
 
 **The complexity is just relocated, not eliminated.** Instead of managing an H2 connection across `streamSimple` calls, you now manage:
+
 - A child process lifecycle (spawn, health check, port file, heartbeat, orphan cleanup)
 - An HTTP-based internal API for token delivery, heartbeat, and model refresh
 - A session manager mapping OpenAI requests back to live Cursor sessions
@@ -39,7 +40,8 @@ The net result: **the proxy has more moving parts than an in-process approach wo
 **Stale port file on crash:**  
 If the proxy process is killed (e.g., `kill -9`, Windows Task Manager), the port file persists. `isProcessAlive` checks `process.kill(pid, 0)`, which works on Unix but **on Windows, `process.kill(pid, 0)` can return true for terminated processes** in some edge cases due to process handle recycling. A stale port file pointing to a recycled PID could cause the extension to send heartbeats/tokens to an unrelated process on the same port.
 
-**Heartbeat timeout math is fragile:**  
+**Heartbeat timeout math is fragile:**
+
 - Extension sends heartbeats every 10s (`HEARTBEAT_INTERVAL_MS = 10_000`)
 - Proxy times out sessions after 30s (`HEARTBEAT_TIMEOUT_MS = 30_000`)
 - Heartbeat monitor checks every 10s (`setInterval(..., 10_000)`)
@@ -115,6 +117,7 @@ Since the proxy is single-threaded Node.js, concurrent access within the process
 ### Token transport
 
 **Tokens are sent over plaintext HTTP (`index.ts:91-99`, `proxy-lifecycle.ts:97-107`):**
+
 ```typescript
 await fetch(`http://localhost:${port}/internal/token`, {
   method: 'POST',
@@ -125,6 +128,7 @@ await fetch(`http://localhost:${port}/internal/token`, {
 This is `http://localhost`, not HTTPS. While localhost traffic doesn't leave the machine, any local process can listen on the wire (Wireshark, packet capture, etc.). On multi-user systems, other users' processes might sniff the traffic.
 
 **Tokens pass through stdin in plaintext (`proxy-lifecycle.ts:144`):**
+
 ```typescript
 stdin.write(`${JSON.stringify({ accessToken })}\n`)
 ```
@@ -142,6 +146,7 @@ The access token is written to the child process's stdin as plain JSON. If proce
 ### JWT parsing
 
 `getTokenExpiry` in `auth.ts:79-92` uses `atob(parts[1].replaceAll('-', '+').replaceAll('_', '/'))` for base64url decoding. This is correct but fragile:
+
 - If the JWT has a non-standard format (e.g., Cursor changes to an opaque token), the fallback is `Date.now() + 3600 * 1000` (1 hour). This means **a permanently valid opaque token gets treated as expiring in 1 hour**, causing unnecessary refresh attempts.
 - The `catch {}` swallows all parsing errors silently.
 
@@ -175,6 +180,7 @@ The PKCE implementation in `pkce.ts` looks correct (32 bytes of randomness, SHA-
 ### Model cache staleness
 
 Models are cached in `~/.pi/agent/cursor-model-cache.json`. If Cursor adds or removes models, the cache serves stale data until:
+
 1. The user restarts Pi, or
 2. `refreshModels` is called via the internal API
 
@@ -191,6 +197,7 @@ There is **no periodic refresh**. A user could run for days on a stale model lis
 ### How it works
 
 `main.ts:148-149`:
+
 ```typescript
 const isMaxMode = modelId.endsWith('-max')
 const cursorModelId = isMaxMode ? modelId.slice(0, -4) : modelId
@@ -201,6 +208,7 @@ Models like `claude-4-sonnet-max` get the `-max` stripped, and `maxMode: true` i
 ### Fragility
 
 **What if a real model name ends in `-max`?** Looking at `models.ts:206`, the code explicitly checks:
+
 ```typescript
 if (id.endsWith('-max')) {
   return [{ ...base, supportsMaxMode: true }]
@@ -212,6 +220,7 @@ So if Cursor has a model literally named `foo-max`, it's registered as a max var
 **What if the model discovery reports `supportsMaxMode` but the `-max` variant doesn't actually work?** The extension creates the variant optimistically. If Cursor's backend doesn't support max mode for that model, the user gets a Cursor-side error.
 
 **The dual registration (`models.ts:210-218`) creates naming confusion:**
+
 ```typescript
 if (m.supportsMaxMode) {
   return [base, { ...base, id: `${id}-max`, name: `${name} (Max)` }]
@@ -227,6 +236,7 @@ This doubles the model list. If Cursor reports 30 models, 15 of which support ma
 ### What happens when Pi sends something unexpected?
 
 **Non-streaming requests with tool calls (`openai-stream.ts:277-282`):**
+
 ```typescript
 } else if (event.type === 'toolCall' || event.type === 'batchReady') {
   finalizeSession()
@@ -249,57 +259,71 @@ If Pi sends `stream: false` and Cursor decides to use tools, the response is a 5
 ## 9. Real-World Failure Modes Users Will Hit
 
 ### 1. "Cursor provider shows no models"
+
 **Cause:** Both model discovery RPCs fail (network issue, token expired, Cursor API change).  
 **Symptom:** `/model` shows "cursor" with an empty list.  
 **Recovery:** None visible to the user. Must `/login cursor` again and restart Pi.
 
 ### 2. "Proxy died mid-conversation"
+
 **Cause:** H2 connection dropped, 30s inactivity timeout, or heartbeat failure.  
 **Symptom:** Response stops mid-stream. User sees `[Error: inactivity timeout]` or `[Error: bridge connection lost]` inline.  
 **Recovery:** Retry the message. But the conversation state may be corrupted — the checkpoint might reflect a state the server no longer has.
 
 ### 3. "Tool calls work for a while, then stop"
+
 **Cause:** Cursor's 25-call limit per turn (tracked by `totalExecCount` in `StreamState`). But `totalExecCount` is **tracked but never enforced** — there's no code that checks it or warns the user.  
 **Symptom:** After ~25 tool calls, Cursor silently stops sending new exec messages. The session hangs in `collecting` state until inactivity timeout.
 
 ### 4. "First message works, subsequent messages fail"
+
 **Cause:** Session key derivation (`session-manager.ts:17-19`) uses `createHash('sha256').update('session:${sessionId}:${firstUserText.slice(0, 200)}')`. If the first user message is identical across conversations (e.g., "hi" or "help"), different conversations collide on the same session key.  
 **Symptom:** The second conversation tries to send tool results to a dead session from the first conversation.
 
 ### 5. "Blob not found" errors after long sessions
+
 **Cause:** The blob store grows with `setBlobArgs` but blobs are keyed by hex-encoded IDs. If a checkpoint references a blob that was set in a different session or before a process restart, and the in-memory blob store was lost, the `getBlobArgs` handler returns an empty `GetBlobResult`. Cursor sees this as "blob not found" and the session fails.  
 **Recovery:** The code has `retryHint: 'blob_not_found'` for classification, and the session has auto-resume from checkpoint mentioned in the plan, but **auto-resume is not implemented** — `cursor-session.ts` has no retry logic. The session just dies.
 
 ### 6. "Works on macOS, fails on Windows"
+
 **Cause:** Multiple Windows-specific issues:
+
 - `process.kill(pid, 0)` behavior differences for zombie detection
 - Port file atomicity (no `renameSync` guarantee on Windows with open file handles)
 - `child.unref()` + `detached: false` behavior on Windows (parent exit may kill child)
 - `tmpdir()` cleanup behavior differs (Windows doesn't auto-clean temp)
 
 ### 7. "Token expired mid-stream"
+
 **Cause:** Access token expires during a long streaming response (>1 hour).  
 **Symptom:** The H2 stream to Cursor returns 401 mid-stream. The session dies.  
 **Recovery:** Pi refreshes the token on the _next_ request via `onRefreshToken`, but the current response is lost. No in-flight token refresh is possible because the H2 stream was opened with the old token in the `authorization` header.
 
 ### 8. "Memory grows over time"
+
 **Cause:** Multiple unbounded Maps:
+
 - `cache` in `conversation-state.ts` — never evicted
 - `blobStore` per session — never pruned
 - `activeSessions` in `internal-api.ts` — evicted on heartbeat timeout, but entries accumulate between checks
 - `activeSessions` in `session-manager.ts` — 30-minute TTL, eviction timer every 60s, but sessions hold H2 connections
 
 ### 9. "Extension works once, then cursor provider disappears"
+
 **Cause:** `index.ts` calls `register()` once at startup. If the proxy dies and restarts on a different port, `currentPort` is updated via `ensureProxy` in `modifyModels`, but `baseUrl` in the provider registration **is never re-registered**. Pi continues sending requests to the old port.
 
 **Evidence:** `index.ts:118` — `register()` is called once. The `modifyModels` callback calls `ensureProxy` which updates `currentPort`, but the `baseUrl` in the provider config was already set to the old port. There's no `pi.registerProvider` call to update it.
 
 ### 10. `deleteArgs` path injection vulnerability
+
 **Cause:** `cursor-messages.ts:150`:
+
 ```typescript
 const safePath = rawPath.replaceAll('\0', '').replaceAll("'", "'\\''")
 return { command: `rm -f '${safePath}'` }
 ```
+
 This shell-quotes the path, but on Windows, `rm -f` doesn't exist (it's `del` or `Remove-Item`). The command will fail on Windows. Also, the shell escaping only handles single quotes — paths with backticks, dollar signs, or other shell metacharacters could still be problematic depending on the shell.
 
 ---
@@ -328,16 +352,16 @@ The entire codebase uses bare `Error` objects and string messages. There are no 
 
 ## Summary Verdict
 
-| Area | Risk Level | Core Issue |
-|---|---|---|
-| Child process proxy | Medium | Complexity relocation, not elimination. Process coordination adds new failure modes. |
-| Heartbeat/port file | **High** | Race conditions, Windows compatibility, no reconnection logic, stale file risk. |
-| Batch state machine | **High** | Potential mutual-wait deadlock; broken SSE stream on partial tool results. |
-| Conversation persistence | Medium | No eviction, no concurrent access protection, unbounded blob growth. |
-| Token handling | Medium | Plaintext localhost HTTP, no in-flight token refresh, fire-and-forget push. |
-| Model discovery | **High** | Entirely reverse-engineered, hardcoded fallbacks, silent empty-list failure. |
-| `-max` suffix | Low-Medium | Name collision possible but unlikely; doubles model list. |
-| Unhandleable requests | Medium | Non-streaming + tools = hard failure; session key collisions. |
-| User-facing failures | **High** | Stale baseUrl after proxy restart, no auto-resume, memory leaks over time. |
+| Area                     | Risk Level | Core Issue                                                                           |
+| ------------------------ | ---------- | ------------------------------------------------------------------------------------ |
+| Child process proxy      | Medium     | Complexity relocation, not elimination. Process coordination adds new failure modes. |
+| Heartbeat/port file      | **High**   | Race conditions, Windows compatibility, no reconnection logic, stale file risk.      |
+| Batch state machine      | **High**   | Potential mutual-wait deadlock; broken SSE stream on partial tool results.           |
+| Conversation persistence | Medium     | No eviction, no concurrent access protection, unbounded blob growth.                 |
+| Token handling           | Medium     | Plaintext localhost HTTP, no in-flight token refresh, fire-and-forget push.          |
+| Model discovery          | **High**   | Entirely reverse-engineered, hardcoded fallbacks, silent empty-list failure.         |
+| `-max` suffix            | Low-Medium | Name collision possible but unlikely; doubles model list.                            |
+| Unhandleable requests    | Medium     | Non-streaming + tools = hard failure; session key collisions.                        |
+| User-facing failures     | **High**   | Stale baseUrl after proxy restart, no auto-resume, memory leaks over time.           |
 
 The extension works for the happy path. The adversarial question is: **how long does it keep working?** The answer, given the unbounded state growth, missing reconnection logic, and fragile process coordination, is: **until something goes wrong, and then recovery is manual.**
