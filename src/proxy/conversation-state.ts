@@ -140,3 +140,18 @@ export function persistConversation(convKey: string, stored: StoredConversation,
 export function invalidateConversationState(convKey: string): void {
   cache.delete(convKey)
 }
+
+const CONVERSATION_TTL_MS = 30 * 60 * 1000
+
+/** Evicts conversations not accessed within the TTL. Returns the number evicted. */
+export function evictStaleConversations(): number {
+  const now = Date.now()
+  let evicted = 0
+  for (const [key, stored] of cache) {
+    if (now - stored.lastAccessMs > CONVERSATION_TTL_MS) {
+      cache.delete(key)
+      evicted++
+    }
+  }
+  return evicted
+}

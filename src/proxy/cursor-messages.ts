@@ -218,13 +218,14 @@ function nativeToMcpRedirect(execCase: string, execMsg: ExecServerMessage): Nati
   }
 
   if (execCase === 'fetchArgs') {
-    const url = String(args.url ?? '')
+    const rawUrl = String(args.url ?? '')
+    const safeUrl = rawUrl.replaceAll('\0', '').replaceAll("'", "'\\''")
     return {
       toolCallId,
       toolName: 'bash',
-      decodedArgs: JSON.stringify({ command: `curl -sL '${url}'`, description: `Fetch ${url}` }),
+      decodedArgs: JSON.stringify({ command: `curl -sL '${safeUrl}'`, description: `Fetch ${rawUrl}` }),
       nativeResultType: 'fetchResult',
-      nativeArgs: { url },
+      nativeArgs: { url: rawUrl },
     }
   }
 
@@ -543,44 +544,43 @@ function handleInteractionQuery(
   sendFrame(frameConnectMessage(toBinary(AgentClientMessageSchema, clientMsg)))
 }
 
+export interface MessageProcessorContext {
+  blobStore: Map<string, Uint8Array>
+  mcpTools: McpToolDefinition[]
+  cloudRule?: string
+  sendFrame: (data: Buffer) => void
+  state: StreamState
+  onText: (text: string, isThinking: boolean) => void
+  onMcpExec: (exec: PendingExec) => void
+  onCheckpoint?: (checkpointBytes: Uint8Array) => void
+  onNotify?: (text: string) => void
+}
+
 /** Returns true if the message was a recognized type (real server activity, not keepalive). */
-export function processServerMessage(
-  msg: AgentServerMessage,
-  blobStore: Map<string, Uint8Array>,
-  mcpTools: McpToolDefinition[],
-  cloudRule: string | undefined,
-  sendFrame: (data: Buffer) => void,
-  state: StreamState,
-  onText: (text: string, isThinking: boolean) => void,
-  onMcpExec: (exec: PendingExec) => void,
-  onCheckpoint?: (checkpointBytes: Uint8Array) => void,
-  onNotify?: (text: string) => void,
-): boolean {
+export function processServerMessage(msg: AgentServerMessage, ctx: MessageProcessorContext): boolean {
   const msgCase = msg.message.case
 
   if (msgCase === 'interactionUpdate') {
-    handleInteractionUpdate(msg.message.value, state, onText)
+    handleInteractionUpdate(msg.message.value, ctx.state, ctx.onText)
     return true
   }
 
   if (msgCase === 'kvServerMessage') {
-    handleKvMessage(msg.message.value, blobStore, sendFrame)
+    handleKvMessage(msg.message.value, ctx.blobStore, ctx.sendFrame)
     return true
   }
 
   if (msgCase === 'execServerMessage') {
-    handleExecMessage(msg.message.value, mcpTools, cloudRule, sendFrame, onMcpExec, state)
+    handleExecMessage(msg.message.value, ctx.mcpTools, ctx.cloudRule, ctx.sendFrame, ctx.onMcpExec, ctx.state)
     return true
   }
 
   if (msgCase === 'conversationCheckpointUpdate') {
     const stateStructure = msg.message.value
     if (stateStructure.tokenDetails) {
-      state.totalTokens = stateStructure.tokenDetails.usedTokens
+      ctx.state.totalTokens = stateStructure.tokenDetails.usedTokens
     }
-    if (onCheckpoint) {
-      onCheckpoint(toBinary(ConversationStateStructureSchema, stateStructure))
-    }
+    ctx.onCheckpoint?.(toBinary(ConversationStateStructureSchema, stateStructure))
     return true
   }
 
@@ -593,7 +593,7 @@ export function processServerMessage(
   }
 
   if (msgCase === 'interactionQuery') {
-    handleInteractionQuery(msg.message.value, sendFrame, onNotify)
+    handleInteractionQuery(msg.message.value, ctx.sendFrame, ctx.onNotify)
     return true
   }
 

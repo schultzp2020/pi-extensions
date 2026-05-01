@@ -102,7 +102,7 @@ async function sendHeartbeat(port: number, sessionId: string): Promise<void> {
   }
 }
 
-async function pushToken(port: number, accessToken: string): Promise<void> {
+export async function pushToken(port: number, accessToken: string): Promise<void> {
   try {
     await fetch(`http://localhost:${String(port)}/internal/token`, {
       method: 'POST',

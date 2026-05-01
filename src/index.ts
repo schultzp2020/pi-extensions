@@ -6,7 +6,7 @@ import type { OAuthCredentials, OAuthLoginCallbacks } from '@mariozechner/pi-ai'
 import type { ExtensionAPI, ProviderModelConfig } from '@mariozechner/pi-coding-agent'
 
 import { generateCursorAuthParams, getTokenExpiry, pollCursorAuth, refreshCursorToken } from './auth.ts'
-import { connectToProxy, getActivePort, readPortFile, stopHeartbeat } from './proxy-lifecycle.ts'
+import { connectToProxy, getActivePort, pushToken, readPortFile, stopHeartbeat } from './proxy-lifecycle.ts'
 import type { CursorModel } from './proxy/models.ts'
 
 const PROVIDER_ID = 'cursor'
@@ -87,18 +87,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
     return result
   }
 
-  async function pushToken(port: number, accessToken: string): Promise<void> {
-    try {
-      await fetch(`http://localhost:${String(port)}/internal/token`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ access: accessToken }),
-        signal: AbortSignal.timeout(2_000),
-      })
-    } catch {
-      // non-fatal
-    }
-  }
+  let registeredPort: number | null = null
 
   function updateModels(newModels: CursorModel[]): void {
     models = newModels
@@ -119,9 +108,14 @@ export default async function (pi: ExtensionAPI): Promise<void> {
     } catch {
       // proxy spawn failed — models will be empty until next attempt
     }
+    // Re-register if the proxy port changed (e.g. proxy restarted)
+    if (currentPort && currentPort !== registeredPort) {
+      register()
+    }
   }
 
   function register(): void {
+    registeredPort = currentPort
     pi.registerProvider(PROVIDER_ID, {
       name: 'Cursor',
       baseUrl: currentPort ? `http://localhost:${String(currentPort)}/v1` : 'http://localhost:0/v1',

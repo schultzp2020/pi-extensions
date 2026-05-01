@@ -7,6 +7,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 
 import { discoverCursorModels, type CursorModel } from './models.ts'
+import { jsonResponse, readBody } from './http-helpers.ts'
 
 interface SessionHeartbeat {
   sessionId: string
@@ -61,23 +62,6 @@ export function startHeartbeatMonitor(): NodeJS.Timeout {
   return timer
 }
 
-function jsonResponse(res: ServerResponse, status: number, body: unknown): void {
-  res.writeHead(status, { 'Content-Type': 'application/json' })
-  res.end(JSON.stringify(body))
-}
-
-function readBody(req: IncomingMessage): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const chunks: Buffer[] = []
-    req.on('data', (chunk: Buffer) => {
-      chunks.push(chunk)
-    })
-    req.on('end', () => {
-      resolve(Buffer.concat(chunks).toString('utf8'))
-    })
-    req.on('error', reject)
-  })
-}
 
 export async function handleInternalRequest(req: IncomingMessage, res: ServerResponse, path: string): Promise<void> {
   if (path === '/internal/health' && req.method === 'GET') {
@@ -91,7 +75,13 @@ export async function handleInternalRequest(req: IncomingMessage, res: ServerRes
   }
 
   if (path === '/internal/heartbeat' && req.method === 'POST') {
-    const body = JSON.parse(await readBody(req)) as { sessionId?: string }
+    let body: { sessionId?: string }
+    try {
+      body = JSON.parse(await readBody(req)) as { sessionId?: string }
+    } catch {
+      jsonResponse(res, 400, { error: 'invalid JSON' })
+      return
+    }
     const { sessionId } = body
     if (!sessionId) {
       jsonResponse(res, 400, { error: 'sessionId required' })
@@ -103,7 +93,13 @@ export async function handleInternalRequest(req: IncomingMessage, res: ServerRes
   }
 
   if (path === '/internal/token' && req.method === 'POST') {
-    const body = JSON.parse(await readBody(req)) as { access?: string }
+    let body: { access?: string }
+    try {
+      body = JSON.parse(await readBody(req)) as { access?: string }
+    } catch {
+      jsonResponse(res, 400, { error: 'invalid JSON' })
+      return
+    }
     if (body.access) {
       currentAccessToken = body.access
       jsonResponse(res, 200, { ok: true })

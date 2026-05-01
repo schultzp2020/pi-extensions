@@ -11,7 +11,9 @@ import { randomUUID } from 'node:crypto'
  *   *                          → 404
  */
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
-import { tmpdir } from 'node:os'
+import { jsonResponse, readBody } from './http-helpers.ts'
+import { unlinkSync } from 'node:fs'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createInterface } from 'node:readline'
 
@@ -39,6 +41,7 @@ import {
   persistConversation,
   resolveConversationState,
   type ConversationConfig,
+  evictStaleConversations,
 } from './conversation-state.ts'
 import { CursorSession, type SessionOptions } from './cursor-session.ts'
 import {
@@ -84,23 +87,6 @@ interface ChatCompletionRequest {
   tool_choice?: string | { type: string; function: { name: string } }
 }
 
-function readBody(req: IncomingMessage): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const chunks: Buffer[] = []
-    req.on('data', (chunk: Buffer) => {
-      chunks.push(chunk)
-    })
-    req.on('end', () => {
-      resolve(Buffer.concat(chunks).toString('utf8'))
-    })
-    req.on('error', reject)
-  })
-}
-
-function jsonResponse(res: ServerResponse, status: number, body: unknown): void {
-  res.writeHead(status, { 'Content-Type': 'application/json' })
-  res.end(JSON.stringify(body))
-}
 
 function errorResponse(res: ServerResponse, status: number, message: string, code = 'server_error'): void {
   jsonResponse(res, status, { error: { message, type: 'server_error', code } })
@@ -460,18 +446,20 @@ async function main(): Promise<void> {
     conversationDiskDir: config.conversationDir ?? join(tmpdir(), 'pi-cursor-conversations'),
   }
 
-  // 2. Configure internal API
-  configureInternalApi({
-    initialToken: config.accessToken,
-    initialModels: [],
-    onShutdown: () => {
-      console.error('[proxy] Shutdown requested')
-      closeAllSessions()
-      process.exit(0)
-    },
-  })
+  const portFilePath = join(homedir(), '.pi', 'agent', 'cursor-proxy.json')
 
-  // 3. Discover models
+  function shutdown(): void {
+    console.error('[proxy] Shutdown requested')
+    closeAllSessions()
+    try {
+      unlinkSync(portFilePath)
+    } catch {
+      /* may not exist */
+    }
+    process.exit(0)
+  }
+
+  // 2. Discover models
   let models: CursorModel[] = []
   try {
     models = await discoverCursorModels(config.accessToken)
@@ -480,15 +468,11 @@ async function main(): Promise<void> {
     console.error('[proxy] Model discovery failed:', error)
   }
 
-  // Update internal API with discovered models
+  // 3. Configure internal API (once, after model discovery)
   configureInternalApi({
     initialToken: config.accessToken,
     initialModels: models,
-    onShutdown: () => {
-      console.error('[proxy] Shutdown requested')
-      closeAllSessions()
-      process.exit(0)
-    },
+    onShutdown: shutdown,
   })
 
   // 4. Start HTTP server
@@ -522,6 +506,7 @@ async function main(): Promise<void> {
   // 5. Start periodic session eviction
   const evictionTimer = setInterval(() => {
     evictStaleSessions()
+    evictStaleConversations()
   }, 60_000)
   if (typeof evictionTimer === 'object' && 'unref' in evictionTimer) {
     evictionTimer.unref()

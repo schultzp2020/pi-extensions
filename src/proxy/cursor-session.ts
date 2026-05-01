@@ -378,6 +378,10 @@ export class CursorSession {
   close(): void {
     if (this._alive) {
       this._alive = false
+      if (!this.doneEventSent) {
+        this.doneEventSent = true
+        this.queue.pushForce({ type: 'done', error: 'session closed' })
+      }
       clearInterval(this.heartbeatTimer)
       this.clearInactivityTimer()
       this.closeTransport()
@@ -461,40 +465,34 @@ export class CursorSession {
   private handleMessage(messageBytes: Uint8Array): void {
     try {
       const msg = fromBinary(AgentServerMessageSchema, messageBytes)
-      const recognized = processServerMessage(
-        msg,
-        this.blobStore,
-        this.options.mcpTools,
-        this.options.cloudRule,
-        (data) => this.write(data),
-        this.streamState,
-        // onText
-        (text, isThinking) => {
+      const recognized = processServerMessage(msg, {
+        blobStore: this.blobStore,
+        mcpTools: this.options.mcpTools,
+        cloudRule: this.options.cloudRule,
+        sendFrame: (data) => this.write(data),
+        state: this.streamState,
+        onText: (text, isThinking) => {
           if (this.timerPhase === 'thinking') {
             this.timerPhase = 'streaming'
           }
           this.queue.push({ type: 'text', text, isThinking })
         },
-        // onMcpExec
-        (exec) => {
+        onMcpExec: (exec) => {
           this.pendingExecs.push(exec)
           if (this.batchState === 'streaming') {
             this.batchState = 'collecting'
           }
-          // Push individual tool call events for SSE
           this.queue.push({ type: 'toolCall', exec })
         },
-        // onCheckpoint
-        (checkpointBytes) => {
+        onCheckpoint: (checkpointBytes) => {
           this._checkpointChunkSeq = this._chunkSeq
           this.streamState.checkpointAfterExec = true
           this.options.onCheckpoint?.(checkpointBytes, this.blobStore)
         },
-        // onNotify
-        (note) => {
+        onNotify: (note) => {
           this.queue.push({ type: 'text', text: `\n${note}\n`, isThinking: false })
         },
-      )
+      })
 
       // Emit usage if we have token counts
       if (recognized && (this.streamState.outputTokens > 0 || this.streamState.totalTokens > 0)) {
