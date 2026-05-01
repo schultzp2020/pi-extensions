@@ -176,7 +176,7 @@ async function spawnProxy(
   sessionId: string,
   accessToken: string,
 ): Promise<{ port: number; models: CursorModel[] }> {
-  const child = spawn('node', ['--experimental-strip-types', PROXY_ENTRY], {
+  const child = spawn('node', ['--experimental-transform-types', PROXY_ENTRY], {
     stdio: ['pipe', 'pipe', 'pipe'],
     detached: false,
   })
