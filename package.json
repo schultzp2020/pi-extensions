@@ -1,18 +1,20 @@
 {
   "private": true,
-  "workspaces": [
-    "packages/*"
-  ],
   "scripts": {
-    "build": "npm run build --workspaces",
-    "test": "npm run test --workspaces",
+    "build": "pnpm -r run build",
+    "test": "pnpm -r run test",
     "lint": "oxlint --type-aware --type-check --deny-warnings .",
     "lint:fix": "oxlint --type-aware --type-check --fix .",
     "format": "oxfmt .",
     "format:check": "oxfmt --check .",
-    "prepare": "husky"
+    "prepare": "husky",
+    "changeset": "changeset",
+    "version": "changeset version",
+    "release": "pnpm run build && changeset publish"
   },
   "devDependencies": {
+    "@changesets/changelog-github": "^0.5.1",
+    "@changesets/cli": "^2.29.4",
     "husky": "^9.1.7",
     "lint-staged": "^16.4.0",
     "oxfmt": "^0.47.0",
@@ -25,5 +27,6 @@
       "oxlint --type-aware --type-check --deny-warnings --fix"
     ],
     "*.{json,md}": "oxfmt"
-  }
+  },
+  "packageManager": "pnpm@10.33.2"
 }
