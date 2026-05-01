@@ -1,0 +1,44 @@
+{
+  "name": "pi-cursor",
+  "version": "0.1.0",
+  "description": "Pi extension for Cursor subscription models via local OpenAI-compatible proxy",
+  "type": "module",
+  "private": true,
+  "pi": {
+    "extensions": ["./src/index.ts"]
+  },
+  "scripts": {
+    "generate": "npx @bufbuild/buf generate",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "format": "oxfmt .",
+    "format:check": "oxfmt --check .",
+    "lint": "oxlint --type-aware --type-check --deny-warnings .",
+    "lint:fix": "oxlint --type-aware --type-check --fix .",
+    "prepare": "husky"
+  },
+  "lint-staged": {
+    "*.ts": [
+      "oxfmt",
+      "oxlint --type-aware --type-check --deny-warnings --fix",
+      "vitest related --run"
+    ],
+    "*.{json,md}": "oxfmt"
+  },
+  "dependencies": {
+    "@bufbuild/protobuf": "^2.0.0"
+  },
+  "devDependencies": {
+    "@bufbuild/buf": "^1.50.0",
+    "@bufbuild/protoc-gen-es": "^2.10.0",
+    "@mariozechner/pi-coding-agent": "^0.71.1",
+    "@types/node": "^22.0.0",
+    "husky": "^9.1.7",
+    "lint-staged": "^16.4.0",
+    "oxfmt": "^0.47.0",
+    "oxlint": "^1.62.0",
+    "oxlint-tsgolint": "^0.22.1",
+    "typescript": "^5.9.0",
+    "vitest": "^4.1.5"
+  }
+}
