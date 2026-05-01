@@ -58,7 +58,7 @@ function sanitizeTokenCount(value: number): number {
   return Number.isFinite(value) ? Math.max(0, Math.trunc(value)) : 0
 }
 
-export function buildUsage(completionTokens: number, totalTokens: number): OpenAIUsage | null {
+function buildUsage(completionTokens: number, totalTokens: number): OpenAIUsage | null {
   const completion = sanitizeTokenCount(completionTokens)
   const reportedTotal = sanitizeTokenCount(totalTokens)
   if (completion === 0 && reportedTotal === 0) {

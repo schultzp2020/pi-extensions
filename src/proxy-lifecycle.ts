@@ -132,7 +132,7 @@ async function pushToken(port: number, accessToken: string): Promise<void> {
 /**
  * Refresh the model list from the proxy.
  */
-export async function refreshModels(port: number): Promise<CursorModel[]> {
+async function refreshModels(port: number): Promise<CursorModel[]> {
   const res = await fetch(`http://localhost:${String(port)}/internal/refresh-models`, {
     method: 'POST',
     signal: AbortSignal.timeout(MODEL_REFRESH_TIMEOUT_MS),
@@ -252,11 +252,4 @@ export function stopHeartbeat(): void {
  */
 export function getActivePort(): number | null {
   return activeConnection?.port ?? null
-}
-
-/**
- * Get the PID of the currently active proxy, or null.
- */
-export function getActivePid(): number | null {
-  return activeConnection?.pid ?? null
 }

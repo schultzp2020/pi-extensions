@@ -1,0 +1,10 @@
+{
+  "$schema": "https://raw.githubusercontent.com/fallow-rs/fallow/main/schema.json",
+  "entry": ["src/index.{ts,tsx,js,jsx}", "src/proxy/main.{ts,tsx,js,jsx}"],
+  "ignorePatterns": ["src/proto/**"],
+  "ignoreDependencies": ["@bufbuild/protoc-gen-es"],
+  "usedClassMembers": ["alive", "sendToolResults"],
+  "rules": {
+    "unused-dependencies": "warn"
+  }
+}

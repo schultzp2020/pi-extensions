@@ -76,7 +76,7 @@ export interface SessionOptions {
 
 // ── Helpers ──
 
-export function classifyConnectError(errorMessage: string): RetryHint | undefined {
+function classifyConnectError(errorMessage: string): RetryHint | undefined {
   if (/blob not found/i.test(errorMessage)) {
     return 'blob_not_found'
   }
@@ -340,13 +340,6 @@ export class CursorSession {
 
   next(): Promise<SessionEvent> {
     return this.queue.next()
-  }
-
-  /**
-   * Get the list of pending tool calls that have been flushed (ready for results).
-   */
-  get flushedExecs(): PendingExec[] {
-    return this._flushedExecs
   }
 
   /**

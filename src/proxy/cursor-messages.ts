@@ -390,7 +390,7 @@ function handleKvMessage(
 
 // ── Exec message handler ──
 
-export function handleExecMessage(
+function handleExecMessage(
   execMsg: ExecServerMessage,
   mcpTools: McpToolDefinition[],
   cloudRule: string | undefined,

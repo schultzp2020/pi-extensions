@@ -30,14 +30,14 @@ export interface ToolResultInfo {
   content: string
 }
 
-export interface ConversationTurn {
+export interface ParsedConversationTurn {
   userText: string
   assistantText: string
 }
 
 export interface ParsedMessages {
   systemPrompt: string
-  turns: ConversationTurn[]
+  turns: ParsedConversationTurn[]
   userText: string
   toolResults: ToolResultInfo[]
 }
@@ -72,7 +72,7 @@ export function textContent(content: string | ContentPart[] | null | undefined):
  */
 export function parseMessages(messages: OpenAIMessage[]): ParsedMessages {
   let systemPrompt = ''
-  const turns: ConversationTurn[] = []
+  const turns: ParsedConversationTurn[] = []
   const toolResults: ToolResultInfo[] = []
   let userText = ''
 

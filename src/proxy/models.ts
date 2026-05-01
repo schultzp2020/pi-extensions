@@ -76,7 +76,7 @@ const PRETTY_NAME_OVERRIDES: Record<string, string> = {
 
 const RAW_NAME_PATTERN = /^[a-z0-9][a-z0-9._-]*$/
 
-export function prettyCursorModelName(modelId: string): string {
+function prettyCursorModelName(modelId: string): string {
   const normalizedId = modelId.trim().toLowerCase()
   if (!normalizedId) {
     return modelId
