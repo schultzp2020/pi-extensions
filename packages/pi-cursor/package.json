@@ -33,7 +33,7 @@
     "lint:fix": "oxlint --type-aware --type-check --fix .",
     "prepare": "husky",
     "build": "rolldown --config rolldown.config.ts",
-    "prepublishOnly": "npm run build"
+    "prepublishOnly": "pnpm run build"
   },
   "dependencies": {
     "@bufbuild/protobuf": "^2.0.0"
