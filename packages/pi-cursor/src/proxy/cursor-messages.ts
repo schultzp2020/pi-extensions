@@ -133,7 +133,7 @@ function nativeToMcpRedirect(execCase: string, execMsg: ExecServerMessage): Nati
   const toolCallId: string = (args?.toolCallId as string) || crypto.randomUUID()
 
   if (execCase === 'readArgs') {
-    const mcpArgs: Record<string, unknown> = { filePath: args.path }
+    const mcpArgs: Record<string, unknown> = { path: args.path }
     if (args.offset !== null && args.offset !== undefined && args.offset !== 0) {
       mcpArgs.offset = args.offset
     }
@@ -155,7 +155,7 @@ function nativeToMcpRedirect(execCase: string, execMsg: ExecServerMessage): Nati
     return {
       toolCallId,
       toolName: 'write',
-      decodedArgs: JSON.stringify({ filePath: args.path, content: fileContent }),
+      decodedArgs: JSON.stringify({ path: args.path, content: fileContent }),
       nativeResultType: 'writeResult',
       nativeArgs: { path: String(args.path ?? '') },
     }
@@ -167,7 +167,7 @@ function nativeToMcpRedirect(execCase: string, execMsg: ExecServerMessage): Nati
       return {
         toolCallId,
         toolName: 'bash',
-        decodedArgs: JSON.stringify({ command: 'true', description: 'No-op delete (empty path)' }),
+        decodedArgs: JSON.stringify({ command: 'true' }),
         nativeResultType: 'deleteResult',
         nativeArgs: { path: '' },
       }
@@ -176,7 +176,7 @@ function nativeToMcpRedirect(execCase: string, execMsg: ExecServerMessage): Nati
     return {
       toolCallId,
       toolName: 'bash',
-      decodedArgs: JSON.stringify({ command: `rm -f '${safePath}'`, description: `Delete ${rawPath}` }),
+      decodedArgs: JSON.stringify({ command: `rm -f '${safePath}'` }),
       nativeResultType: 'deleteResult',
       nativeArgs: { path: rawPath },
     }
@@ -210,8 +210,8 @@ function nativeToMcpRedirect(execCase: string, execMsg: ExecServerMessage): Nati
     const path = String(args.path ?? '.')
     return {
       toolCallId,
-      toolName: 'glob',
-      decodedArgs: JSON.stringify({ pattern: `${path}/**` }),
+      toolName: 'ls',
+      decodedArgs: JSON.stringify({ path }),
       nativeResultType: 'lsResult',
       nativeArgs: { path },
     }
@@ -223,7 +223,7 @@ function nativeToMcpRedirect(execCase: string, execMsg: ExecServerMessage): Nati
     return {
       toolCallId,
       toolName: 'bash',
-      decodedArgs: JSON.stringify({ command: `curl -sL '${safeUrl}'`, description: `Fetch ${rawUrl}` }),
+      decodedArgs: JSON.stringify({ command: `curl -sL '${safeUrl}'` }),
       nativeResultType: 'fetchResult',
       nativeArgs: { url: rawUrl },
     }

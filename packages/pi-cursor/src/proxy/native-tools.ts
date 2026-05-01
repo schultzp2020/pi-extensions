@@ -6,12 +6,12 @@ export function stripMcpToolPrefix(name: string): string {
   return name.startsWith(MCP_TOOL_PREFIX) ? name.slice(MCP_TOOL_PREFIX.length) : name
 }
 
-/** Fixes argument name mismatches — Cursor sometimes sends `path` instead of `filePath`. */
+/** Fixes argument name mismatches — Cursor sometimes sends `filePath` instead of `path`. */
 export function fixMcpArgNames(toolName: string, args: Record<string, unknown>): void {
-  // For read/write/edit tools, Cursor sometimes sends 'path' instead of 'filePath'
-  if (['read', 'write', 'edit'].includes(toolName) && args.path && !args.filePath) {
-    args.filePath = args.path
-    delete args.path
+  // Cursor sometimes sends 'filePath' instead of 'path' for tools that expect 'path'
+  if (['read', 'write', 'edit', 'grep', 'find', 'ls'].includes(toolName) && args.filePath && !args.path) {
+    args.path = args.filePath
+    delete args.filePath
   }
 }
 

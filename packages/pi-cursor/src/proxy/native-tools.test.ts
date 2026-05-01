@@ -13,23 +13,23 @@ describe('stripMcpToolPrefix', () => {
 })
 
 describe('fixMcpArgNames', () => {
-  it('renames path to filePath for read', () => {
-    const args: Record<string, unknown> = { path: 'foo.ts' }
+  it('renames filePath to path for read', () => {
+    const args: Record<string, unknown> = { filePath: 'foo.ts' }
     fixMcpArgNames('read', args)
-    expect(args.filePath).toBe('foo.ts')
-    expect(args.path).toBeUndefined()
+    expect(args.path).toBe('foo.ts')
+    expect(args.filePath).toBeUndefined()
   })
 
-  it('does not overwrite existing filePath', () => {
-    const args: Record<string, unknown> = { filePath: 'bar.ts', path: 'foo.ts' }
+  it('does not overwrite existing path', () => {
+    const args: Record<string, unknown> = { path: 'bar.ts', filePath: 'foo.ts' }
     fixMcpArgNames('read', args)
-    expect(args.filePath).toBe('bar.ts')
+    expect(args.path).toBe('bar.ts')
   })
 
-  it('renames path to filePath for write', () => {
-    const args: Record<string, unknown> = { path: 'out.ts', content: 'hello' }
+  it('renames filePath to path for write', () => {
+    const args: Record<string, unknown> = { filePath: 'out.ts', content: 'hello' }
     fixMcpArgNames('write', args)
-    expect(args.filePath).toBe('out.ts')
+    expect(args.path).toBe('out.ts')
   })
 })
 
