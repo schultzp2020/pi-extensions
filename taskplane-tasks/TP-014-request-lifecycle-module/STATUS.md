@@ -1,6 +1,6 @@
 # TP-014: Request Lifecycle Module — Status
 
-**Current Step:** Step 0: Preflight
+**Current Step:** Step 2: Slim down main.ts and retarget tests
 **Status:** 🟡 In Progress
 **Last Updated:** 2026-05-04
 **Review Level:** 1
@@ -28,12 +28,12 @@
 
 ### Step 1: Define Proxy Context and extract request-lifecycle.ts
 
-**Status:** ⬜ Not Started
+**Status:** ✅ Complete
 
-- [ ] Define `ProxyContext` type
-- [ ] Create `request-lifecycle.ts` with `handleChatCompletion` and all internal helpers moved from `main.ts`
-- [ ] Export `buildRunRequest` and `foldTurnsIntoSystemPrompt` for testing
-- [ ] Run targeted tests
+- [x] Define `ProxyContext` type
+- [x] Create `request-lifecycle.ts` with `handleChatCompletion` and all internal helpers moved from `main.ts`
+- [x] Export `buildRunRequest` and `foldTurnsIntoSystemPrompt` for testing
+- [x] Run targeted tests
 
 ---
 
