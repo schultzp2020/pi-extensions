@@ -56,6 +56,32 @@ Read package.json and summarize the dependencies.
 
 Tool calls, multi-turn conversations, and reasoning all work.
 
+## Native Tools Mode
+
+Controls how Cursor's built-in tool calls (read, write, shell, grep, ls, delete, fetch) are handled:
+
+| Mode               | Behavior                                                                               |
+| ------------------ | -------------------------------------------------------------------------------------- |
+| `reject` (default) | All native Cursor tool calls are rejected. Only Pi's MCP tools succeed.                |
+| `redirect`         | Overlapping native tools are transparently redirected through Pi equivalents.          |
+| `native`           | Overlapping tools execute locally within the proxy, sandboxed to the nearest git root. |
+
+Configure via the `/cursor` command or environment variable:
+
+```bash
+export PI_CURSOR_NATIVE_TOOLS_MODE=native  # or reject, redirect
+```
+
+Or set it in `~/.pi/agent/cursor-config.json`:
+
+```json
+{
+  "nativeToolsMode": "native"
+}
+```
+
+In `native` mode, filesystem operations are sandboxed to the **Allowed Root** — the nearest git root of the session's working directory. Paths outside this boundary are rejected.
+
 ## Debug Logging
 
 Enable structured debug logging to diagnose proxy behavior:

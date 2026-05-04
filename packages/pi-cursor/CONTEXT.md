@@ -93,7 +93,7 @@ Filtering every MCP passthrough, native redirect, and implicit Cursor interactio
 _Avoid_: tool allowlist, permission layer, tool ACL
 
 **Allowed Root**:
-The filesystem boundary for proxy-local native tool execution in `native` mode. Captured once per session from the nearest git root containing `ctx.cwd`, falling back to `ctx.cwd` if no git repo is found. Paths outside this root are rejected.
+The filesystem boundary for proxy-local native tool execution in `native` mode. Computed per-request from the nearest git root containing `ctx.cwd` (passed as `pi_cwd` in the request body by the `before_provider_request` hook), falling back to `ctx.cwd` if no git repo is found. Implemented by `resolveAllowedRoot()` (walks up directories looking for `.git`) and enforced by `validatePath()` (resolves and verifies paths stay within the root). Paths outside this root are rejected.
 _Avoid_: workspace root, sandbox root
 
 **MCP Tool**:

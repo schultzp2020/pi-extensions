@@ -1,7 +1,7 @@
 # TP-009: Native tools mode with proxy-local execution — Status
 
-**Current Step:** Step 4: Testing & Verification
-**Status:** 🟡 In Progress
+**Current Step:** Step 5: Documentation & Delivery
+**Status:** ✅ Complete
 **Last Updated:** 2026-05-04
 **Review Level:** 1
 **Review Counter:** 0
@@ -64,11 +64,11 @@
 
 ### Step 5: Documentation & Delivery
 
-**Status:** ⬜ Not Started
+**Status:** ✅ Done
 
-- [ ] "Must Update" docs modified
-- [ ] "Check If Affected" docs reviewed
-- [ ] Discoveries logged
+- [x] "Must Update" docs modified (CONTEXT.md Allowed Root definition updated)
+- [x] "Check If Affected" docs reviewed (README.md updated with Native Tools Mode section)
+- [x] Discoveries logged
 
 ---
 
@@ -93,6 +93,7 @@
 | 2026-05-04       | Task staged    | PROMPT.md and STATUS.md created  |
 | 2026-05-04 07:12 | Task started   | Runtime V2 lane-runner execution |
 | 2026-05-04 07:12 | Step 0 started | Preflight                        |
+| 2026-05-04       | All steps done | 202 tests pass, build passes     |
 
 ---
 
