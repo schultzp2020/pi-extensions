@@ -112,6 +112,10 @@ _Avoid_: settings file, preferences
 A Pi command that opens a single-level settings menu. Each row opens a second selector of valid values. Settings persist to the Cursor Config file and take effect on new requests.
 _Avoid_: cursor settings, config command
 
+**Debug Logger**:
+A structured JSONL debug logger gated behind `PI_CURSOR_PROVIDER_DEBUG=1`. When enabled, appends one JSON object per line to `~/.pi/agent/cursor-debug.jsonl` (configurable via `PI_CURSOR_PROVIDER_EXTENSION_DEBUG_FILE`). When disabled, all log functions are zero-cost no-ops. Logs event types: `request_start`, `request_end`, `session_create`, `session_resume`, `checkpoint_commit`, `checkpoint_discard`, `retry`, `tool_call`, `bridge_open`, `bridge_close`, `lifecycle`. Each entry includes `timestamp` (ISO 8601), `type`, `sessionId`, `requestId`, and type-specific payload. A companion timeline script (`scripts/debug-log-timeline.mjs`) transforms JSONL logs into human-readable timelines grouped by request, with `--session`, `--since`, and `--until` filtering.
+_Avoid_: debug mode, verbose mode, trace
+
 ## Relationships
 
 - The **Proxy** spawns one or more **Bridges** to handle concurrent requests, isolated by **Session ID**
@@ -127,6 +131,7 @@ _Avoid_: cursor settings, config command
 - The **`/cursor` Command** edits the **Cursor Config** and triggers provider re-registration when **Model Normalization** mode changes
 - **Lifecycle Cleanup** hooks (`session_before_switch`, `session_before_fork`, `session_before_tree`, `session_shutdown`) call the Internal API to close active Bridges and evict state before session transitions
 - On client disconnect, the Proxy sends a **CancelAction** protobuf to Cursor and suppresses pending Checkpoint commits to preserve the last committed state
+- The **Debug Logger** records structured events from both the Proxy (request lifecycle, sessions, checkpoints) and the extension (lifecycle hooks), output to JSONL when `PI_CURSOR_PROVIDER_DEBUG=1`
 
 ## Example dialogue
 

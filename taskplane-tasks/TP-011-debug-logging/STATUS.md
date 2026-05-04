@@ -1,7 +1,7 @@
 # TP-011: Structured debug logging and timeline — Status
 
 **Current Step:** Step 5: Documentation & Delivery
-**Status:** 🟡 In Progress
+**Status:** ✅ Complete
 **Last Updated:** 2026-05-04
 **Review Level:** 0
 **Review Counter:** 0
@@ -66,11 +66,11 @@
 
 ### Step 5: Documentation & Delivery
 
-**Status:** 🟨 In Progress
+**Status:** ✅ Complete
 
-- [ ] "Must Update" docs modified
-- [ ] "Check If Affected" docs reviewed
-- [ ] Discoveries logged
+- [x] "Must Update" docs modified (CONTEXT.md: added Debug Logger definition + relationship)
+- [x] "Check If Affected" docs reviewed (README.md: added Debug Logging section)
+- [x] Discoveries logged (none)
 
 ---
 
