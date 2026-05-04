@@ -16,7 +16,7 @@
 
 ### Step 0: Preflight
 
-**Status:** ✅ Done
+**Status:** ✅ Complete
 
 - [x] Required files exist with retry hint signals and config module
 - [x] Tests pass before changes
@@ -25,7 +25,7 @@
 
 ### Step 1: Implement retry loop
 
-**Status:** ✅ Done
+**Status:** ✅ Complete
 
 - [x] Import and read `maxRetries` from config
 - [x] Wrap session pump in retry loop with attempt counting
@@ -36,7 +36,7 @@
 
 ### Step 2: Testing & Verification
 
-**Status:** ✅ Done
+**Status:** ✅ Complete
 
 - [x] FULL test suite passing
 - [x] All failures fixed
@@ -46,7 +46,7 @@
 
 ### Step 3: Documentation & Delivery
 
-**Status:** ✅ Done
+**Status:** ✅ Complete
 
 - [x] "Must Update" docs modified
 - [x] "Check If Affected" docs reviewed
@@ -76,6 +76,8 @@
 | 2026-05-04       | Task staged    | PROMPT.md and STATUS.md created  |
 | 2026-05-04 07:02 | Task started   | Runtime V2 lane-runner execution |
 | 2026-05-04 07:02 | Step 0 started | Preflight                        |
+| 2026-05-04 07:12 | Worker iter 1  | done in 562s, tools: 64          |
+| 2026-05-04 07:12 | Task complete  | .DONE created                    |
 
 ---
 
