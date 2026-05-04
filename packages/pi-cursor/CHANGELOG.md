@@ -1,5 +1,33 @@
 # @schultzp2020/pi-cursor
 
+## 0.3.3
+
+### Patch Changes
+
+- [#21](https://github.com/schultzp2020/pi-extensions/pull/21) [`de3ccc8`](https://github.com/schultzp2020/pi-extensions/commit/de3ccc838f3a33bf993e860a68b8d5fcd539b933) Thanks [@schultzp2020](https://github.com/schultzp2020)! - Fix chat history contamination after compaction
+
+  After compaction or branch summary injection, the proxy's `foldTurnsIntoSystemPrompt` now
+  detects compaction/branch summary turns and wraps them in `<context>` XML tags instead of
+  labeling them as `User:` messages. This prevents the model from treating compaction summaries
+  as real user messages when reporting chat history.
+  - Added `isCompaction` field to `ParsedConversationTurn` with `startsWith` detection against
+    pi-core's known `COMPACTION_SUMMARY_PREFIX` and `BRANCH_SUMMARY_PREFIX` markers
+  - Compaction turns are wrapped in `<context>...</context>` tags (assistant acknowledgments dropped)
+  - Regular turns keep the existing `User:` / `Assistant:` format
+  - Updated `buildCursorRequest` type signature to explicitly pass `isCompaction` through
+  - Truncation now prioritizes compaction turns — they are reserved first so pre-compaction
+    context survives when the prompt exceeds the 100KB cap
+
+- [#23](https://github.com/schultzp2020/pi-extensions/pull/23) [`7ebd4d3`](https://github.com/schultzp2020/pi-extensions/commit/7ebd4d3978da8805467b8dbc456c0281c533a896) Thanks [@schultzp2020](https://github.com/schultzp2020)! - Expose xhigh thinking level in pi's thinking-level selector
+
+  Pi-core's `getSupportedThinkingLevels` only includes `xhigh` when the model's
+  `thinkingLevelMap` explicitly defines it (unlike other levels which are opt-out).
+  Pi-cursor was not setting `thinkingLevelMap` at all, so `xhigh` never appeared
+  in the selector.
+
+  Now sets `thinkingLevelMap: { xhigh: 'xhigh' }` for models with effort maps,
+  which passes through to the proxy's `buildEffortMap` for Cursor effort resolution.
+
 ## 0.3.2
 
 ### Patch Changes
