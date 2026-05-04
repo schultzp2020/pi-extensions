@@ -1,23 +1,15 @@
 import { describe, expect, it } from 'vitest'
 
-import type { OpenAIMessage } from './openai-messages.ts'
 import { deriveConversationKey, deriveSessionKey } from './session-manager.ts'
 
 describe('deriveSessionKey', () => {
-  it('produces same key for same session ID regardless of message content', () => {
+  it('produces same key for same session ID', () => {
     const sessionId = 'test-session-id-abc123'
-    const messages1: OpenAIMessage[] = [{ role: 'user', content: 'Hello, world!' }]
-    const messages2: OpenAIMessage[] = [{ role: 'user', content: 'Completely different message after compaction' }]
-    const messagesEmpty: OpenAIMessage[] = []
 
-    const key1 = deriveSessionKey(sessionId, messages1)
-    const key2 = deriveSessionKey(sessionId, messages2)
-    const key3 = deriveSessionKey(sessionId, messagesEmpty)
-    const key4 = deriveSessionKey(sessionId)
+    const key1 = deriveSessionKey(sessionId)
+    const key2 = deriveSessionKey(sessionId)
 
     expect(key1).toBe(key2)
-    expect(key2).toBe(key3)
-    expect(key3).toBe(key4)
   })
 
   it('produces different keys for different session IDs', () => {
@@ -33,17 +25,13 @@ describe('deriveSessionKey', () => {
 })
 
 describe('deriveConversationKey', () => {
-  it('produces same key for same session ID regardless of message content', () => {
+  it('produces same key for same session ID', () => {
     const sessionId = 'test-session-id-abc123'
-    const messages1: OpenAIMessage[] = [{ role: 'user', content: 'Hello, world!' }]
-    const messages2: OpenAIMessage[] = [{ role: 'user', content: 'Completely different message after compaction' }]
 
-    const key1 = deriveConversationKey(sessionId, messages1)
-    const key2 = deriveConversationKey(sessionId, messages2)
-    const key3 = deriveConversationKey(sessionId)
+    const key1 = deriveConversationKey(sessionId)
+    const key2 = deriveConversationKey(sessionId)
 
     expect(key1).toBe(key2)
-    expect(key2).toBe(key3)
   })
 
   it('produces different keys than deriveSessionKey for same input', () => {

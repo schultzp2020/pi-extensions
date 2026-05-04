@@ -133,7 +133,7 @@ export function resolveConversationState(convKey: string, config: ConversationCo
  * Persist conversation state to disk atomically (write to temp file, then rename).
  */
 export function persistConversation(convKey: string, stored: StoredConversation, config: ConversationConfig): void {
-  mkdirSync(config.conversationDiskDir, { recursive: true })
+  mkdirSync(config.conversationDiskDir, { recursive: true, mode: 0o700 })
 
   const data: DiskFormat = {
     conversationId: stored.conversationId,
@@ -147,7 +147,7 @@ export function persistConversation(convKey: string, stored: StoredConversation,
 
   const filePath = diskPath(convKey, config)
   const tmpPath = `${filePath}.tmp.${randomUUID()}`
-  writeFileSync(tmpPath, JSON.stringify(data, null, 2), 'utf-8')
+  writeFileSync(tmpPath, JSON.stringify(data, null, 2), { encoding: 'utf-8', mode: 0o600 })
   renameSync(tmpPath, filePath)
 }
 
@@ -180,17 +180,6 @@ export function validateLineage(stored: StoredConversation, incoming: LineageMet
     return true
   }
   return stored.lineageFingerprint === incoming.fingerprint
-}
-
-/**
- * Determine if the stored checkpoint should be discarded due to lineage mismatch.
- * Returns true when lineage is invalid AND a checkpoint exists.
- */
-export function shouldDiscardCheckpoint(stored: StoredConversation, incoming: LineageMetadata): boolean {
-  if (stored.checkpoint === null) {
-    return false
-  }
-  return !validateLineage(stored, incoming)
 }
 
 /**

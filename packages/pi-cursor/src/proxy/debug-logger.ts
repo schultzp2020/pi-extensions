@@ -7,13 +7,13 @@
  * Log entries are appended to `~/.pi/agent/cursor-debug.jsonl` by default.
  * Override the path via `PI_CURSOR_PROVIDER_EXTENSION_DEBUG_FILE`.
  */
-import { appendFileSync, mkdirSync } from 'node:fs'
+import { appendFileSync, mkdirSync, statSync, renameSync, existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 
 // ── Types ──
 
-export type DebugEventType =
+type DebugEventType =
   | 'request_start'
   | 'request_end'
   | 'session_create'
@@ -26,7 +26,7 @@ export type DebugEventType =
   | 'bridge_close'
   | 'lifecycle'
 
-export interface DebugLogEntry {
+interface DebugLogEntry {
   timestamp: string
   type: DebugEventType
   sessionId: string
@@ -34,20 +34,25 @@ export interface DebugLogEntry {
   [key: string]: unknown
 }
 
-// ── No-op stubs (used when debug is disabled) ──
-
-/* eslint-disable @typescript-eslint/no-unused-vars */
-const noop = (): void => {}
-const noopStr = (): string => ''
-
 // ── Logger implementation ──
 
 let _enabled = false
 let _logFilePath = ''
 let _dirEnsured = false
 
+/** Max log file size before rotation (50 MB) */
+const MAX_LOG_SIZE_BYTES = 50 * 1024 * 1024
+
+/** Track size in-memory to avoid statSync on every write */
+let _estimatedSize = 0
+/** Only stat the real file every N writes to re-sync */
+const STAT_INTERVAL = 100
+let _writesSinceStat = 0
+
 function ensureDir(): void {
-  if (_dirEnsured) {return}
+  if (_dirEnsured) {
+    return
+  }
   try {
     mkdirSync(dirname(_logFilePath), { recursive: true })
     _dirEnsured = true
@@ -56,11 +61,49 @@ function ensureDir(): void {
   }
 }
 
+/** Sync in-memory size estimate with actual file size */
+function syncFileSize(): void {
+  try {
+    if (existsSync(_logFilePath)) {
+      _estimatedSize = statSync(_logFilePath).size
+    } else {
+      _estimatedSize = 0
+    }
+  } catch {
+    _estimatedSize = 0
+  }
+}
+
+/** Rotate the log file if it exceeds the size limit */
+function rotateIfNeeded(): void {
+  if (_estimatedSize <= MAX_LOG_SIZE_BYTES) {
+    return
+  }
+  try {
+    const rotatedPath = `${_logFilePath}.old`
+    renameSync(_logFilePath, rotatedPath)
+    _estimatedSize = 0
+  } catch {
+    // best-effort
+  }
+}
+
 function writeEntry(entry: DebugLogEntry): void {
-  if (!_enabled) {return}
+  if (!_enabled) {
+    return
+  }
   ensureDir()
   try {
-    appendFileSync(_logFilePath, `${JSON.stringify(entry)  }\n`)
+    // Periodic re-sync with actual file size
+    _writesSinceStat++
+    if (_writesSinceStat >= STAT_INTERVAL) {
+      _writesSinceStat = 0
+      syncFileSize()
+    }
+    rotateIfNeeded()
+    const line = `${JSON.stringify(entry)}\n`
+    appendFileSync(_logFilePath, line, { mode: 0o600 })
+    _estimatedSize += Buffer.byteLength(line)
   } catch {
     // best-effort — never crash the proxy for debug logging
   }
@@ -68,14 +111,11 @@ function writeEntry(entry: DebugLogEntry): void {
 
 // ── Public API ──
 
-/** Check if debug logging is enabled. */
-export function isDebugEnabled(): boolean {
-  return _enabled
-}
-
 /** Generate a per-request UUID. Returns empty string when disabled. */
 export function debugRequestId(): string {
-  if (!_enabled) {return ''}
+  if (!_enabled) {
+    return ''
+  }
   return crypto.randomUUID()
 }
 
@@ -85,7 +125,9 @@ export function logRequestStart(
   requestId: string,
   payload: { model: string; messageCount: number; toolsCount: number },
 ): void {
-  if (!_enabled) {return}
+  if (!_enabled) {
+    return
+  }
   writeEntry({
     timestamp: new Date().toISOString(),
     type: 'request_start',
@@ -103,7 +145,9 @@ export function logRequestEnd(
   requestId: string,
   payload: { durationMs: number; error?: string },
 ): void {
-  if (!_enabled) {return}
+  if (!_enabled) {
+    return
+  }
   writeEntry({
     timestamp: new Date().toISOString(),
     type: 'request_end',
@@ -120,7 +164,9 @@ export function logSessionCreate(
   requestId: string,
   payload: { sessionKey: string; conversationKey: string },
 ): void {
-  if (!_enabled) {return}
+  if (!_enabled) {
+    return
+  }
   writeEntry({
     timestamp: new Date().toISOString(),
     type: 'session_create',
@@ -133,7 +179,9 @@ export function logSessionCreate(
 
 /** Log session reuse. */
 export function logSessionResume(sessionId: string, requestId: string, payload: { sessionKey: string }): void {
-  if (!_enabled) {return}
+  if (!_enabled) {
+    return
+  }
   writeEntry({
     timestamp: new Date().toISOString(),
     type: 'session_resume',
@@ -145,7 +193,9 @@ export function logSessionResume(sessionId: string, requestId: string, payload: 
 
 /** Log checkpoint commit. */
 export function logCheckpointCommit(sessionId: string, requestId: string, payload: { sizeBytes: number }): void {
-  if (!_enabled) {return}
+  if (!_enabled) {
+    return
+  }
   writeEntry({
     timestamp: new Date().toISOString(),
     type: 'checkpoint_commit',
@@ -155,25 +205,15 @@ export function logCheckpointCommit(sessionId: string, requestId: string, payloa
   })
 }
 
-/** Log checkpoint discard. */
-export function logCheckpointDiscard(sessionId: string, requestId: string, payload: { reason: string }): void {
-  if (!_enabled) {return}
-  writeEntry({
-    timestamp: new Date().toISOString(),
-    type: 'checkpoint_discard',
-    sessionId,
-    requestId,
-    reason: payload.reason,
-  })
-}
-
 /** Log a retry attempt. */
 export function logRetry(
   sessionId: string,
   requestId: string,
   payload: { attempt: number; hint: string; delayMs: number },
 ): void {
-  if (!_enabled) {return}
+  if (!_enabled) {
+    return
+  }
   writeEntry({
     timestamp: new Date().toISOString(),
     type: 'retry',
@@ -185,55 +225,11 @@ export function logRetry(
   })
 }
 
-/** Log a tool call execution. */
-export function logToolCall(
-  sessionId: string,
-  requestId: string,
-  payload: { toolName: string; mode: string; resultType: string },
-): void {
-  if (!_enabled) {return}
-  writeEntry({
-    timestamp: new Date().toISOString(),
-    type: 'tool_call',
-    sessionId,
-    requestId,
-    toolName: payload.toolName,
-    mode: payload.mode,
-    resultType: payload.resultType,
-  })
-}
-
-/** Log H2 stream opened to Cursor. */
-export function logBridgeOpen(sessionId: string, requestId: string): void {
-  if (!_enabled) {return}
-  writeEntry({
-    timestamp: new Date().toISOString(),
-    type: 'bridge_open',
-    sessionId,
-    requestId,
-  })
-}
-
-/** Log H2 stream closed. */
-export function logBridgeClose(
-  sessionId: string,
-  requestId: string,
-  payload: { reason: string; durationMs: number },
-): void {
-  if (!_enabled) {return}
-  writeEntry({
-    timestamp: new Date().toISOString(),
-    type: 'bridge_close',
-    sessionId,
-    requestId,
-    reason: payload.reason,
-    durationMs: payload.durationMs,
-  })
-}
-
 /** Log extension lifecycle event. */
 export function logLifecycle(sessionId: string, requestId: string, payload: { event: string }): void {
-  if (!_enabled) {return}
+  if (!_enabled) {
+    return
+  }
   writeEntry({
     timestamp: new Date().toISOString(),
     type: 'lifecycle',
@@ -251,12 +247,13 @@ export function logLifecycle(sessionId: string, requestId: string, payload: { ev
  */
 export function initDebugLogger(): void {
   _enabled = process.env.PI_CURSOR_PROVIDER_DEBUG === '1'
-  if (!_enabled) {return}
+  if (!_enabled) {
+    return
+  }
 
   _logFilePath =
     process.env.PI_CURSOR_PROVIDER_EXTENSION_DEBUG_FILE ?? join(homedir(), '.pi', 'agent', 'cursor-debug.jsonl')
   _dirEnsured = false
 }
 
-// Auto-initialize on import so the env var is read once
-initDebugLogger()
+// Initialization is done explicitly via initDebugLogger() in index.ts

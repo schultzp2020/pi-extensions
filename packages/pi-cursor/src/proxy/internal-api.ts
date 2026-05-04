@@ -15,7 +15,7 @@ interface SessionHeartbeat {
   lastHeartbeatMs: number
 }
 
-const activeSessions = new Map<string, SessionHeartbeat>()
+const heartbeatClients = new Map<string, SessionHeartbeat>()
 const HEARTBEAT_TIMEOUT_MS = 30_000
 
 let currentAccessToken: string | null = null
@@ -46,13 +46,13 @@ export function getCachedModels(): CursorModel[] {
 export function startHeartbeatMonitor(): NodeJS.Timeout {
   const timer = setInterval(() => {
     const now = Date.now()
-    for (const [id] of activeSessions) {
-      const session = activeSessions.get(id)
+    for (const [id] of heartbeatClients) {
+      const session = heartbeatClients.get(id)
       if (session && now - session.lastHeartbeatMs > HEARTBEAT_TIMEOUT_MS) {
-        activeSessions.delete(id)
+        heartbeatClients.delete(id)
       }
     }
-    if (activeSessions.size === 0) {
+    if (heartbeatClients.size === 0) {
       console.error('[proxy] No active sessions, shutting down')
       shutdownCallback?.()
     }
@@ -67,7 +67,7 @@ export async function handleInternalRequest(req: IncomingMessage, res: ServerRes
   if (path === '/internal/health' && req.method === 'GET') {
     jsonResponse(res, 200, {
       status: 'ok',
-      sessions: activeSessions.size,
+      sessions: heartbeatClients.size,
       hasToken: currentAccessToken !== null,
       modelCount: cachedModels.length,
     })
@@ -87,7 +87,7 @@ export async function handleInternalRequest(req: IncomingMessage, res: ServerRes
       jsonResponse(res, 400, { error: 'sessionId required' })
       return
     }
-    activeSessions.set(sessionId, { sessionId, lastHeartbeatMs: Date.now() })
+    heartbeatClients.set(sessionId, { sessionId, lastHeartbeatMs: Date.now() })
     jsonResponse(res, 200, { ok: true })
     return
   }

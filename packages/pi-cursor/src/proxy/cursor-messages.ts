@@ -547,7 +547,7 @@ export function handleExecMessage(execMsg: ExecServerMessage, ctx: ExecContext):
 
     // native mode: dispatch to proxy-local execution
     if (nativeToolsMode === 'native' && ctx.allowedRoot) {
-      const {allowedRoot} = ctx
+      const { allowedRoot } = ctx
       executeNativeLocally(execMsg, allowedRoot)
         .then((nativeResult) => {
           sendExecResult(execMsg, nativeResult.resultType, nativeResult.result, sendFrame)

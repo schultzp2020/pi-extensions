@@ -9,7 +9,6 @@ import {
   invalidateConversationState,
   persistConversation,
   resolveConversationState,
-  shouldDiscardCheckpoint,
   validateLineage,
   type StoredConversation,
 } from './conversation-state.ts'
@@ -124,7 +123,7 @@ describe('validateLineage', () => {
   })
 })
 
-describe('shouldDiscardCheckpoint', () => {
+describe('validateLineage — checkpoint discard scenarios', () => {
   function makeStored(overrides: Partial<StoredConversation> = {}): StoredConversation {
     return {
       conversationId: 'test',
@@ -139,31 +138,22 @@ describe('shouldDiscardCheckpoint', () => {
     }
   }
 
-  it('returns true on mismatch with non-null checkpoint', () => {
+  it('returns false on mismatch — checkpoint should be discarded', () => {
     const stored = makeStored({
       checkpoint: new Uint8Array([1, 2, 3]),
       lineageTurnCount: 3,
       lineageFingerprint: 'abc',
     })
-    expect(shouldDiscardCheckpoint(stored, { turnCount: 4, fingerprint: 'abc' })).toBeTruthy()
+    expect(validateLineage(stored, { turnCount: 4, fingerprint: 'abc' })).toBeFalsy()
   })
 
-  it('returns false on mismatch with null checkpoint', () => {
-    const stored = makeStored({
-      checkpoint: null,
-      lineageTurnCount: 3,
-      lineageFingerprint: 'abc',
-    })
-    expect(shouldDiscardCheckpoint(stored, { turnCount: 4, fingerprint: 'abc' })).toBeFalsy()
-  })
-
-  it('returns false on valid lineage', () => {
+  it('returns true on valid lineage — checkpoint should be kept', () => {
     const stored = makeStored({
       checkpoint: new Uint8Array([1, 2, 3]),
       lineageTurnCount: 3,
       lineageFingerprint: 'abc',
     })
-    expect(shouldDiscardCheckpoint(stored, { turnCount: 3, fingerprint: 'abc' })).toBeFalsy()
+    expect(validateLineage(stored, { turnCount: 3, fingerprint: 'abc' })).toBeTruthy()
   })
 })
 

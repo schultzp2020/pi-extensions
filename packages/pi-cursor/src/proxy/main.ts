@@ -52,6 +52,7 @@ import {
   logCheckpointCommit,
   logRequestEnd,
   logRequestStart,
+  logRetry,
   logSessionCreate,
   logSessionResume,
 } from './debug-logger.ts'
@@ -102,19 +103,25 @@ interface ChatCompletionRequest {
 
 // ── Retry helpers ──
 
-/** Delay (ms) before retrying based on the failure hint. */
+/** Base delay (ms) before retrying based on the failure hint, with jitter. */
 function retryDelayMs(hint: RetryHint): number {
+  let base: number
   switch (hint) {
     case 'blob_not_found': {
-      return 200
+      base = 200
+      break
     }
     case 'resource_exhausted': {
-      return 2000
+      base = 2000
+      break
     }
     case 'timeout': {
-      return 1000
+      base = 1000
+      break
     }
   }
+  // Add 0-50% jitter to prevent thundering herd
+  return Math.round(base * (1 + Math.random() * 0.5))
 }
 
 function sleep(ms: number): Promise<void> {
@@ -506,20 +513,30 @@ async function handleChatCompletion(
     let nonStreamAttempt = 0
     let currentNonStreamSession = session
     let response: Response
+    let nonStreamCloseHandler: (() => void) | null = null
     for (;;) {
       response = await collectNonStreamingResponse(currentNonStreamSession, modelId)
       if (response.ok || nonStreamAttempt >= cfg.maxRetries) {
         break
       }
       nonStreamAttempt++
+      const hint: RetryHint = response.status === 429 ? 'resource_exhausted' : 'timeout'
+      const delayMs = retryDelayMs(hint)
+      logRetry(sessionId, requestId, { attempt: nonStreamAttempt, hint, delayMs })
       console.error(`[proxy] Non-streaming retry ${nonStreamAttempt}/${cfg.maxRetries} (status ${response.status})`)
-      await sleep(1000)
+      await sleep(delayMs)
       currentNonStreamSession = new CursorSession(sessionOptions)
-      req.on('close', () => {
-        if (currentNonStreamSession.alive) {
-          currentNonStreamSession.cancel()
+      // Remove previous close handler to prevent listener accumulation
+      if (nonStreamCloseHandler) {
+        req.removeListener('close', nonStreamCloseHandler)
+      }
+      const sessionToCancel = currentNonStreamSession
+      nonStreamCloseHandler = () => {
+        if (sessionToCancel.alive) {
+          sessionToCancel.cancel()
         }
-      })
+      }
+      req.on('close', nonStreamCloseHandler)
     }
     // Update lineage after successful non-streaming turn completion
     if (response.ok) {
@@ -570,6 +587,7 @@ async function pumpAndFinalize(
 ): Promise<void> {
   let currentSession = session
   let attempt = 0
+  let streamCloseHandler: (() => void) | null = null
 
   try {
     for (;;) {
@@ -587,6 +605,9 @@ async function pumpAndFinalize(
         currentSession.close()
         attempt++
         const delayMs = retryDelayMs(result.retryHint)
+        if (debugInfo) {
+          logRetry(debugInfo.sid, debugInfo.rid, { attempt, hint: result.retryHint, delayMs })
+        }
         console.error(
           `[proxy] Retry ${attempt}/${retryCtx.maxRetries} after ${result.retryHint}: ${result.error} (delay ${delayMs}ms)`,
         )
@@ -594,11 +615,17 @@ async function pumpAndFinalize(
 
         // New session with the same options — checkpoint preserves conversation state
         currentSession = new CursorSession(retryCtx.sessionOptions)
-        retryCtx.req.on('close', () => {
-          if (currentSession.alive) {
-            currentSession.cancel()
+        // Remove previous close handler to prevent listener accumulation
+        if (streamCloseHandler) {
+          retryCtx.req.removeListener('close', streamCloseHandler)
+        }
+        const sessionToCancel = currentSession
+        streamCloseHandler = () => {
+          if (sessionToCancel.alive) {
+            sessionToCancel.cancel()
           }
-        })
+        }
+        retryCtx.req.on('close', streamCloseHandler)
         continue
       }
 
@@ -724,6 +751,7 @@ async function main(): Promise<void> {
   configureInternalApi({
     initialToken: config.accessToken,
     initialModels: models,
+    onModelsRefreshed: () => invalidateNormalizedModels(),
     onShutdown: shutdown,
   })
 
@@ -764,7 +792,7 @@ async function main(): Promise<void> {
     evictionTimer.unref()
   }
 
-  server.listen(0, () => {
+  server.listen(0, '127.0.0.1', () => {
     const addr = server.address()
     const port = typeof addr === 'object' && addr !== null ? addr.port : 0
 

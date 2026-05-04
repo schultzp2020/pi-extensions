@@ -17,7 +17,7 @@ import {
   type NativeToolsMode,
 } from './proxy/config.ts'
 import { initDebugLogger, logLifecycle } from './proxy/debug-logger.ts'
-import { parseModelId, processModels, type NormalizedModelSet } from './proxy/model-normalization.ts'
+import { familyKey, parseModelId, processModels, type NormalizedModelSet } from './proxy/model-normalization.ts'
 import type { CursorModel } from './proxy/models.ts'
 
 const PROVIDER_ID = 'cursor'
@@ -60,13 +60,14 @@ function toProviderModels(models: CursorModel[], modelSet?: NormalizedModelSet):
     // When normalized, set reasoning effort compat for models with effort maps
     if (modelSet) {
       const parsed = parseModelId(m.id)
-      const fKey = `${parsed.base}|${String(parsed.thinking)}|${String(parsed.fast)}`
+      const fKey = familyKey(parsed.base, parsed.thinking, parsed.fast)
       const effortMap = modelSet.effortMaps.get(fKey)
       if (effortMap) {
+        // reasoningEffortMap is a pi-cursor extension to the SDK compat type
         base.compat = {
           supportsReasoningEffort: true,
           reasoningEffortMap: effortMap,
-        }
+        } as ProviderModelConfig['compat']
       }
     }
 
@@ -219,7 +220,9 @@ export default async function (pi: ExtensionAPI): Promise<void> {
       }
 
       function formatValue(key: SettingKey, cfg: CursorConfig): string {
-        if (key === 'maxMode') {return cfg.maxMode ? 'on' : 'off'}
+        if (key === 'maxMode') {
+          return cfg.maxMode ? 'on' : 'off'
+        }
         return String(cfg[key])
       }
 
@@ -266,10 +269,14 @@ export default async function (pi: ExtensionAPI): Promise<void> {
       })
 
       const selected = await ctx.ui.select('Cursor Settings', options)
-      if (!selected) {return}
+      if (!selected) {
+        return
+      }
 
       const selectedIndex = options.indexOf(selected)
-      if (selectedIndex < 0) {return}
+      if (selectedIndex < 0) {
+        return
+      }
       const row = rows[selectedIndex]
 
       // Env-overridden settings are read-only
@@ -289,7 +296,9 @@ export default async function (pi: ExtensionAPI): Promise<void> {
 
       const values = valueOptions[row.key]
       const selectedValue = await ctx.ui.select(row.label, values)
-      if (!selectedValue) {return}
+      if (!selectedValue) {
+        return
+      }
 
       // Convert selected value to config value
       const update: Partial<CursorConfig> = {}
@@ -357,26 +366,21 @@ export default async function (pi: ExtensionAPI): Promise<void> {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ sessionId }),
+        signal: AbortSignal.timeout(2000),
       })
     } catch {
-      // Best-effort cleanup — proxy may be unreachable
+      // Best-effort cleanup — proxy may be unreachable or slow
     }
   }
 
-  pi.on('session_before_switch', async () => {
-    logLifecycle(sessionId, '', { event: 'session_before_switch' })
+  async function onBeforeSessionChange(event: string): Promise<void> {
+    logLifecycle(sessionId, '', { event })
     await cleanupCurrentSession()
-  })
+  }
 
-  pi.on('session_before_fork', async () => {
-    logLifecycle(sessionId, '', { event: 'session_before_fork' })
-    await cleanupCurrentSession()
-  })
-
-  pi.on('session_before_tree', async () => {
-    logLifecycle(sessionId, '', { event: 'session_before_tree' })
-    await cleanupCurrentSession()
-  })
+  pi.on('session_before_switch', () => onBeforeSessionChange('session_before_switch'))
+  pi.on('session_before_fork', () => onBeforeSessionChange('session_before_fork'))
+  pi.on('session_before_tree', () => onBeforeSessionChange('session_before_tree'))
 
   pi.on('session_shutdown', async () => {
     logLifecycle(sessionId, '', { event: 'session_shutdown' })

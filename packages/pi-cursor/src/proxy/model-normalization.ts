@@ -8,6 +8,7 @@ import type { CursorModel } from './models.ts'
 export type CursorEffort = 'none' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
 
 /** Pi's reasoning-effort levels */
+// fallow-ignore-next-line unused-type
 export type PiEffort = 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
 
 /** Result of parsing a raw Cursor model ID into its components */
@@ -22,12 +23,6 @@ export interface ParsedModelId {
   fast: boolean
   /** Whether trailing -max (maxMode flag) was present */
   maxMode: boolean
-}
-
-/** Variant key combining fast/thinking flags */
-export interface VariantKey {
-  thinking: boolean
-  fast: boolean
 }
 
 /** Metadata about a model family (all variants sharing a base name) */
@@ -56,8 +51,8 @@ export interface NormalizedModelSet {
 
 const EFFORT_SUFFIXES: ReadonlySet<string> = new Set(['none', 'low', 'medium', 'high', 'xhigh', 'max'])
 
-// Known base model names that end with a segment that looks like an effort
-// suffix but is actually part of the model identity
+// Known base model names where `-max` is part of the identity, not a maxMode flag.
+// These models would be misparsed if `-max` were stripped as maxMode.
 const BASE_NAME_MAX_MODELS: ReadonlySet<string> = new Set(['gpt-5.1-codex-max'])
 
 // ---------------------------------------------------------------------------
@@ -148,7 +143,7 @@ function variantKey(thinking: boolean, fast: boolean): string {
   return `${String(thinking)}|${String(fast)}`
 }
 
-function familyKey(base: string, thinking: boolean, fast: boolean): string {
+export function familyKey(base: string, thinking: boolean, fast: boolean): string {
   return `${base}|${variantKey(thinking, fast)}`
 }
 

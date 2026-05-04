@@ -18,12 +18,41 @@
 import { createReadStream } from 'node:fs'
 import { createInterface } from 'node:readline'
 
+/**
+ * @typedef {{
+ *   timestamp: string
+ *   type: string
+ *   sessionId: string
+ *   requestId: string
+ *   model?: string
+ *   messageCount?: number
+ *   toolsCount?: number
+ *   durationMs?: number
+ *   error?: string
+ *   sessionKey?: string
+ *   conversationKey?: string
+ *   sizeBytes?: number
+ *   reason?: string
+ *   attempt?: number
+ *   hint?: string
+ *   delayMs?: number
+ *   toolName?: string
+ *   mode?: string
+ *   resultType?: string
+ *   event?: string
+ * }} DebugEntry
+ */
+
 // ── Argument parsing ──
 
 const args = process.argv.slice(2)
+/** @type {string | null} */
 let inputFile = null
+/** @type {string | null} */
 let filterSession = null
+/** @type {Date | null} */
 let filterSince = null
+/** @type {Date | null} */
 let filterUntil = null
 
 for (let i = 0; i < args.length; i++) {
@@ -59,30 +88,39 @@ const inputStream = inputFile ? createReadStream(inputFile, 'utf8') : process.st
 
 const rl = createInterface({ input: inputStream, crlfDelay: Infinity })
 
-/** @type {Map<string, object[]>} requestId → events */
+/** @type {Map<string, DebugEntry[]>} requestId → events */
 const byRequest = new Map()
-/** @type {object[]} events without a requestId (lifecycle, etc.) */
+/** @type {DebugEntry[]} events without a requestId (lifecycle, etc.) */
 const standalone = []
 
 let totalLines = 0
 let parseErrors = 0
 
 for await (const line of rl) {
-  if (!line.trim()) continue
+  if (!line.trim()) {
+    continue
+  }
   totalLines++
 
+  /** @type {DebugEntry} */
   let entry
   try {
-    entry = JSON.parse(line)
+    entry = /** @type {DebugEntry} */ (JSON.parse(line))
   } catch {
     parseErrors++
     continue
   }
 
   // Apply filters
-  if (filterSession && entry.sessionId !== filterSession) continue
-  if (filterSince && new Date(entry.timestamp) < filterSince) continue
-  if (filterUntil && new Date(entry.timestamp) > filterUntil) continue
+  if (filterSession && entry.sessionId !== filterSession) {
+    continue
+  }
+  if (filterSince && new Date(entry.timestamp) < filterSince) {
+    continue
+  }
+  if (filterUntil && new Date(entry.timestamp) > filterUntil) {
+    continue
+  }
 
   const rid = entry.requestId
   if (!rid) {
@@ -93,50 +131,64 @@ for await (const line of rl) {
   if (!byRequest.has(rid)) {
     byRequest.set(rid, [])
   }
-  byRequest.get(rid).push(entry)
+  /** @type {DebugEntry[]} */ (byRequest.get(rid)).push(entry)
 }
 
 // ── Formatting helpers ──
 
+/**
+ * @param {string | undefined} isoStr
+ * @returns {string}
+ */
 function ts(isoStr) {
   return isoStr ? isoStr.replace('T', ' ').replace('Z', '') : '?'
 }
 
-function pad(str, len) {
-  return String(str).padEnd(len)
-}
-
+/**
+ * @param {DebugEntry} ev
+ * @returns {string}
+ */
 function formatEvent(ev) {
   switch (ev.type) {
-    case 'request_start':
+    case 'request_start': {
       return `▶ REQUEST  model=${ev.model}  msgs=${ev.messageCount}  tools=${ev.toolsCount}`
+    }
     case 'request_end': {
-      const dur = ev.durationMs != null ? `${ev.durationMs}ms` : '?'
+      const dur = ev.durationMs !== undefined ? `${ev.durationMs}ms` : '?'
       const err = ev.error ? `  ERROR: ${ev.error}` : ''
       return `◼ DONE     duration=${dur}${err}`
     }
-    case 'session_create':
+    case 'session_create': {
       return `+ SESSION  key=${ev.sessionKey}  conv=${ev.conversationKey}`
-    case 'session_resume':
+    }
+    case 'session_resume': {
       return `↻ RESUME   key=${ev.sessionKey}`
-    case 'checkpoint_commit':
+    }
+    case 'checkpoint_commit': {
       return `✓ CKPT     size=${ev.sizeBytes}B`
-    case 'checkpoint_discard':
+    }
+    case 'checkpoint_discard': {
       return `✗ CKPT     reason=${ev.reason}`
-    case 'retry':
+    }
+    case 'retry': {
       return `⟳ RETRY    attempt=${ev.attempt}  hint=${ev.hint}  delay=${ev.delayMs}ms`
-    case 'tool_call':
+    }
+    case 'tool_call': {
       return `⚙ TOOL     name=${ev.toolName}  mode=${ev.mode}  result=${ev.resultType}`
-    case 'bridge_open':
+    }
+    case 'bridge_open': {
       return `⇡ BRIDGE   opened`
+    }
     case 'bridge_close': {
-      const dur = ev.durationMs != null ? `${ev.durationMs}ms` : '?'
+      const dur = ev.durationMs !== undefined ? `${ev.durationMs}ms` : '?'
       return `⇣ BRIDGE   closed  reason=${ev.reason}  duration=${dur}`
     }
-    case 'lifecycle':
+    case 'lifecycle': {
       return `◉ LIFECYCLE  ${ev.event}`
-    default:
+    }
+    default: {
       return `? ${ev.type}  ${JSON.stringify(ev)}`
+    }
   }
 }
 
@@ -157,6 +209,7 @@ if (standalone.length > 0) {
 }
 
 // Group by request
+/** @type {[string, DebugEntry[]][]} */
 const requests = [...byRequest.entries()]
 
 // Sort by first event timestamp within each request
@@ -178,20 +231,24 @@ for (const [requestId, events] of requests) {
   console.log(`── Request ${requestId.slice(0, 8)}… ──`)
 
   // Sort events by timestamp within request
-  events.sort((a, b) => (a.timestamp ?? '').localeCompare(b.timestamp ?? ''))
+  events.sort((a, b) => a.timestamp.localeCompare(b.timestamp))
 
   for (const ev of events) {
     console.log(`  ${ts(ev.timestamp)}  ${formatEvent(ev)}`)
 
     // Aggregate stats
     if (ev.type === 'request_end') {
-      if (ev.error) totalErrors++
-      if (ev.durationMs != null) {
+      if (ev.error) {
+        totalErrors++
+      }
+      if (ev.durationMs !== undefined) {
         totalDurationMs += ev.durationMs
         durationCount++
       }
     }
-    if (ev.type === 'retry') totalRetries++
+    if (ev.type === 'retry') {
+      totalRetries++
+    }
   }
 
   console.log()

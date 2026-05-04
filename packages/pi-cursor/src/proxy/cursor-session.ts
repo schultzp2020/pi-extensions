@@ -348,6 +348,7 @@ export class CursorSession {
    * Send tool results back to Cursor for the pending execs.
    * After results are sent, the session resumes streaming.
    */
+  // fallow-ignore-next-line unused-class-member
   sendToolResults(results: { toolCallId: string; content: string; isError?: boolean }[]): void {
     const remaining: PendingExec[] = []
 
