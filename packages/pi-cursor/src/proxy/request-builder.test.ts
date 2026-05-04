@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { foldTurnsIntoSystemPrompt } from './main.ts'
+import { foldTurnsIntoSystemPrompt } from './request-lifecycle.ts'
 
 describe('foldTurnsIntoSystemPrompt', () => {
   it('returns original system prompt when turns is empty', () => {

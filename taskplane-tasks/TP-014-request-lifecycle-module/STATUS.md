@@ -1,6 +1,6 @@
 # TP-014: Request Lifecycle Module — Status
 
-**Current Step:** Step 2: Slim down main.ts and retarget tests
+**Current Step:** Step 3: Testing & Verification
 **Status:** 🟡 In Progress
 **Last Updated:** 2026-05-04
 **Review Level:** 1
@@ -39,13 +39,13 @@
 
 ### Step 2: Slim down main.ts and retarget tests
 
-**Status:** ⬜ Not Started
+**Status:** ✅ Complete
 
-- [ ] Slim `main.ts` to ~200 lines (startup, routing, model mgmt, Internal API)
-- [ ] Construct and pass `ProxyContext`
-- [ ] Retarget `request-builder.test.ts` imports
-- [ ] Create `request-lifecycle.test.ts` with retry, lineage, checkpoint, streaming tests
-- [ ] Run targeted tests
+- [x] Slim `main.ts` to ~200 lines (startup, routing, model mgmt, Internal API)
+- [x] Construct and pass `ProxyContext`
+- [x] Retarget `request-builder.test.ts` imports
+- [x] Create `request-lifecycle.test.ts` with retry, lineage, checkpoint, streaming tests
+- [x] Run targeted tests
 
 ---
 
