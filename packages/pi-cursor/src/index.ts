@@ -57,7 +57,11 @@ function toProviderModels(models: CursorModel[], modelSet?: NormalizedModelSet):
       maxTokens: m.maxTokens,
     }
 
-    // When normalized, set reasoning effort compat for models with effort maps
+    // When normalized, set reasoning effort compat and thinkingLevelMap for
+    // models with effort maps.  Pi-core requires thinkingLevelMap.xhigh to be
+    // explicitly defined for xhigh to appear in the thinking-level selector.
+    // The map values pass through as-is to the proxy, which maps them via
+    // buildEffortMap to the actual Cursor effort suffixes.
     if (modelSet) {
       const parsed = parseModelId(m.id)
       const fKey = familyKey(parsed.base, parsed.thinking, parsed.fast)
@@ -68,6 +72,19 @@ function toProviderModels(models: CursorModel[], modelSet?: NormalizedModelSet):
           supportsReasoningEffort: true,
           reasoningEffortMap: effortMap,
         } as ProviderModelConfig['compat']
+
+        // Explicitly define all effort levels in thinkingLevelMap so pi-core's
+        // getSupportedThinkingLevels includes them.  Currently only xhigh is
+        // opt-in (requires explicit definition), but defining all levels
+        // future-proofs against new opt-in levels.  The values pass through
+        // as reasoning_effort to the proxy, which maps them via effortMap.
+        // 'off' is excluded — it's always available and sending it as
+        // reasoning_effort would be a no-op the proxy doesn't expect.
+        const thinkingLevelMap: Record<string, string> = {}
+        for (const key of Object.keys(effortMap)) {
+          thinkingLevelMap[key] = key
+        }
+        base.thinkingLevelMap = thinkingLevelMap
       }
     }
 
