@@ -40,6 +40,8 @@ export interface ParsedConversationTurn {
   userText: string
   assistantText: string
   images: ImagePart[]
+  /** True when this turn's user message is a compaction or branch summary, not a real user message. */
+  isCompaction: boolean
 }
 
 export interface ParsedMessages {
@@ -48,6 +50,24 @@ export interface ParsedMessages {
   userText: string
   images: ImagePart[]
   toolResults: ToolResultInfo[]
+}
+
+/**
+ * Prefix strings used by pi-core to wrap compaction and branch summaries.
+ * These are used to detect non-user turns in `parseMessages`.
+ *
+ * Source: `@mariozechner/pi-coding-agent` — COMPACTION_SUMMARY_PREFIX and
+ * BRANCH_SUMMARY_PREFIX from `dist/core/messages.js`.  Not imported directly
+ * to avoid a heavy/circular dependency; kept in sync manually.
+ */
+export const COMPACTION_MARKERS = [
+  'The conversation history before this point was compacted into the following summary:',
+  'The following is a summary of a branch that this conversation came back from:',
+] as const
+
+/** Returns true if the text starts with a known compaction/branch summary prefix. */
+export function isCompactionText(text: string): boolean {
+  return COMPACTION_MARKERS.some((marker) => text.startsWith(marker))
 }
 
 /**
@@ -167,6 +187,7 @@ export function parseMessages(messages: OpenAIMessage[]): ParsedMessages {
         userText: user.text,
         assistantText: assistant.text,
         images: user.images,
+        isCompaction: isCompactionText(user.text),
       })
       userIdx++
       assistantIdx++

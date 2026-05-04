@@ -81,4 +81,53 @@ describe('foldTurnsIntoSystemPrompt', () => {
     const result = foldTurnsIntoSystemPrompt('System prompt', [{ userText: hugeText, assistantText: 'response' }])
     expect(result).toBe('System prompt')
   })
+
+  it('wraps compaction turns in <context> tags instead of User prefix', () => {
+    const result = foldTurnsIntoSystemPrompt('System', [
+      { userText: 'compacted context here', assistantText: 'Understood.', isCompaction: true },
+      { userText: 'Hello', assistantText: 'Hi!', isCompaction: false },
+    ])
+    expect(result).toContain('<context>\ncompacted context here\n</context>')
+    expect(result).not.toMatch(/User: compacted context here/)
+    // Assistant acknowledgment is dropped for compaction turns
+    expect(result).not.toContain('Assistant: Understood.')
+    expect(result).toContain('User: Hello')
+    expect(result).toContain('Assistant: Hi!')
+  })
+
+  it('handles all-compaction turns', () => {
+    const result = foldTurnsIntoSystemPrompt('System', [
+      { userText: 'summary A', assistantText: 'ok', isCompaction: true },
+      { userText: 'summary B', assistantText: 'ok', isCompaction: true },
+    ])
+    expect(result).toContain('<context>\nsummary A\n</context>')
+    expect(result).toContain('<context>\nsummary B\n</context>')
+    expect(result).not.toContain('User:')
+    expect(result).not.toContain('Assistant:')
+  })
+
+  it('treats undefined isCompaction as regular user turn', () => {
+    const result = foldTurnsIntoSystemPrompt('System', [{ userText: 'Hello', assistantText: 'Hi!' }])
+    expect(result).toContain('User: Hello')
+    expect(result).not.toContain('<context>')
+  })
+
+  it('prioritizes compaction turns over regular turns during truncation', () => {
+    // Each turn ~45KB, total ~135KB exceeds 100KB cap.
+    // Without prioritization, newest-first would keep newest + middle, dropping the compaction.
+    // With prioritization, compaction is reserved first, then newest regular fills the rest.
+    const bigText = 'x'.repeat(50_000)
+    const turns = [
+      { userText: `compaction-summary-${bigText}`, assistantText: 'ok', isCompaction: true },
+      { userText: `oldest-regular-${bigText}`, assistantText: 'A1', isCompaction: false },
+      { userText: 'newest-regular', assistantText: 'A2', isCompaction: false },
+    ]
+    const result = foldTurnsIntoSystemPrompt('System', turns)
+    // Compaction turn should be kept (prioritized)
+    expect(result).toContain('<context>\ncompaction-summary-')
+    // Newest regular turn should be kept (fits in remaining budget)
+    expect(result).toContain('User: newest-regular')
+    // Oldest regular turn should be dropped (budget exceeded)
+    expect(result).not.toContain('oldest-regular')
+  })
 })
