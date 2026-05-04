@@ -1,6 +1,6 @@
 # TP-006: Model normalization and effort mapping — Status
 
-**Current Step:** Step 1: Create model normalization module
+**Current Step:** Step 2: Integrate normalization into model registration
 **Status:** 🟡 In Progress
 **Last Updated:** 2026-05-04
 **Review Level:** 1
@@ -36,12 +36,12 @@
 
 ### Step 2: Integrate normalization into model registration
 
-**Status:** ⬜ Not Started
+**Status:** ✅ Complete
 
-- [ ] Integrate normalization into `/v1/models` endpoint based on `modelMappings`
-- [ ] Add effort resolution at request time in chat completion handler
-- [ ] Set provider compat fields for reasoning effort support in `index.ts`
-- [ ] Create `cursor-models-raw.json` fallback model list
+- [x] Integrate normalization into `/v1/models` endpoint based on `modelMappings`
+- [x] Add effort resolution at request time in chat completion handler
+- [x] Set provider compat fields for reasoning effort support in `index.ts`
+- [x] Create `cursor-models-raw.json` fallback model list
 
 ---
 

@@ -6,8 +6,11 @@ import type { OAuthCredentials, OAuthLoginCallbacks } from '@mariozechner/pi-ai'
 import type { ExtensionAPI, ProviderModelConfig } from '@mariozechner/pi-coding-agent'
 
 import { generateCursorAuthParams, getTokenExpiry, pollCursorAuth, refreshCursorToken } from './auth.ts'
+import { FALLBACK_MODELS } from './fallback-models.ts'
 import { connectToProxy, getActivePort, pushToken, readPortFile, stopHeartbeat } from './proxy-lifecycle.ts'
+import { resolveEffective } from './proxy/config.ts'
 import { initDebugLogger, logLifecycle } from './proxy/debug-logger.ts'
+import { parseModelId, processModels, type NormalizedModelSet } from './proxy/model-normalization.ts'
 import type { CursorModel } from './proxy/models.ts'
 
 const PROVIDER_ID = 'cursor'
@@ -17,11 +20,12 @@ const MODEL_CACHE_PATH = join(AGENT_DIR, 'cursor-model-cache.json')
 function loadModelCache(): CursorModel[] {
   try {
     if (!existsSync(MODEL_CACHE_PATH)) {
-      return []
+      return FALLBACK_MODELS
     }
-    return JSON.parse(readFileSync(MODEL_CACHE_PATH, 'utf8')) as CursorModel[]
+    const cached = JSON.parse(readFileSync(MODEL_CACHE_PATH, 'utf8')) as CursorModel[]
+    return cached.length > 0 ? cached : FALLBACK_MODELS
   } catch {
-    return []
+    return FALLBACK_MODELS
   }
 }
 
@@ -34,16 +38,33 @@ function saveModelCache(models: CursorModel[]): void {
   }
 }
 
-function toProviderModels(models: CursorModel[]): ProviderModelConfig[] {
-  return models.map((m) => ({
-    id: m.id,
-    name: m.name,
-    reasoning: m.reasoning,
-    input: (m.supportsImages ? ['text', 'image'] : ['text']) as ('text' | 'image')[],
-    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    contextWindow: m.contextWindow,
-    maxTokens: m.maxTokens,
-  }))
+function toProviderModels(models: CursorModel[], modelSet?: NormalizedModelSet): ProviderModelConfig[] {
+  return models.map((m) => {
+    const base: ProviderModelConfig = {
+      id: m.id,
+      name: m.name,
+      reasoning: m.reasoning,
+      input: (m.supportsImages ? ['text', 'image'] : ['text']) as ('text' | 'image')[],
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: m.contextWindow,
+      maxTokens: m.maxTokens,
+    }
+
+    // When normalized, set reasoning effort compat for models with effort maps
+    if (modelSet) {
+      const parsed = parseModelId(m.id)
+      const fKey = `${parsed.base}|${String(parsed.thinking)}|${String(parsed.fast)}`
+      const effortMap = modelSet.effortMaps.get(fKey)
+      if (effortMap) {
+        base.compat = {
+          supportsReasoningEffort: true,
+          reasoningEffortMap: effortMap,
+        }
+      }
+    }
+
+    return base
+  })
 }
 
 function loadStoredToken(): string | null {
@@ -121,12 +142,21 @@ export default async function (pi: ExtensionAPI): Promise<void> {
 
   function register(): void {
     registeredPort = currentPort
+    const cfg = resolveEffective()
+    let providerModels: ProviderModelConfig[]
+    if (cfg.modelMappings === 'normalized' && models.length > 0) {
+      const modelSet = processModels(models)
+      providerModels = toProviderModels(modelSet.models, modelSet)
+    } else {
+      providerModels = toProviderModels(models)
+    }
+
     pi.registerProvider(PROVIDER_ID, {
       name: 'Cursor',
       baseUrl: currentPort ? `http://localhost:${String(currentPort)}/v1` : 'http://localhost:0/v1',
       apiKey: 'cursor-proxy',
       api: 'openai-completions',
-      models: toProviderModels(models),
+      models: providerModels,
       headers: { 'X-Session-Id': sessionId },
       oauth: {
         name: 'Cursor',

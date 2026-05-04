@@ -1,0 +1,182 @@
+[
+  {
+    "id": "claude-4-sonnet",
+    "name": "Claude 4 Sonnet",
+    "reasoning": true,
+    "contextWindow": 1000000,
+    "maxTokens": 16384,
+    "supportsImages": true,
+    "supportsMaxMode": false
+  },
+  {
+    "id": "claude-4.5-haiku",
+    "name": "Claude 4.5 Haiku",
+    "reasoning": true,
+    "contextWindow": 200000,
+    "maxTokens": 16384,
+    "supportsImages": true,
+    "supportsMaxMode": false
+  },
+  {
+    "id": "claude-4.5-opus",
+    "name": "Claude 4.5 Opus",
+    "reasoning": true,
+    "contextWindow": 1000000,
+    "maxTokens": 16384,
+    "supportsImages": true,
+    "supportsMaxMode": true
+  },
+  {
+    "id": "claude-4.5-sonnet",
+    "name": "Claude 4.5 Sonnet",
+    "reasoning": true,
+    "contextWindow": 1000000,
+    "maxTokens": 16384,
+    "supportsImages": true,
+    "supportsMaxMode": true
+  },
+  {
+    "id": "claude-4.6-opus",
+    "name": "Claude 4.6 Opus",
+    "reasoning": true,
+    "contextWindow": 1000000,
+    "maxTokens": 16384,
+    "supportsImages": true,
+    "supportsMaxMode": true
+  },
+  {
+    "id": "claude-4.6-sonnet",
+    "name": "Claude 4.6 Sonnet",
+    "reasoning": true,
+    "contextWindow": 1000000,
+    "maxTokens": 16384,
+    "supportsImages": true,
+    "supportsMaxMode": true
+  },
+  {
+    "id": "composer-1.5",
+    "name": "Composer 1.5",
+    "reasoning": false,
+    "contextWindow": 1000000,
+    "maxTokens": 16384,
+    "supportsImages": false,
+    "supportsMaxMode": false
+  },
+  {
+    "id": "composer-2",
+    "name": "Composer 2",
+    "reasoning": false,
+    "contextWindow": 200000,
+    "maxTokens": 16384,
+    "supportsImages": false,
+    "supportsMaxMode": false
+  },
+  {
+    "id": "gemini-2.5-flash",
+    "name": "Gemini 2.5 Flash",
+    "reasoning": true,
+    "contextWindow": 1000000,
+    "maxTokens": 16384,
+    "supportsImages": true,
+    "supportsMaxMode": false
+  },
+  {
+    "id": "gemini-3-flash",
+    "name": "Gemini 3 Flash",
+    "reasoning": true,
+    "contextWindow": 1000000,
+    "maxTokens": 16384,
+    "supportsImages": true,
+    "supportsMaxMode": false
+  },
+  {
+    "id": "gemini-3.1-pro",
+    "name": "Gemini 3.1 Pro",
+    "reasoning": true,
+    "contextWindow": 1000000,
+    "maxTokens": 16384,
+    "supportsImages": true,
+    "supportsMaxMode": false
+  },
+  {
+    "id": "gpt-5.1",
+    "name": "GPT 5.1",
+    "reasoning": true,
+    "contextWindow": 272000,
+    "maxTokens": 16384,
+    "supportsImages": true,
+    "supportsMaxMode": false
+  },
+  {
+    "id": "gpt-5.1-codex-max",
+    "name": "GPT 5.1 Codex Max",
+    "reasoning": true,
+    "contextWindow": 272000,
+    "maxTokens": 16384,
+    "supportsImages": false,
+    "supportsMaxMode": false
+  },
+  {
+    "id": "gpt-5.1-codex-mini",
+    "name": "GPT 5.1 Codex Mini",
+    "reasoning": true,
+    "contextWindow": 272000,
+    "maxTokens": 16384,
+    "supportsImages": false,
+    "supportsMaxMode": false
+  },
+  {
+    "id": "gpt-5.2",
+    "name": "GPT 5.2",
+    "reasoning": true,
+    "contextWindow": 272000,
+    "maxTokens": 16384,
+    "supportsImages": true,
+    "supportsMaxMode": false
+  },
+  {
+    "id": "gpt-5.2-codex",
+    "name": "GPT 5.2 Codex",
+    "reasoning": true,
+    "contextWindow": 272000,
+    "maxTokens": 16384,
+    "supportsImages": false,
+    "supportsMaxMode": false
+  },
+  {
+    "id": "gpt-5.3-codex",
+    "name": "GPT 5.3 Codex",
+    "reasoning": true,
+    "contextWindow": 272000,
+    "maxTokens": 16384,
+    "supportsImages": false,
+    "supportsMaxMode": false
+  },
+  {
+    "id": "gpt-5.4",
+    "name": "GPT 5.4",
+    "reasoning": true,
+    "contextWindow": 922000,
+    "maxTokens": 16384,
+    "supportsImages": true,
+    "supportsMaxMode": false
+  },
+  {
+    "id": "gpt-5.4-mini",
+    "name": "GPT 5.4 Mini",
+    "reasoning": true,
+    "contextWindow": 272000,
+    "maxTokens": 16384,
+    "supportsImages": true,
+    "supportsMaxMode": false
+  },
+  {
+    "id": "gpt-5.4-nano",
+    "name": "GPT 5.4 Nano",
+    "reasoning": false,
+    "contextWindow": 272000,
+    "maxTokens": 16384,
+    "supportsImages": true,
+    "supportsMaxMode": false
+  }
+]

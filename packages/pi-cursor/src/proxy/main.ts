@@ -35,6 +35,7 @@ import {
   UserMessageActionSchema,
   UserMessageSchema,
 } from '../proto/agent_pb.ts'
+import { resolveEffective } from './config.ts'
 import {
   getConversationState,
   persistConversation,
@@ -59,6 +60,7 @@ import {
   handleInternalRequest,
   startHeartbeatMonitor,
 } from './internal-api.ts'
+import { processModels, resolveModelId, type NormalizedModelSet } from './model-normalization.ts'
 import { discoverCursorModels, type CursorModel } from './models.ts'
 import { MCP_TOOL_PREFIX } from './native-tools.ts'
 import { type OpenAIMessage, type OpenAIToolDef, parseMessages, selectToolsForChoice } from './openai-messages.ts'
@@ -237,8 +239,25 @@ function buildCursorRequest(
 // buildResumeRequest is reserved for future checkpoint resume functionality.
 // It requires conversationId, checkpoint, mcpTools, and cloudRule parameters.
 
+/** Cached normalized model set, rebuilt on model discovery */
+let cachedNormalizedSet: NormalizedModelSet | null = null
+
+/** Get or build the normalized model set from the current raw models */
+function getNormalizedModelSet(): NormalizedModelSet {
+  cachedNormalizedSet ??= processModels(getCachedModels());
+  return cachedNormalizedSet
+}
+
+/** Call when raw models change (discovery, refresh) to invalidate cached normalization */
+export function invalidateNormalizedModels(): void {
+  cachedNormalizedSet = null
+}
+
 function handleModelsRequest(res: ServerResponse, models: CursorModel[]): void {
-  const data = models.map((m) => ({
+  const cfg = resolveEffective()
+  const effectiveModels = cfg.modelMappings === 'normalized' ? getNormalizedModelSet().models : models
+
+  const data = effectiveModels.map((m) => ({
     id: m.id,
     object: 'model',
     created: Math.floor(Date.now() / 1000),
@@ -271,7 +290,21 @@ async function handleChatCompletion(
     return
   }
 
-  const { model: modelId, messages, stream = true, tools = [], tool_choice } = body
+  const { model: requestedModelId, messages, stream = true, tools = [], tool_choice } = body
+
+  // Resolve the final Cursor model ID when normalization is active
+  const cfg = resolveEffective()
+  let modelId: string
+  if (cfg.modelMappings === 'normalized') {
+    const modelSet = getNormalizedModelSet()
+    // Extract Pi's reasoning-effort from the request body (injected by Pi)
+    const bodyObj = body as unknown as Record<string, unknown>
+    const effort = typeof bodyObj.reasoning_effort === 'string' ? bodyObj.reasoning_effort : null
+    modelId = resolveModelId(requestedModelId, effort, cfg.maxMode, modelSet)
+  } else {
+    modelId = requestedModelId
+  }
+
   // Prefer pi_session_id from body (injected by before_provider_request), fall back to header
   const bodyRecord = body as unknown as Record<string, unknown>
   const sessionId =
