@@ -40,6 +40,7 @@ import {
 } from './connect-protocol.ts'
 import { type PendingExec, type StreamState, createStreamState, processServerMessage } from './cursor-messages.ts'
 import { EventQueue } from './event-queue.ts'
+import { buildEnabledToolSet } from './native-tools.ts'
 
 const CURSOR_API_URL = 'https://api2.cursor.sh'
 const CURSOR_CLIENT_VERSION = 'cli-2026.01.09-231024f'
@@ -289,6 +290,7 @@ export class CursorSession {
   private readonly streamState: StreamState
   private readonly options: SessionOptions
   private readonly blobStore: Map<string, Uint8Array>
+  private readonly enabledToolNames: Set<string>
 
   private batchState: 'streaming' | 'collecting' | 'flushed' = 'streaming'
   private pendingExecs: PendingExec[] = []
@@ -316,6 +318,7 @@ export class CursorSession {
     })
     this.options = options
     this.blobStore = options.blobStore
+    this.enabledToolNames = buildEnabledToolSet(options.mcpTools)
     this.streamState = createStreamState()
 
     this.startH2Connection()
@@ -468,6 +471,7 @@ export class CursorSession {
       const recognized = processServerMessage(msg, {
         blobStore: this.blobStore,
         mcpTools: this.options.mcpTools,
+        enabledToolNames: this.enabledToolNames,
         cloudRule: this.options.cloudRule,
         sendFrame: (data) => this.write(data),
         state: this.streamState,

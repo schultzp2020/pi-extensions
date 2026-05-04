@@ -49,8 +49,12 @@ A key-value store of binary data (system prompts, conversation chunks) that Curs
 _Avoid_: cache, KV store
 
 **Native Tool Redirection**:
-Intercepting Cursor's built-in tool calls and translating them to Pi's equivalent tools where a clean mapping exists (readArgs→read, shellArgs→bash, grepArgs→grep, writeArgs→write, lsArgs→glob, deleteArgs→bash rm, fetchArgs→bash curl). The result flows back as native protobuf so the model never retries. Obscure tools with no Pi equivalent (diagnostics, computerUse, recordScreen, backgroundShellSpawn) are rejected with an explanatory error.
+Intercepting Cursor's built-in tool calls and translating them to Pi's equivalent tools where a clean mapping exists (readArgs→read, shellArgs→bash, grepArgs→grep, writeArgs→write, lsArgs→glob, deleteArgs→bash rm, fetchArgs→bash curl). Redirects are gated against the session's enabled tool set before execution, so disabled tools are rejected instead of bypassing Pi's requested `tools` array. The result flows back as native protobuf so the model never retries. Obscure tools with no Pi equivalent (diagnostics, computerUse, recordScreen, backgroundShellSpawn) are rejected with an explanatory error.
 _Avoid_: tool mapping, tool proxy, native tool rejection
+
+**Tool Gating**:
+Filtering every MCP passthrough, native redirect, and implicit Cursor interaction feature against the tool set Pi explicitly registered for the session. Unenabled tools return explicit rejection or `isError: true` responses so the model falls back to the tools Pi actually allowed.
+_Avoid_: tool allowlist, permission layer, tool ACL
 
 **MCP Tool**:
 A tool definition registered via Cursor's `RequestContext` that the model uses as a fallback when no native tool redirection applies. These map 1:1 to Pi's tool definitions.

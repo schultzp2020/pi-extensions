@@ -24,7 +24,9 @@ import {
   ConversationStateStructureSchema,
   CreatePlanRequestResponseSchema,
   DiagnosticsResultSchema,
+  ExaFetchRequestResponse_RejectedSchema,
   ExaFetchRequestResponseSchema,
+  ExaSearchRequestResponse_RejectedSchema,
   ExaSearchRequestResponseSchema,
   ExecClientControlMessageSchema,
   ExecClientMessageSchema,
@@ -35,12 +37,17 @@ import {
   KvClientMessageSchema,
   type KvServerMessage,
   type McpToolDefinition,
+  McpResultSchema,
+  McpSuccessSchema,
+  McpTextContentSchema,
+  McpToolResultContentItemSchema,
   RequestContextResultSchema,
   RequestContextSuccessSchema,
   SetBlobResultSchema,
   ShellRejectedSchema,
+  ShellResultSchema,
   SwitchModeRequestResponseSchema,
-  WebSearchRequestResponse_ApprovedSchema,
+  WebSearchRequestResponse_RejectedSchema,
   WebSearchRequestResponseSchema,
   WriteShellStdinErrorSchema,
   WriteShellStdinResultSchema,
@@ -279,6 +286,35 @@ function sendExecStreamClose(execId: number, sendFrame: (data: Buffer) => void):
   sendFrame(frameConnectMessage(toBinary(AgentClientMessageSchema, clientMessage)))
 }
 
+function toolNotEnabledMessage(toolName: string): string {
+  return `Tool '${toolName}' is not enabled in this session`
+}
+
+function sendMcpResult(
+  execMsg: ExecServerMessage,
+  content: string,
+  sendFrame: (data: Buffer) => void,
+  isError = false,
+): void {
+  const result = create(McpResultSchema, {
+    result: {
+      case: 'success',
+      value: create(McpSuccessSchema, {
+        content: [
+          create(McpToolResultContentItemSchema, {
+            content: {
+              case: 'text',
+              value: create(McpTextContentSchema, { text: content }),
+            },
+          }),
+        ],
+        isError,
+      }),
+    },
+  })
+  sendExecResult(execMsg, 'mcpResult', result, sendFrame)
+}
+
 /**
  * Send a best-effort empty result for an exec type not in our proto schema.
  * Extracts the unknown oneof field number from $unknown and mirrors it back
@@ -296,7 +332,11 @@ function sendUnknownExecResult(execMsg: ExecServerMessage, sendFrame: (data: Buf
     return
   }
   const resultFieldNo = argsField.no
-  console.error('[cursor-messages] unhandled exec: sending empty result', { field: resultFieldNo, id: execMsg.id })
+  console.warn('[cursor-messages] rejected unknown exec type', {
+    case: execMsg.message.case,
+    field: resultFieldNo,
+    id: execMsg.id,
+  })
   const execClientMsg = create(ExecClientMessageSchema, {
     id: execMsg.id,
     execId: execMsg.execId,
@@ -367,9 +407,10 @@ function handleKvMessage(
   }
 }
 
-function handleExecMessage(
+export function handleExecMessage(
   execMsg: ExecServerMessage,
   mcpTools: McpToolDefinition[],
+  enabledToolNames: Set<string>,
   cloudRule: string | undefined,
   sendFrame: (data: Buffer) => void,
   onMcpExec: (exec: PendingExec) => void,
@@ -386,6 +427,10 @@ function handleExecMessage(
     const decoded = decodeMcpArgsMap(mcpArgs.args as Record<string, Uint8Array>)
     const resolvedToolName = stripMcpToolPrefix((mcpArgs.toolName as string) || (mcpArgs.name as string) || '')
     fixMcpArgNames(resolvedToolName, decoded)
+    if (!enabledToolNames.has(resolvedToolName)) {
+      sendMcpResult(execMsg, toolNotEnabledMessage(resolvedToolName), sendFrame, true)
+      return
+    }
     onMcpExec({
       execId: execMsg.execId,
       execMsgId: execMsg.id,
@@ -418,6 +463,29 @@ function handleExecMessage(
     }
     const nativeRedirect = nativeToMcpRedirect(execCase as string, execMsg)
     if (nativeRedirect) {
+      if (!enabledToolNames.has(nativeRedirect.toolName)) {
+        const rejectReason = toolNotEnabledMessage(nativeRedirect.toolName)
+        if (execCase === 'shellArgs' || execCase === 'shellStreamArgs') {
+          const args = execMsg.message.value as any
+          const result = create(ShellResultSchema, {
+            result: {
+              case: 'rejected',
+              value: create(ShellRejectedSchema, {
+                command: (args.command as string) || '',
+                workingDirectory: (args.workingDirectory as string) || '',
+                reason: rejectReason,
+                isReadonly: false,
+              }),
+            },
+          })
+          sendExecResult(execMsg, 'shellResult', result, sendFrame)
+          return
+        }
+
+        sendMcpResult(execMsg, rejectReason, sendFrame, true)
+        return
+      }
+
       onMcpExec({
         execId: execMsg.execId,
         execMsgId: execMsg.id,
@@ -475,37 +543,42 @@ function handleExecMessage(
   sendUnknownExecResult(execMsg, sendFrame)
 }
 
-function handleInteractionQuery(
-  query: any,
-  sendFrame: (data: Buffer) => void,
-  onNotify?: (text: string) => void,
-): void {
+function handleInteractionQuery(query: any, sendFrame: (data: Buffer) => void): void {
   const queryId: number = (query.id as number) || 0
   const queryCase: string = (query.query?.case as string) || 'unknown'
-  const searchTerm: string =
-    queryCase === 'webSearchRequestQuery' ? (query.query?.value?.args?.searchTerm as string) || '' : ''
+  const rejectReason = 'Tool not available in this environment. Use the MCP tools provided instead.'
 
   let responseResult: { case: string; value: unknown } | undefined
 
   if (queryCase === 'webSearchRequestQuery') {
-    if (onNotify && searchTerm) {
-      onNotify(`[web search: ${searchTerm}]`)
-    }
     responseResult = {
       case: 'webSearchRequestResponse',
       value: create(WebSearchRequestResponseSchema, {
-        result: { case: 'approved', value: create(WebSearchRequestResponse_ApprovedSchema, {}) },
+        result: {
+          case: 'rejected',
+          value: create(WebSearchRequestResponse_RejectedSchema, { reason: rejectReason }),
+        },
       }),
     }
   } else if (queryCase === 'exaSearchRequestQuery') {
     responseResult = {
       case: 'exaSearchRequestResponse',
-      value: create(ExaSearchRequestResponseSchema, { result: { case: 'approved', value: {} as any } }),
+      value: create(ExaSearchRequestResponseSchema, {
+        result: {
+          case: 'rejected',
+          value: create(ExaSearchRequestResponse_RejectedSchema, { reason: rejectReason }),
+        },
+      }),
     }
   } else if (queryCase === 'exaFetchRequestQuery') {
     responseResult = {
       case: 'exaFetchRequestResponse',
-      value: create(ExaFetchRequestResponseSchema, { result: { case: 'approved', value: {} as any } }),
+      value: create(ExaFetchRequestResponseSchema, {
+        result: {
+          case: 'rejected',
+          value: create(ExaFetchRequestResponse_RejectedSchema, { reason: rejectReason }),
+        },
+      }),
     }
   } else if (queryCase === 'askQuestionInteractionQuery') {
     responseResult = {
@@ -547,6 +620,7 @@ function handleInteractionQuery(
 export interface MessageProcessorContext {
   blobStore: Map<string, Uint8Array>
   mcpTools: McpToolDefinition[]
+  enabledToolNames: Set<string>
   cloudRule?: string
   sendFrame: (data: Buffer) => void
   state: StreamState
@@ -571,7 +645,15 @@ export function processServerMessage(msg: AgentServerMessage, ctx: MessageProces
   }
 
   if (msgCase === 'execServerMessage') {
-    handleExecMessage(msg.message.value, ctx.mcpTools, ctx.cloudRule, ctx.sendFrame, ctx.onMcpExec, ctx.state)
+    handleExecMessage(
+      msg.message.value,
+      ctx.mcpTools,
+      ctx.enabledToolNames,
+      ctx.cloudRule,
+      ctx.sendFrame,
+      ctx.onMcpExec,
+      ctx.state,
+    )
     return true
   }
 
@@ -593,7 +675,7 @@ export function processServerMessage(msg: AgentServerMessage, ctx: MessageProces
   }
 
   if (msgCase === 'interactionQuery') {
-    handleInteractionQuery(msg.message.value, ctx.sendFrame, ctx.onNotify)
+    handleInteractionQuery(msg.message.value, ctx.sendFrame)
     return true
   }
 
