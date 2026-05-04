@@ -1,6 +1,6 @@
 # TP-011: Structured debug logging and timeline — Status
 
-**Current Step:** Step 2: Wire logging into proxy and extension
+**Current Step:** Step 3: Create timeline script
 **Status:** 🟡 In Progress
 **Last Updated:** 2026-05-04
 **Review Level:** 0
@@ -36,16 +36,16 @@
 
 ### Step 2: Wire logging into proxy and extension
 
-**Status:** 🟨 In Progress
+**Status:** ✅ Complete
 
-- [ ] Wire debug logging into proxy request handling in `main.ts`
-- [ ] Add extension-level lifecycle event logging in `index.ts`
+- [x] Wire debug logging into proxy request handling in `main.ts`
+- [x] Add extension-level lifecycle event logging in `index.ts`
 
 ---
 
 ### Step 3: Create timeline script
 
-**Status:** ⬜ Not Started
+**Status:** 🟨 In Progress
 
 - [ ] Create `debug-log-timeline.mjs` with JSONL parsing and timeline output
 - [ ] Support filtering by session and time range

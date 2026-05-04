@@ -7,6 +7,7 @@ import type { ExtensionAPI, ProviderModelConfig } from '@mariozechner/pi-coding-
 
 import { generateCursorAuthParams, getTokenExpiry, pollCursorAuth, refreshCursorToken } from './auth.ts'
 import { connectToProxy, getActivePort, pushToken, readPortFile, stopHeartbeat } from './proxy-lifecycle.ts'
+import { initDebugLogger, logLifecycle } from './proxy/debug-logger.ts'
 import type { CursorModel } from './proxy/models.ts'
 
 const PROVIDER_ID = 'cursor'
@@ -67,6 +68,9 @@ function loadStoredToken(): string | null {
 }
 
 export default async function (pi: ExtensionAPI): Promise<void> {
+  // Initialize debug logger (reads env vars)
+  initDebugLogger()
+
   // Temporary ID for initial proxy connection; replaced by real Pi session ID on session_start
   let sessionId: string = crypto.randomUUID()
   let currentPort: number | null = null
@@ -168,6 +172,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
       // Re-register provider so the X-Session-Id header uses the real ID
       register()
     }
+    logLifecycle(sessionId, '', { event: 'session_start' })
   })
 
   // Inject pi_session_id into every provider request body
@@ -198,18 +203,22 @@ export default async function (pi: ExtensionAPI): Promise<void> {
   }
 
   pi.on('session_before_switch', async () => {
+    logLifecycle(sessionId, '', { event: 'session_before_switch' })
     await cleanupCurrentSession()
   })
 
   pi.on('session_before_fork', async () => {
+    logLifecycle(sessionId, '', { event: 'session_before_fork' })
     await cleanupCurrentSession()
   })
 
   pi.on('session_before_tree', async () => {
+    logLifecycle(sessionId, '', { event: 'session_before_tree' })
     await cleanupCurrentSession()
   })
 
   pi.on('session_shutdown', async () => {
+    logLifecycle(sessionId, '', { event: 'session_shutdown' })
     await cleanupCurrentSession()
     stopHeartbeat()
   })
