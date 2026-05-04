@@ -1,6 +1,6 @@
 # TP-004: Session identity from pi_session_id with lifecycle cleanup — Status
 
-**Current Step:** Step 1: Inject pi_session_id via before_provider_request
+**Current Step:** Step 2: Stabilize session key derivation
 **Status:** 🟡 In Progress
 **Last Updated:** 2026-05-04
 **Review Level:** 2
@@ -34,10 +34,10 @@
 
 ### Step 2: Stabilize session key derivation
 
-**Status:** ⬜ Not Started
+**Status:** ✅ Done
 
-- [ ] Stabilize `deriveSessionKey()` and `deriveConversationKey()` to use session ID only
-- [ ] Extract `pi_session_id` from request body in `main.ts` with header fallback
+- [x] Stabilize `deriveSessionKey()` and `deriveConversationKey()` to use session ID only
+- [x] Extract `pi_session_id` from request body in `main.ts` with header fallback
 
 ---
 

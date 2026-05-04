@@ -264,9 +264,14 @@ async function handleChatCompletion(
   }
 
   const { model: modelId, messages, stream = true, tools = [], tool_choice } = body
-  const sessionId = (req.headers['x-session-id'] as string | undefined) ?? 'default'
-  const sessionKey = deriveSessionKey(sessionId, messages)
-  const convKey = deriveConversationKey(sessionId, messages)
+  // Prefer pi_session_id from body (injected by before_provider_request), fall back to header
+  const bodyRecord = body as unknown as Record<string, unknown>
+  const sessionId =
+    (typeof bodyRecord.pi_session_id === 'string' ? (bodyRecord.pi_session_id) : undefined) ??
+    (req.headers['x-session-id'] as string | undefined) ??
+    'default'
+  const sessionKey = deriveSessionKey(sessionId)
+  const convKey = deriveConversationKey(sessionId)
 
   const { systemPrompt, turns, userText, toolResults } = parseMessages(messages)
   const selectedTools = selectToolsForChoice(tools, tool_choice)

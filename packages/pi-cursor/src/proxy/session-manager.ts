@@ -7,7 +7,6 @@ import { createHash } from 'node:crypto'
 
 import type { CursorSession } from './cursor-session.ts'
 import type { OpenAIMessage } from './openai-messages.ts'
-import { textContent } from './openai-messages.ts'
 
 interface ActiveSession {
   session: CursorSession
@@ -17,22 +16,12 @@ interface ActiveSession {
 const activeSessions = new Map<string, ActiveSession>()
 const SESSION_TTL_MS = 30 * 60 * 1000 // 30 minutes
 
-export function deriveSessionKey(sessionId: string, messages: OpenAIMessage[]): string {
-  const firstUserMsg = messages.find((m) => m.role === 'user')
-  const firstUserText = firstUserMsg ? textContent(firstUserMsg.content) : ''
-  return createHash('sha256')
-    .update(`session:${sessionId}:${firstUserText.slice(0, 200)}`)
-    .digest('hex')
-    .slice(0, 16)
+export function deriveSessionKey(sessionId: string, _messages?: OpenAIMessage[]): string {
+  return createHash('sha256').update(`session:${sessionId}`).digest('hex').slice(0, 16)
 }
 
-export function deriveConversationKey(sessionId: string, messages: OpenAIMessage[]): string {
-  const firstUserMsg = messages.find((m) => m.role === 'user')
-  const firstUserText = firstUserMsg ? textContent(firstUserMsg.content) : ''
-  return createHash('sha256')
-    .update(`conv:${sessionId}:${firstUserText.slice(0, 200)}`)
-    .digest('hex')
-    .slice(0, 16)
+export function deriveConversationKey(sessionId: string, _messages?: OpenAIMessage[]): string {
+  return createHash('sha256').update(`conv:${sessionId}`).digest('hex').slice(0, 16)
 }
 
 export function getActiveSession(key: string): CursorSession | undefined {
