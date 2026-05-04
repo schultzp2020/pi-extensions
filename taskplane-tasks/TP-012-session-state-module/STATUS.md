@@ -1,7 +1,7 @@
 # TP-012: Session State Module — Status
 
-**Current Step:** Step 3: Testing & Verification
-**Status:** 🟡 In Progress
+**Current Step:** Step 4: Documentation & Delivery
+**Status:** ✅ Complete
 **Last Updated:** 2026-05-04
 **Review Level:** 1
 **Review Counter:** 0
@@ -62,11 +62,11 @@
 
 ### Step 4: Documentation & Delivery
 
-**Status:** ⬜ Not Started
+**Status:** ✅ Complete
 
-- [ ] "Must Update" docs modified
-- [ ] "Check If Affected" docs reviewed
-- [ ] Discoveries logged
+- [x] "Must Update" docs modified — CONTEXT.md already matches implementation (Session State definition at L31-33 and Relationships at L145-146 are accurate)
+- [x] "Check If Affected" docs reviewed — ADR-0004 (session keying) and ADR-0008 (lineage validation) describe behavior abstractly without referencing specific function/file names; both still aligned
+- [x] Discoveries logged
 
 ---
 
@@ -79,8 +79,11 @@
 
 ## Discoveries
 
-| Discovery | Disposition | Location |
-| --------- | ----------- | -------- |
+| Discovery                                                                                                                | Disposition              | Location                             |
+| ------------------------------------------------------------------------------------------------------------------------ | ------------------------ | ------------------------------------ |
+| CONTEXT.md already had correct Session State definition before refactoring                                               | No action needed         | packages/pi-cursor/CONTEXT.md L31-33 |
+| Added `closeBridge(sessionId)` helper not in PROMPT interface list — `cleanup` uses cancel(), `closeBridge` uses close() | Kept — needed by main.ts | session-state.ts                     |
+| `getConversationState` and `persistConversation` still exported for onCheckpoint callbacks and retry paths               | Acceptable tradeoff      | session-state.ts                     |
 
 ---
 
