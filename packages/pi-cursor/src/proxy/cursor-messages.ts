@@ -5,10 +5,12 @@
  * execServerMessage (tool calls, request context), kvServerMessage (blobs),
  * interactionQuery (web search, questions), and checkpoints.
  *
- * This module is fundamentally protobuf dispatch code — it pattern-matches on
- * discriminated unions from `@bufbuild/protobuf`. The library's generated types
- * use `any` in union positions, making `no-unsafe-*` rules fire on nearly every
- * line. These are intentional and safe; we suppress them at file level.
+ * This module is protobuf dispatch code — it pattern-matches on discriminated
+ * unions from `@bufbuild/protobuf`. A few `as any` casts remain in:
+ * - sendKvResponse / sendExecResult: generic helpers that accept dynamic case
+ *   strings to avoid duplicating code per-case (the union is correct at runtime)
+ * - sendUnknownExecResult: accesses `$unknown` internal protobuf field
+ * - handleInteractionQuery response assembly: same dynamic case pattern
  */
 /* oxlint-disable typescript/no-explicit-any, typescript/no-unsafe-member-access, typescript/no-unsafe-assignment, typescript/no-unsafe-argument */
 import { create, fromBinary, toBinary, toJson } from '@bufbuild/protobuf'
@@ -24,23 +26,32 @@ import {
   ConversationStateStructureSchema,
   CreatePlanRequestResponseSchema,
   DiagnosticsResultSchema,
+  ExaFetchRequestResponse_RejectedSchema,
   ExaFetchRequestResponseSchema,
+  ExaSearchRequestResponse_RejectedSchema,
   ExaSearchRequestResponseSchema,
   ExecClientControlMessageSchema,
   ExecClientMessageSchema,
   ExecClientStreamCloseSchema,
   type ExecServerMessage,
   GetBlobResultSchema,
+  type InteractionQuery,
   InteractionResponseSchema,
+  type InteractionUpdate,
   KvClientMessageSchema,
   type KvServerMessage,
   type McpToolDefinition,
+  McpResultSchema,
+  McpSuccessSchema,
+  McpTextContentSchema,
+  McpToolResultContentItemSchema,
   RequestContextResultSchema,
   RequestContextSuccessSchema,
   SetBlobResultSchema,
   ShellRejectedSchema,
+  ShellResultSchema,
   SwitchModeRequestResponseSchema,
-  WebSearchRequestResponse_ApprovedSchema,
+  WebSearchRequestResponse_RejectedSchema,
   WebSearchRequestResponseSchema,
   WriteShellStdinErrorSchema,
   WriteShellStdinResultSchema,
@@ -128,104 +139,106 @@ interface NativeRedirectInfo {
   nativeArgs: Record<string, string>
 }
 
-function nativeToMcpRedirect(execCase: string, execMsg: ExecServerMessage): NativeRedirectInfo | null {
-  const args = execMsg.message.value as any
-  const toolCallId: string = (args?.toolCallId as string) || crypto.randomUUID()
+function nativeToMcpRedirect(execMsg: ExecServerMessage): NativeRedirectInfo | null {
+  const msg = execMsg.message
 
-  if (execCase === 'readArgs') {
+  if (msg.case === 'readArgs') {
+    const args = msg.value
     const mcpArgs: Record<string, unknown> = { path: args.path }
-    if (args.offset !== null && args.offset !== undefined && args.offset !== 0) {
+    if (args.offset !== undefined && args.offset !== 0) {
       mcpArgs.offset = args.offset
     }
-    if (args.limit !== null && args.limit !== undefined && args.limit !== 0) {
+    if (args.limit !== undefined && args.limit !== 0) {
       mcpArgs.limit = args.limit
     }
     return {
-      toolCallId,
+      toolCallId: args.toolCallId || crypto.randomUUID(),
       toolName: 'read',
       decodedArgs: JSON.stringify(mcpArgs),
       nativeResultType: 'readResult',
-      nativeArgs: { path: String(args.path ?? '') },
+      nativeArgs: { path: args.path },
     }
   }
 
-  if (execCase === 'writeArgs') {
+  if (msg.case === 'writeArgs') {
+    const args = msg.value
+    // fileBytes is present in the proto but not in the generated TS type
     const fileContent =
-      args.fileBytes?.length > 0 ? new TextDecoder().decode(args.fileBytes) : String(args.fileText ?? '')
+      (args as any).fileBytes?.length > 0 ? new TextDecoder().decode((args as any).fileBytes) : args.fileText
     return {
-      toolCallId,
+      toolCallId: args.toolCallId || crypto.randomUUID(),
       toolName: 'write',
       decodedArgs: JSON.stringify({ path: args.path, content: fileContent }),
       nativeResultType: 'writeResult',
-      nativeArgs: { path: String(args.path ?? '') },
+      nativeArgs: { path: args.path },
     }
   }
 
-  if (execCase === 'deleteArgs') {
-    const rawPath = String(args.path ?? '')
-    if (!rawPath) {
+  if (msg.case === 'deleteArgs') {
+    const args = msg.value
+    if (!args.path) {
       return {
-        toolCallId,
+        toolCallId: args.toolCallId || crypto.randomUUID(),
         toolName: 'bash',
         decodedArgs: JSON.stringify({ command: 'true' }),
         nativeResultType: 'deleteResult',
         nativeArgs: { path: '' },
       }
     }
-    const safePath = rawPath.replaceAll('\0', '').replaceAll("'", "'\\''")
+    const safePath = args.path.replaceAll('\0', '').replaceAll("'", "'\\''")
     return {
-      toolCallId,
+      toolCallId: args.toolCallId || crypto.randomUUID(),
       toolName: 'bash',
       decodedArgs: JSON.stringify({ command: `rm -f '${safePath}'` }),
       nativeResultType: 'deleteResult',
-      nativeArgs: { path: rawPath },
+      nativeArgs: { path: args.path },
     }
   }
 
-  if (execCase === 'shellArgs' || execCase === 'shellStreamArgs') {
-    const command = String(args.command ?? '')
-    const resultType: NativeResultType = execCase === 'shellStreamArgs' ? 'shellStreamResult' : 'shellResult'
+  if (msg.case === 'shellArgs' || msg.case === 'shellStreamArgs') {
+    const args = msg.value
+    const resultType: NativeResultType = msg.case === 'shellStreamArgs' ? 'shellStreamResult' : 'shellResult'
     return {
-      toolCallId,
+      toolCallId: args.toolCallId || crypto.randomUUID(),
       toolName: 'bash',
-      decodedArgs: JSON.stringify({ command }),
+      decodedArgs: JSON.stringify({ command: args.command }),
       nativeResultType: resultType,
-      nativeArgs: { command },
+      nativeArgs: { command: args.command },
     }
   }
 
-  if (execCase === 'grepArgs') {
-    const pattern = String(args.pattern ?? '')
-    const path = String(args.path ?? '.')
+  if (msg.case === 'grepArgs') {
+    const args = msg.value
+    const path = args.path ?? '.'
     return {
-      toolCallId,
+      toolCallId: crypto.randomUUID(),
       toolName: 'grep',
-      decodedArgs: JSON.stringify({ pattern, path }),
+      decodedArgs: JSON.stringify({ pattern: args.pattern, path }),
       nativeResultType: 'grepResult',
-      nativeArgs: { pattern, path },
+      nativeArgs: { pattern: args.pattern, path },
     }
   }
 
-  if (execCase === 'lsArgs') {
-    const path = String(args.path ?? '.')
+  if (msg.case === 'lsArgs') {
+    const args = msg.value
     return {
-      toolCallId,
+      toolCallId: crypto.randomUUID(),
       toolName: 'ls',
-      decodedArgs: JSON.stringify({ path }),
+      decodedArgs: JSON.stringify({ path: args.path }),
       nativeResultType: 'lsResult',
-      nativeArgs: { path },
+      nativeArgs: { path: args.path },
     }
   }
 
-  if (execCase === 'fetchArgs') {
-    const rawUrl = String(args.url ?? '')
-    const safeUrl = rawUrl.replaceAll('\0', '').replaceAll("'", "'\\''")
+  if (msg.case === 'fetchArgs') {
+    const args = msg.value
+    const safeUrl = args.url.replaceAll('\0', '').replaceAll("'", "'\\''")
     return {
-      toolCallId,
+      toolCallId: args.toolCallId || crypto.randomUUID(),
       toolName: 'bash',
       decodedArgs: JSON.stringify({ command: `curl -sL '${safeUrl}'` }),
       nativeResultType: 'fetchResult',
-      nativeArgs: { url: rawUrl },
+      nativeArgs: { url: args.url },
     }
   }
 
@@ -279,6 +292,35 @@ function sendExecStreamClose(execId: number, sendFrame: (data: Buffer) => void):
   sendFrame(frameConnectMessage(toBinary(AgentClientMessageSchema, clientMessage)))
 }
 
+function toolNotEnabledMessage(toolName: string): string {
+  return `Tool '${toolName}' is not enabled in this session`
+}
+
+function sendMcpResult(
+  execMsg: ExecServerMessage,
+  content: string,
+  sendFrame: (data: Buffer) => void,
+  isError = false,
+): void {
+  const result = create(McpResultSchema, {
+    result: {
+      case: 'success',
+      value: create(McpSuccessSchema, {
+        content: [
+          create(McpToolResultContentItemSchema, {
+            content: {
+              case: 'text',
+              value: create(McpTextContentSchema, { text: content }),
+            },
+          }),
+        ],
+        isError,
+      }),
+    },
+  })
+  sendExecResult(execMsg, 'mcpResult', result, sendFrame)
+}
+
 /**
  * Send a best-effort empty result for an exec type not in our proto schema.
  * Extracts the unknown oneof field number from $unknown and mirrors it back
@@ -296,7 +338,11 @@ function sendUnknownExecResult(execMsg: ExecServerMessage, sendFrame: (data: Buf
     return
   }
   const resultFieldNo = argsField.no
-  console.error('[cursor-messages] unhandled exec: sending empty result', { field: resultFieldNo, id: execMsg.id })
+  console.warn('[cursor-messages] rejected unknown exec type', {
+    case: execMsg.message.case,
+    field: resultFieldNo,
+    id: execMsg.id,
+  })
   const execClientMsg = create(ExecClientMessageSchema, {
     id: execMsg.id,
     execId: execMsg.execId,
@@ -310,39 +356,39 @@ function sendUnknownExecResult(execMsg: ExecServerMessage, sendFrame: (data: Buf
 }
 
 function handleInteractionUpdate(
-  update: any,
+  update: InteractionUpdate,
   state: StreamState,
   onText: (text: string, isThinking: boolean) => void,
 ): void {
-  const updateCase: string | undefined = update.message?.case
+  const msg = update.message
 
-  if (updateCase === 'textDelta') {
-    const delta: string = (update.message.value.text as string) || ''
+  if (msg.case === 'textDelta') {
+    const delta = msg.value.text || ''
     if (delta) {
       state.lastDeltaType = 'text'
       onText(delta, false)
     }
-  } else if (updateCase === 'thinkingDelta') {
-    const delta: string = (update.message.value.text as string) || ''
+  } else if (msg.case === 'thinkingDelta') {
+    const delta = msg.value.text || ''
     if (delta) {
       state.lastDeltaType = 'thinking'
       onText(delta, true)
     }
-  } else if (updateCase === 'tokenDelta') {
-    state.outputTokens += (update.message.value.tokens as number) || 0
-  } else if (updateCase === 'toolCallStarted') {
+  } else if (msg.case === 'tokenDelta') {
+    state.outputTokens += msg.value.tokens || 0
+  } else if (msg.case === 'toolCallStarted') {
     // Just a notification — not a batch delimiter
-  } else if (updateCase === 'toolCallCompleted') {
+  } else if (msg.case === 'toolCallCompleted') {
     // Notification only
-  } else if (updateCase === 'turnEnded') {
+  } else if (msg.case === 'turnEnded') {
     if (state.pendingExecs.length > 0) {
       state.checkpointAfterExec = true
     }
-  } else if (updateCase === 'stepCompleted') {
+  } else if (msg.case === 'stepCompleted') {
     if (state.pendingExecs.length > 0) {
       state.checkpointAfterExec = true
     }
-  } else if (updateCase === 'heartbeat') {
+  } else if (msg.case === 'heartbeat') {
     // keepalive — not a batch delimiter
   }
   // Ignore: toolCallDelta, partialToolCall, and other unrecognized types
@@ -367,14 +413,17 @@ function handleKvMessage(
   }
 }
 
-function handleExecMessage(
-  execMsg: ExecServerMessage,
-  mcpTools: McpToolDefinition[],
-  cloudRule: string | undefined,
-  sendFrame: (data: Buffer) => void,
-  onMcpExec: (exec: PendingExec) => void,
-  state?: StreamState,
-): void {
+export interface ExecContext {
+  mcpTools: McpToolDefinition[]
+  enabledToolNames: Set<string>
+  cloudRule: string | undefined
+  sendFrame: (data: Buffer) => void
+  onMcpExec: (exec: PendingExec) => void
+  state?: StreamState
+}
+
+export function handleExecMessage(execMsg: ExecServerMessage, ctx: ExecContext): void {
+  const { mcpTools, enabledToolNames, cloudRule, sendFrame, onMcpExec, state } = ctx
   const execCase = execMsg.message.case
 
   // MCP tool calls — decode args and pass through
@@ -382,14 +431,18 @@ function handleExecMessage(
     if (state) {
       state.totalExecCount++
     }
-    const mcpArgs = execMsg.message.value as any
-    const decoded = decodeMcpArgsMap(mcpArgs.args as Record<string, Uint8Array>)
-    const resolvedToolName = stripMcpToolPrefix((mcpArgs.toolName as string) || (mcpArgs.name as string) || '')
+    const mcpArgs = execMsg.message.value
+    const decoded = decodeMcpArgsMap(mcpArgs.args)
+    const resolvedToolName = stripMcpToolPrefix(mcpArgs.toolName || mcpArgs.name || '')
     fixMcpArgNames(resolvedToolName, decoded)
+    if (!enabledToolNames.has(resolvedToolName)) {
+      sendMcpResult(execMsg, toolNotEnabledMessage(resolvedToolName), sendFrame, true)
+      return
+    }
     onMcpExec({
       execId: execMsg.execId,
       execMsgId: execMsg.id,
-      toolCallId: (mcpArgs.toolCallId as string) || crypto.randomUUID(),
+      toolCallId: mcpArgs.toolCallId || crypto.randomUUID(),
       toolName: resolvedToolName,
       decodedArgs: JSON.stringify(decoded),
     })
@@ -416,8 +469,31 @@ function handleExecMessage(
     if (state) {
       state.totalExecCount++
     }
-    const nativeRedirect = nativeToMcpRedirect(execCase as string, execMsg)
+    const nativeRedirect = nativeToMcpRedirect(execMsg)
     if (nativeRedirect) {
+      if (!enabledToolNames.has(nativeRedirect.toolName)) {
+        const rejectReason = toolNotEnabledMessage(nativeRedirect.toolName)
+        if (execCase === 'shellArgs' || execCase === 'shellStreamArgs') {
+          const args = execMsg.message.value
+          const result = create(ShellResultSchema, {
+            result: {
+              case: 'rejected',
+              value: create(ShellRejectedSchema, {
+                command: args.command || '',
+                workingDirectory: args.workingDirectory || '',
+                reason: rejectReason,
+                isReadonly: false,
+              }),
+            },
+          })
+          sendExecResult(execMsg, 'shellResult', result, sendFrame)
+          return
+        }
+
+        sendMcpResult(execMsg, rejectReason, sendFrame, true)
+        return
+      }
+
       onMcpExec({
         execId: execMsg.execId,
         execMsgId: execMsg.id,
@@ -435,13 +511,13 @@ function handleExecMessage(
   const REJECT_REASON = 'Tool not available in this environment. Use the MCP tools provided instead.'
 
   if (execCase === 'backgroundShellSpawnArgs') {
-    const args = execMsg.message.value as any
+    const args = execMsg.message.value
     const result = create(BackgroundShellSpawnResultSchema, {
       result: {
         case: 'rejected',
         value: create(ShellRejectedSchema, {
-          command: (args.command as string) || '',
-          workingDirectory: (args.workingDirectory as string) || '',
+          command: args.command || '',
+          workingDirectory: args.workingDirectory || '',
           reason: REJECT_REASON,
           isReadonly: false,
         }),
@@ -475,37 +551,51 @@ function handleExecMessage(
   sendUnknownExecResult(execMsg, sendFrame)
 }
 
-function handleInteractionQuery(
-  query: any,
-  sendFrame: (data: Buffer) => void,
-  onNotify?: (text: string) => void,
-): void {
-  const queryId: number = (query.id as number) || 0
-  const queryCase: string = (query.query?.case as string) || 'unknown'
-  const searchTerm: string =
-    queryCase === 'webSearchRequestQuery' ? (query.query?.value?.args?.searchTerm as string) || '' : ''
+/**
+ * Interaction queries (web search, exa search/fetch, questions) are Cursor-internal
+ * features with no Pi tool equivalent. They are always rejected regardless of
+ * enabledToolNames — they were never in Pi's tool set to begin with.
+ */
+function handleInteractionQuery(query: InteractionQuery, sendFrame: (data: Buffer) => void): void {
+  const queryId = query.id
+  const queryCase = query.query.case
+  const rejectReason = 'Tool not available in this environment. Use the MCP tools provided instead.'
 
   let responseResult: { case: string; value: unknown } | undefined
 
   if (queryCase === 'webSearchRequestQuery') {
-    if (onNotify && searchTerm) {
-      onNotify(`[web search: ${searchTerm}]`)
-    }
+    const searchTerm = query.query.value.args?.searchTerm ?? ''
+    console.warn('[cursor-messages] rejected interaction query', { type: queryCase, searchTerm })
     responseResult = {
       case: 'webSearchRequestResponse',
       value: create(WebSearchRequestResponseSchema, {
-        result: { case: 'approved', value: create(WebSearchRequestResponse_ApprovedSchema, {}) },
+        result: {
+          case: 'rejected',
+          value: create(WebSearchRequestResponse_RejectedSchema, { reason: rejectReason }),
+        },
       }),
     }
   } else if (queryCase === 'exaSearchRequestQuery') {
+    console.warn('[cursor-messages] rejected interaction query', { type: queryCase })
     responseResult = {
       case: 'exaSearchRequestResponse',
-      value: create(ExaSearchRequestResponseSchema, { result: { case: 'approved', value: {} as any } }),
+      value: create(ExaSearchRequestResponseSchema, {
+        result: {
+          case: 'rejected',
+          value: create(ExaSearchRequestResponse_RejectedSchema, { reason: rejectReason }),
+        },
+      }),
     }
   } else if (queryCase === 'exaFetchRequestQuery') {
+    console.warn('[cursor-messages] rejected interaction query', { type: queryCase })
     responseResult = {
       case: 'exaFetchRequestResponse',
-      value: create(ExaFetchRequestResponseSchema, { result: { case: 'approved', value: {} as any } }),
+      value: create(ExaFetchRequestResponseSchema, {
+        result: {
+          case: 'rejected',
+          value: create(ExaFetchRequestResponse_RejectedSchema, { reason: rejectReason }),
+        },
+      }),
     }
   } else if (queryCase === 'askQuestionInteractionQuery') {
     responseResult = {
@@ -547,6 +637,7 @@ function handleInteractionQuery(
 export interface MessageProcessorContext {
   blobStore: Map<string, Uint8Array>
   mcpTools: McpToolDefinition[]
+  enabledToolNames: Set<string>
   cloudRule?: string
   sendFrame: (data: Buffer) => void
   state: StreamState
@@ -571,7 +662,14 @@ export function processServerMessage(msg: AgentServerMessage, ctx: MessageProces
   }
 
   if (msgCase === 'execServerMessage') {
-    handleExecMessage(msg.message.value, ctx.mcpTools, ctx.cloudRule, ctx.sendFrame, ctx.onMcpExec, ctx.state)
+    handleExecMessage(msg.message.value, {
+      mcpTools: ctx.mcpTools,
+      enabledToolNames: ctx.enabledToolNames,
+      cloudRule: ctx.cloudRule,
+      sendFrame: ctx.sendFrame,
+      onMcpExec: ctx.onMcpExec,
+      state: ctx.state,
+    })
     return true
   }
 
@@ -587,13 +685,13 @@ export function processServerMessage(msg: AgentServerMessage, ctx: MessageProces
   if (msgCase === 'execServerControlMessage') {
     const ctrl = msg.message.value
     if (ctrl.message.case === 'abort') {
-      console.error(`[cursor-messages] exec ABORT for id=${String((ctrl.message.value as any).id)}`)
+      console.error(`[cursor-messages] exec ABORT for id=${String(ctrl.message.value.id)}`)
     }
     return true
   }
 
   if (msgCase === 'interactionQuery') {
-    handleInteractionQuery(msg.message.value, ctx.sendFrame, ctx.onNotify)
+    handleInteractionQuery(msg.message.value, ctx.sendFrame)
     return true
   }
 

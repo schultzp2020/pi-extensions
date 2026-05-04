@@ -5,7 +5,7 @@ A [Pi](https://github.com/badlogic/pi) extension that gives you access to all yo
 ## Features
 
 - **Dynamic model discovery** — no hard-coded model list. Models are fetched from Cursor's API on startup and cached for fast subsequent launches.
-- **Full tool support** — native Cursor tools (read, write, shell, grep) are redirected to Pi equivalents. MCP tools pass through.
+- **Full tool support** — native Cursor tools (read, write, shell, grep) are redirected to Pi equivalents only when Pi enabled the mapped tool for the session. MCP tools pass through only when registered in the session tool set, and Cursor-only web/exa queries are rejected.
 - **Thinking/reasoning** — `thinkingDelta` events map to `reasoning_content` in SSE, with XML tag filtering as a safety net.
 - **Multi-session** — multiple Pi sessions share one proxy process via HTTP internal API and a port file at `~/.pi/agent/cursor-proxy.json`.
 - **Conversation persistence** — checkpoints and blob stores are persisted to disk, preventing "blob not found" crashes on long sessions.
@@ -97,7 +97,7 @@ The `agent_pb.ts` is vendored directly (the `.proto` source is not publicly avai
 3. **Model discovery** — Proxy calls `AvailableModels` (or `GetUsableModels` as fallback) via gRPC to fetch the user's available models. Results are cached to disk for fast subsequent starts.
 4. **Provider registration** — Extension registers a `cursor` provider with Pi using `api: 'openai-completions'`, pointing `baseUrl` at the local proxy.
 5. **Chat completion** — Pi sends standard OpenAI requests to the proxy. The proxy builds an `AgentRunRequest` protobuf, opens an H2 stream to `api2.cursor.sh`, and translates the response back into SSE chunks.
-6. **Tool calls** — Cursor's native tools (read, write, shell) are intercepted and emitted as OpenAI `tool_calls`, which Pi executes with its own tools. Results flow back as protobuf frames.
+6. **Tool calls** — Cursor's native tools (read, write, shell) are intercepted and emitted as OpenAI `tool_calls` only if the mapped Pi tool is enabled for the session. MCP tool calls are gated against the same registered tool set, and Cursor-only web/exa queries are rejected so the model falls back to available tools. Results flow back as protobuf frames.
 7. **Multi-session** — The proxy writes a port file at `~/.pi/agent/cursor-proxy.json`. Other Pi sessions discover and reuse the same proxy. Each session sends heartbeats every 10s; the proxy exits 30s after the last heartbeat stops.
 
 ## License

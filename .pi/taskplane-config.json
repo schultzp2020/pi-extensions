@@ -1,0 +1,30 @@
+{
+  "configVersion": 1,
+  "taskRunner": {
+    "project": {
+      "name": "pi-extensions",
+      "description": ""
+    },
+    "paths": {
+      "tasks": "taskplane-tasks"
+    },
+    "testing": {
+      "commands": {
+        "unit": "npm test",
+        "build": "npm run build"
+      }
+    },
+    "taskAreas": {
+      "general": {
+        "path": "taskplane-tasks",
+        "prefix": "TP",
+        "context": "taskplane-tasks/CONTEXT.md"
+      }
+    }
+  },
+  "orchestrator": {
+    "orchestrator": {
+      "maxLanes": 10
+    }
+  }
+}
