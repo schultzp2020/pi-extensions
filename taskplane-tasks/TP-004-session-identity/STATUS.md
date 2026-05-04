@@ -1,7 +1,7 @@
 # TP-004: Session identity from pi_session_id with lifecycle cleanup — Status
 
-**Current Step:** Step 4: Testing & Verification
-**Status:** 🟡 In Progress
+**Current Step:** Step 5: Documentation & Delivery (final)
+**Status:** ✅ Complete
 **Last Updated:** 2026-05-04
 **Review Level:** 2
 **Review Counter:** 0
@@ -66,11 +66,11 @@
 
 ### Step 5: Documentation & Delivery
 
-**Status:** ⬜ Not Started
+**Status:** ✅ Done
 
-- [ ] "Must Update" docs modified
-- [ ] "Check If Affected" docs reviewed
-- [ ] Discoveries logged
+- [x] "Must Update" docs modified
+- [x] "Check If Affected" docs reviewed
+- [x] Discoveries logged
 
 ---
 
@@ -83,8 +83,11 @@
 
 ## Discoveries
 
-| Discovery | Disposition | Location |
-| --------- | ----------- | -------- |
+| Discovery                                                                                                       | Disposition                                               | Location                                        |
+| --------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------- | ----------------------------------------------- |
+| CONTEXT.md Session ID definition was already correct (pre-updated by prior task planning)                       | Verified, no change needed                                | packages/pi-cursor/CONTEXT.md                   |
+| ExtensionAPI has no direct sessionId property; must use session_start event + ctx.sessionManager.getSessionId() | Implemented with temporary UUID until session_start fires | packages/pi-cursor/src/index.ts                 |
+| `cleanupSessionById` uses `cancel()` which also suppresses checkpoint commits                                   | Desired behavior per ADR                                  | packages/pi-cursor/src/proxy/session-manager.ts |
 
 ---
 

@@ -13,7 +13,7 @@ A single HTTP/2 connection to Cursor's gRPC endpoint (`api2.cursor.sh`) that car
 _Avoid_: connection, stream, session
 
 **Internal API**:
-HTTP endpoints on the Proxy (`/internal/heartbeat`, `/internal/token`, `/internal/refresh-models`, `/internal/health`) used by all connected extension instances for ongoing communication — heartbeats, token delivery, and model refresh.
+HTTP endpoints on the Proxy (`/internal/heartbeat`, `/internal/token`, `/internal/refresh-models`, `/internal/health`, `/internal/cleanup-session`) used by all connected extension instances for ongoing communication — heartbeats, token delivery, model refresh, and session cleanup.
 _Avoid_: control API, management API, stdin protocol
 
 **Stdout Protocol**:
@@ -119,12 +119,14 @@ _Avoid_: cursor settings, config command
 - A **Bridge** translates **MCP Tool** calls into OpenAI `tool_calls` for Pi, with results sent back as MCP protobuf
 - The **Proxy** persists **Checkpoints**, **Checkpoint Lineage**, and **Blob Store** data to disk, keyed by **Session ID** + conversation
 - The **Proxy** validates **Checkpoint Lineage** on every request — discards stale Checkpoints on fork, compaction, or branch navigation
-- The **Proxy** exposes the **Internal API** for heartbeats, token delivery, and model refresh
+- The **Proxy** exposes the **Internal API** for heartbeats, token delivery, model refresh, and **Lifecycle Cleanup**
 - Extension instances discover the **Proxy** via the **Port File**, or spawn a new one if none exists
 - **Model Discovery** results are cached to disk as the **Model Cache** for fast subsequent startups
 - **Model Normalization** collapses raw Cursor variants into deduplicated models with **Effort Maps**
 - **Effort Resolution** combines the normalized model, **Max Mode**, and Pi's reasoning-effort setting to reconstruct the final Cursor model ID
 - The **`/cursor` Command** edits the **Cursor Config** and triggers provider re-registration when **Model Normalization** mode changes
+- **Lifecycle Cleanup** hooks (`session_before_switch`, `session_before_fork`, `session_before_tree`, `session_shutdown`) call the Internal API to close active Bridges and evict state before session transitions
+- On client disconnect, the Proxy sends a **CancelAction** protobuf to Cursor and suppresses pending Checkpoint commits to preserve the last committed state
 
 ## Example dialogue
 
