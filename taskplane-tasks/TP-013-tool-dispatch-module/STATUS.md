@@ -1,7 +1,7 @@
 # TP-013: Tool Dispatch Module — Status
 
-**Current Step:** Step 3: Testing & Verification
-**Status:** 🟡 In Progress
+**Current Step:** Step 4: Documentation & Delivery
+**Status:** ✅ Complete
 **Last Updated:** 2026-05-04
 **Review Level:** 1
 **Review Counter:** 0
@@ -60,11 +60,11 @@
 
 ### Step 4: Documentation & Delivery
 
-**Status:** ⬜ Not Started
+**Status:** ✅ Complete
 
-- [ ] "Must Update" docs modified
-- [ ] "Check If Affected" docs reviewed
-- [ ] Discoveries logged
+- [x] "Must Update" docs modified (CONTEXT.md already accurate, no changes needed)
+- [x] "Check If Affected" docs reviewed (ADR 0005 three-mode policy preserved)
+- [x] Discoveries logged
 
 ---
 
@@ -79,6 +79,9 @@
 
 | Discovery | Disposition | Location |
 | --------- | ----------- | -------- |
+| `MessageProcessorContext` keeps legacy flat fields for backward compat (tool-gating.test.ts uses old shape) | Accepted — re-exports + `resolveToolDispatch()` adapter keeps tests passing unmodified | `cursor-messages.ts` |
+| `PendingExec`/`NativeResultType` moved to `tool-dispatch.ts`, re-exported from `cursor-messages.ts` | Accepted — avoids circular deps while preserving import paths | `cursor-messages.ts`, `tool-dispatch.ts` |
+| `ToolDispatchState` minimal interface avoids importing `StreamState` from cursor-messages (prevents circular dep) | Accepted — `StreamState` structurally satisfies `ToolDispatchState` | `tool-dispatch.ts` |
 
 ---
 
