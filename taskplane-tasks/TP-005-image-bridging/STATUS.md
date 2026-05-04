@@ -1,6 +1,6 @@
 # TP-005: Image content part bridging — Status
 
-**Current Step:** Step 1: Preserve image content parts
+**Current Step:** Step 2: Testing & Verification
 **Status:** 🟡 In Progress
 **Last Updated:** 2026-05-04
 **Review Level:** 0
@@ -34,12 +34,12 @@
 
 ### Step 2: Testing & Verification
 
-**Status:** ⬜ Not Started
+**Status:** ✅ Complete
 
-- [ ] Add image content part tests to `openai-messages.test.ts`
-- [ ] FULL test suite passing
-- [ ] All failures fixed
-- [ ] Build passes
+- [x] Add image content part tests to `openai-messages.test.ts`
+- [x] FULL test suite passing
+- [x] All failures fixed
+- [x] Build passes
 
 ---
 
