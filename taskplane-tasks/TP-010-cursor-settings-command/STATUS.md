@@ -1,7 +1,7 @@
 # TP-010: /cursor settings command — Status
 
 **Current Step:** Step 3: Documentation & Delivery
-**Status:** 🟡 In Progress
+**Status:** ✅ Complete
 **Last Updated:** 2026-05-04
 **Review Level:** 0
 **Review Counter:** 0
@@ -47,11 +47,11 @@
 
 ### Step 3: Documentation & Delivery
 
-**Status:** 🟨 In Progress
+**Status:** ✅ Complete
 
-- [ ] "Must Update" docs modified
-- [ ] "Check If Affected" docs reviewed
-- [ ] Discoveries logged
+- [x] "Must Update" docs modified (CONTEXT.md `/cursor` Command expanded)
+- [x] "Check If Affected" docs reviewed (README.md — added Settings section with table)
+- [x] Discoveries logged (none)
 
 ---
 

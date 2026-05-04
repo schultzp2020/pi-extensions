@@ -56,6 +56,19 @@ Read package.json and summarize the dependencies.
 
 Tool calls, multi-turn conversations, and reasoning all work.
 
+## Settings
+
+Run `/cursor` in Pi to open the settings menu. Each setting shows its current value and an `[ENV]` tag when overridden by an environment variable (read-only in that case).
+
+| Setting           | Values                         | Default      | Env Override                  |
+| ----------------- | ------------------------------ | ------------ | ----------------------------- |
+| Native Tools Mode | `reject`, `redirect`, `native` | `reject`     | `PI_CURSOR_NATIVE_TOOLS_MODE` |
+| Max Mode          | `on`, `off`                    | `off`        | `PI_CURSOR_MAX_MODE`          |
+| Model Mappings    | `normalized`, `raw`            | `normalized` | `PI_CURSOR_RAW_MODELS`        |
+| Max Retries       | `0`, `1`, `2`, `3`, `5`        | `2`          | `PI_CURSOR_MAX_RETRIES`       |
+
+Settings persist to `~/.pi/agent/cursor-config.json`. Changing **Model Mappings** triggers provider re-registration to update the model picker. **Max Mode** is hidden when Model Mappings is set to `raw`.
+
 ## Native Tools Mode
 
 Controls how Cursor's built-in tool calls (read, write, shell, grep, ls, delete, fetch) are handled:

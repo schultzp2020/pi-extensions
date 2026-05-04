@@ -109,7 +109,7 @@ A global JSON file at `~/.pi/agent/cursor-config.json` containing explicit user 
 _Avoid_: settings file, preferences
 
 **`/cursor` Command**:
-A Pi command that opens a single-level settings menu. Each row opens a second selector of valid values. Settings persist to the Cursor Config file and take effect on new requests.
+A Pi command registered via `pi.registerCommand('cursor', ...)` that opens a single-level settings menu. Displays four settings: Native Tools Mode (`reject`/`redirect`/`native`), Max Mode (`on`/`off`, hidden when `modelMappings=raw`), Model Mappings (`normalized`/`raw`), and Max Retries (`0`/`1`/`2`/`3`/`5`). Each row shows the current effective value and an `[ENV]` indicator when overridden by an environment variable. Env-overridden settings are read-only. Selecting a row opens a second selector with valid values. On selection, persists the change via `saveConfig()` to the Cursor Config file. When `modelMappings` changes, triggers provider re-registration by calling `register()`, which re-processes models through Model Normalization (or bypasses it for `raw` mode) and updates the Pi model picker.
 _Avoid_: cursor settings, config command
 
 **Debug Logger**:
