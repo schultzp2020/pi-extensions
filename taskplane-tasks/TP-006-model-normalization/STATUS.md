@@ -1,6 +1,6 @@
 # TP-006: Model normalization and effort mapping — Status
 
-**Current Step:** Step 2: Integrate normalization into model registration
+**Current Step:** Step 3: Testing & Verification
 **Status:** 🟡 In Progress
 **Last Updated:** 2026-05-04
 **Review Level:** 1
@@ -47,12 +47,12 @@
 
 ### Step 3: Testing & Verification
 
-**Status:** ⬜ Not Started
+**Status:** ✅ Complete
 
-- [ ] Create `model-normalization.test.ts` with comprehensive tests
-- [ ] FULL test suite passing
-- [ ] All failures fixed
-- [ ] Build passes
+- [x] Create `model-normalization.test.ts` with comprehensive tests
+- [x] FULL test suite passing
+- [x] All failures fixed
+- [x] Build passes
 
 ---
 

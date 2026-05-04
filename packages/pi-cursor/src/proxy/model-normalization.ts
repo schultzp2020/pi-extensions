@@ -84,15 +84,19 @@ export function parseModelId(rawId: string): ParsedModelId {
   let remaining = rawId
 
   // 1. Strip trailing -max → maxMode flag
+  //    But first check if the raw ID (or what remains after stripping) is a
+  //    known base-name-max model where "-max" is part of the identity.
   let maxMode = false
   if (remaining.endsWith('-max')) {
-    // Check if what remains is a known base-name-max model
-    // If so, this trailing -max is part of the base name, not maxMode
-    const withoutMax = remaining.slice(0, -4)
-    // Only strip if the remaining part is not empty
-    if (withoutMax.length > 0) {
-      maxMode = true
-      remaining = withoutMax
+    // Don't strip if the full string is a known base-name-max model
+    if (BASE_NAME_MAX_MODELS.has(remaining)) {
+      // -max is part of the base name, not maxMode
+    } else {
+      const withoutMax = remaining.slice(0, -4)
+      if (withoutMax.length > 0) {
+        maxMode = true
+        remaining = withoutMax
+      }
     }
   }
 
@@ -203,14 +207,14 @@ export function buildEffortMap(availableEfforts: Set<CursorEffort | 'default'>):
   // low → low, none, then lowest
   map.low = pick(['low', 'none'], lowest)
 
-  // medium → medium, default (no suffix)
-  map.medium = pick(['medium', 'default'], 'default')
+  // medium → medium, default (no suffix), then closest available
+  map.medium = pick(['medium', 'default'], lowest)
 
-  // high → high, then highest below xhigh
+  // high → high, then closest available below xhigh level
   const highFallback: CursorEffort | 'default' = highest === 'max' || highest === 'xhigh' ? 'high' : highest
   map.high = pick(['high'], highFallback)
 
-  // xhigh → max, xhigh, high
+  // xhigh → max, xhigh, high, then highest available
   map.xhigh = pick(['max', 'xhigh', 'high'], highest)
 
   return map
@@ -279,8 +283,12 @@ export function processModels(rawModels: CursorModel[]): NormalizedModelSet {
 
     // Build the normalized model ID: base + variant suffixes (no effort, no maxMode)
     let normalizedId = parsed.base
-    if (parsed.thinking) {normalizedId += '-thinking'}
-    if (parsed.fast) {normalizedId += '-fast'}
+    if (parsed.thinking) {
+      normalizedId += '-thinking'
+    }
+    if (parsed.fast) {
+      normalizedId += '-fast'
+    }
 
     // For families with multiple effort levels (or a single non-default effort),
     // mark as supporting reasoning effort
@@ -355,8 +363,12 @@ export function resolveModelId(
   }
 
   // Add variant suffixes
-  if (parsed.thinking) {result += '-thinking'}
-  if (parsed.fast) {result += '-fast'}
+  if (parsed.thinking) {
+    result += '-thinking'
+  }
+  if (parsed.fast) {
+    result += '-fast'
+  }
 
   // Add maxMode suffix (only if family supports it)
   if (maxMode && family?.hasMaxMode) {
