@@ -1,6 +1,6 @@
 # TP-010: /cursor settings command — Status
 
-**Current Step:** Step 1: Register /cursor command
+**Current Step:** Step 2: Testing & Verification
 **Status:** 🟡 In Progress
 **Last Updated:** 2026-05-04
 **Review Level:** 0
@@ -25,19 +25,19 @@
 
 ### Step 1: Register /cursor command
 
-**Status:** 🟨 In Progress
+**Status:** ✅ Complete
 
-- [ ] Register `/cursor` command with `pi.registerCommand()`
-- [ ] Implement settings menu with current values and env override indicators
-- [ ] Implement value selection sub-menus for each setting
-- [ ] Persist changes via `saveConfig()` on selection
-- [ ] Trigger provider re-registration when `modelMappings` changes
+- [x] Register `/cursor` command with `pi.registerCommand()`
+- [x] Implement settings menu with current values and env override indicators
+- [x] Implement value selection sub-menus for each setting
+- [x] Persist changes via `saveConfig()` on selection
+- [x] Trigger provider re-registration when `modelMappings` changes
 
 ---
 
 ### Step 2: Testing & Verification
 
-**Status:** ⬜ Not Started
+**Status:** 🟨 In Progress
 
 - [ ] FULL test suite passing
 - [ ] All failures fixed

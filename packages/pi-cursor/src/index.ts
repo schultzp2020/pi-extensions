@@ -8,7 +8,14 @@ import type { ExtensionAPI, ProviderModelConfig } from '@mariozechner/pi-coding-
 import { generateCursorAuthParams, getTokenExpiry, pollCursorAuth, refreshCursorToken } from './auth.ts'
 import { FALLBACK_MODELS } from './fallback-models.ts'
 import { connectToProxy, getActivePort, pushToken, readPortFile, stopHeartbeat } from './proxy-lifecycle.ts'
-import { resolveEffective } from './proxy/config.ts'
+import {
+  getEnvOverrides,
+  resolveEffective,
+  saveConfig,
+  type CursorConfig,
+  type ModelMappingsMode,
+  type NativeToolsMode,
+} from './proxy/config.ts'
 import { initDebugLogger, logLifecycle } from './proxy/debug-logger.ts'
 import { parseModelId, processModels, type NormalizedModelSet } from './proxy/model-normalization.ts'
 import type { CursorModel } from './proxy/models.ts'
@@ -193,6 +200,129 @@ export default async function (pi: ExtensionAPI): Promise<void> {
   }
 
   register()
+
+  // ── /cursor settings command ──
+
+  pi.registerCommand('cursor', {
+    description: 'Cursor provider settings',
+    async handler(_args, ctx) {
+      const cfg = resolveEffective()
+      const envOverrides = getEnvOverrides()
+
+      // Build menu rows
+      type SettingKey = 'nativeToolsMode' | 'maxMode' | 'modelMappings' | 'maxRetries'
+      interface SettingRow {
+        key: SettingKey
+        label: string
+        display: string
+        envLocked: boolean
+      }
+
+      function formatValue(key: SettingKey, cfg: CursorConfig): string {
+        if (key === 'maxMode') {return cfg.maxMode ? 'on' : 'off'}
+        return String(cfg[key])
+      }
+
+      const rows: SettingRow[] = []
+
+      // Native Tools Mode
+      rows.push({
+        key: 'nativeToolsMode',
+        label: 'Native Tools Mode',
+        display: formatValue('nativeToolsMode', cfg),
+        envLocked: 'nativeToolsMode' in envOverrides,
+      })
+
+      // Max Mode — hidden when modelMappings=raw
+      if (cfg.modelMappings !== 'raw') {
+        rows.push({
+          key: 'maxMode',
+          label: 'Max Mode',
+          display: formatValue('maxMode', cfg),
+          envLocked: 'maxMode' in envOverrides,
+        })
+      }
+
+      // Model Mappings
+      rows.push({
+        key: 'modelMappings',
+        label: 'Model Mappings',
+        display: formatValue('modelMappings', cfg),
+        envLocked: 'modelMappings' in envOverrides,
+      })
+
+      // Max Retries
+      rows.push({
+        key: 'maxRetries',
+        label: 'Max Retries',
+        display: formatValue('maxRetries', cfg),
+        envLocked: 'maxRetries' in envOverrides,
+      })
+
+      // Build display options
+      const options = rows.map((r) => {
+        const envTag = r.envLocked ? ' [ENV]' : ''
+        return `${r.label}: ${r.display}${envTag}`
+      })
+
+      const selected = await ctx.ui.select('Cursor Settings', options)
+      if (!selected) {return}
+
+      const selectedIndex = options.indexOf(selected)
+      if (selectedIndex < 0) {return}
+      const row = rows[selectedIndex]
+
+      // Env-overridden settings are read-only
+      if (row.envLocked) {
+        const envVar = envOverrides[row.key]
+        ctx.ui.notify(`${row.label} is overridden by ${envVar ?? 'environment variable'}`, 'warning')
+        return
+      }
+
+      // Show value sub-menu
+      const valueOptions: Record<SettingKey, string[]> = {
+        nativeToolsMode: ['reject', 'redirect', 'native'],
+        maxMode: ['on', 'off'],
+        modelMappings: ['normalized', 'raw'],
+        maxRetries: ['0', '1', '2', '3', '5'],
+      }
+
+      const values = valueOptions[row.key]
+      const selectedValue = await ctx.ui.select(row.label, values)
+      if (!selectedValue) {return}
+
+      // Convert selected value to config value
+      const update: Partial<CursorConfig> = {}
+      switch (row.key) {
+        case 'nativeToolsMode': {
+          update.nativeToolsMode = selectedValue as NativeToolsMode
+          break
+        }
+        case 'maxMode': {
+          update.maxMode = selectedValue === 'on'
+          break
+        }
+        case 'modelMappings': {
+          update.modelMappings = selectedValue as ModelMappingsMode
+          break
+        }
+        case 'maxRetries': {
+          update.maxRetries = Number.parseInt(selectedValue, 10)
+          break
+        }
+      }
+
+      // Persist
+      saveConfig(update)
+
+      // If modelMappings changed, re-register provider with new model processing
+      if (row.key === 'modelMappings') {
+        register()
+      }
+
+      ctx.ui.notify(`${row.label} set to ${selectedValue}`, 'info')
+    },
+  })
 
   // Capture real Pi session ID once the session is available
   pi.on('session_start', (_event, ctx) => {
