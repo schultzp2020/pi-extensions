@@ -1,6 +1,6 @@
 # TP-012: Session State Module — Status
 
-**Current Step:** Step 1: Create session-state.ts
+**Current Step:** Step 2: Create session-state.test.ts and update imports
 **Status:** 🟡 In Progress
 **Last Updated:** 2026-05-04
 **Review Level:** 1
@@ -39,13 +39,13 @@
 
 ### Step 2: Create session-state.test.ts and update imports
 
-**Status:** ⬜ Not Started
+**Status:** ✅ Complete
 
-- [ ] Create `session-state.test.ts` with merged and expanded test coverage
-- [ ] Update `main.ts` imports and simplify coordination logic
-- [ ] Update `internal-api.ts` imports
-- [ ] Delete old source and test files
-- [ ] Run targeted tests
+- [x] Create `session-state.test.ts` with merged and expanded test coverage
+- [x] Update `main.ts` imports and simplify coordination logic
+- [x] Update `internal-api.ts` imports
+- [x] Delete old source and test files
+- [x] Run targeted tests
 
 ---
 

@@ -8,7 +8,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 
 import { jsonResponse, readBody } from './http-helpers.ts'
 import { discoverCursorModels, type CursorModel } from './models.ts'
-import { cleanupSessionById } from './session-manager.ts'
+import { cleanup } from './session-state.ts'
 
 interface SessionHeartbeat {
   sessionId: string
@@ -143,7 +143,7 @@ export async function handleInternalRequest(req: IncomingMessage, res: ServerRes
       jsonResponse(res, 400, { error: 'sessionId required' })
       return
     }
-    cleanupSessionById(sessionId)
+    cleanup(sessionId)
     jsonResponse(res, 200, { ok: true })
     return
   }

@@ -32,19 +32,6 @@ import {
   UserMessageSchema,
 } from '../proto/agent_pb.ts'
 import { resolveEffective, type NativeToolsMode } from './config.ts'
-import {
-  computeLineageFingerprint,
-  getConversationState,
-  persistConversation,
-  resolveConversationState,
-  validateLineage,
-  type ConversationConfig,
-  type LineageMetadata,
-  type StoredConversation,
-  resetConversation,
-  evictStaleConversations,
-  pruneBlobs,
-} from './conversation-state.ts'
 import { CursorSession, type RetryHint, type SessionOptions } from './cursor-session.ts'
 import {
   debugRequestId,
@@ -77,14 +64,20 @@ import {
 } from './openai-stream.ts'
 import { buildRequestContext } from './request-context.ts'
 import {
-  closeAllSessions,
-  deriveConversationKey,
-  deriveSessionKey,
-  evictStaleSessions,
-  getActiveSession,
-  removeActiveSession,
-  setActiveSession,
-} from './session-manager.ts'
+  closeAll,
+  closeBridge,
+  commitTurn,
+  computeLineageFingerprint,
+  evict,
+  getConversationState,
+  persistConversation,
+  pruneBlobs,
+  registerBridge,
+  resetConversation,
+  resolveSession,
+  type ConversationConfig,
+  type StoredConversation,
+} from './session-state.ts'
 
 interface ProxyConfig {
   accessToken: string
@@ -414,8 +407,6 @@ async function handleChatCompletion(
     (req.headers['x-session-id'] as string | undefined) ??
     'default'
   const piCwd = typeof bodyRecord.pi_cwd === 'string' ? bodyRecord.pi_cwd : undefined
-  const sessionKey = deriveSessionKey(sessionId)
-  const convKey = deriveConversationKey(sessionId)
   const requestId = debugRequestId()
   const requestStartTime = Date.now()
 
@@ -431,9 +422,9 @@ async function handleChatCompletion(
 
   // ── Tool-result resume (session still alive) ──
   if (toolResults.length > 0) {
-    const existingSession = getActiveSession(sessionKey)
+    const { bridge: existingSession } = resolveSession(sessionId, convConfig)
     if (existingSession?.alive) {
-      logSessionResume(sessionId, requestId, { sessionKey })
+      logSessionResume(sessionId, requestId, { sessionKey: sessionId })
       const newResults = toolResults.map((r) => ({
         toolCallId: r.toolCallId,
         content: r.content,
@@ -456,7 +447,7 @@ async function handleChatCompletion(
         const readableStream = new ReadableStream({
           start(controller) {
             const ctx = createSSECtx(controller, modelId, completionId, created)
-            void pumpAndFinalize(existingSession, ctx, sessionKey, convKey, convConfig, toolLineageInfo, {
+            void pumpAndFinalize(existingSession, ctx, sessionId, convConfig, toolLineageInfo, {
               sid: sessionId,
               rid: requestId,
               startTime: requestStartTime,
@@ -469,14 +460,18 @@ async function handleChatCompletion(
       } else {
         const { response } = await collectNonStreamingResponse(existingSession, modelId)
         // Update lineage after successful tool-result turn completion
-        const stored = getConversationState(convKey)
-        if (stored && response.ok) {
+        if (response.ok) {
           const completedTurns = [...turns, { userText }]
-          stored.lineageTurnCount = completedTurns.length
-          stored.lineageFingerprint = computeLineageFingerprint(completedTurns)
-          persistConversation(convKey, stored, convConfig)
+          commitTurn(
+            sessionId,
+            {
+              turnCount: completedTurns.length,
+              fingerprint: computeLineageFingerprint(completedTurns),
+            },
+            convConfig,
+          )
         }
-        removeActiveSession(sessionKey)
+        closeBridge(sessionId)
         logRequestEnd(sessionId, requestId, { durationMs: Date.now() - requestStartTime })
         res.writeHead(response.status, Object.fromEntries(response.headers.entries()))
         res.end(await response.text())
@@ -484,27 +479,18 @@ async function handleChatCompletion(
       return
     }
     // Session is gone — fall through to fresh request
-    removeActiveSession(sessionKey)
+    closeBridge(sessionId)
   }
 
   // ── Fresh request ──
-  logSessionCreate(sessionId, requestId, { sessionKey, conversationKey: convKey })
-  const stored = resolveConversationState(convKey, convConfig)
-
-  // ── Lineage validation ──
-  // Compute incoming lineage from completed turns and validate against stored lineage.
-  // On mismatch (fork, compaction, branch switch), reset the conversation.
-  const incomingLineage: LineageMetadata = {
-    turnCount: turns.length,
-    fingerprint: computeLineageFingerprint(turns),
-  }
-  if (stored.checkpoint !== null && !validateLineage(stored, incomingLineage)) {
+  const { conversation: stored, lineageInvalidated } = resolveSession(sessionId, convConfig, turns)
+  logSessionCreate(sessionId, requestId, { sessionKey: sessionId, conversationKey: sessionId })
+  if (lineageInvalidated) {
     logLineageInvalidation(sessionId, requestId, {
       storedTurnCount: stored.lineageTurnCount,
-      incomingTurnCount: incomingLineage.turnCount,
+      incomingTurnCount: turns.length,
       blobCount: stored.blobStore.size,
     })
-    resetConversation(stored)
   }
 
   const effectiveUserText = userText || (toolResults.length > 0 ? toolResults.map((r) => r.content).join('\n') : '')
@@ -529,14 +515,14 @@ async function handleChatCompletion(
     cloudRule: systemPrompt || undefined,
     nativeToolsMode: cfg.nativeToolsMode,
     allowedRoot,
-    convKey,
+    convKey: sessionId,
     onCheckpoint: (checkpointBytes) => {
       stored.checkpoint = checkpointBytes
       // blobStore is a shared Map reference — SetBlob mutations from
       // handleKvMessage are already visible in stored.blobStore.
       // Prune oldest blobs if the store exceeds the size cap.
       pruneBlobs(stored.blobStore)
-      persistConversation(convKey, stored, convConfig)
+      persistConversation(sessionId, stored, convConfig)
       logCheckpointCommit(sessionId, requestId, { sizeBytes: checkpointBytes.length })
     },
   }
@@ -562,8 +548,7 @@ async function handleChatCompletion(
         void pumpAndFinalize(
           session,
           ctx,
-          sessionKey,
-          convKey,
+          sessionId,
           convConfig,
           lineageInfo,
           {
@@ -628,7 +613,7 @@ async function handleChatCompletion(
             cfg.nativeToolsMode,
           ).requestBytes,
         }
-        persistConversation(convKey, stored, convConfig)
+        persistConversation(sessionId, stored, convConfig)
         console.error('[proxy] blob_not_found: rebuilt non-streaming request with new conversation ID for retry')
       }
 
@@ -650,10 +635,17 @@ async function handleChatCompletion(
     // Update lineage after successful non-streaming turn completion
     if (response.ok) {
       const completedTurns = [...turns, { userText: effectiveUserText }]
-      stored.lineageTurnCount = completedTurns.length
-      stored.lineageFingerprint = computeLineageFingerprint(completedTurns)
+      commitTurn(
+        sessionId,
+        {
+          turnCount: completedTurns.length,
+          fingerprint: computeLineageFingerprint(completedTurns),
+        },
+        convConfig,
+      )
+    } else {
+      persistConversation(sessionId, stored, convConfig)
     }
-    persistConversation(convKey, stored, convConfig)
     logRequestEnd(sessionId, requestId, { durationMs: Date.now() - requestStartTime })
     res.writeHead(response.status, Object.fromEntries(response.headers.entries()))
     res.end(await response.text())
@@ -689,8 +681,7 @@ interface RetryContext {
 async function pumpAndFinalize(
   session: CursorSession,
   ctx: ReturnType<typeof createSSECtx>,
-  sessionKey: string,
-  convKey: string,
+  sessionId: string,
   convConfig: ConversationConfig,
   lineageInfo?: LineageInfo,
   debugInfo?: { sid: string; rid: string; startTime: number },
@@ -706,13 +697,13 @@ async function pumpAndFinalize(
 
       if (result.outcome === 'batchReady') {
         // Keep session alive for tool-result continuation
-        setActiveSession(sessionKey, currentSession)
+        registerBridge(sessionId, currentSession)
         return
       }
 
       // ── Retryable failure — create a new session and retry ──
       if (result.outcome === 'retry' && retryCtx && attempt < retryCtx.maxRetries) {
-        removeActiveSession(sessionKey)
+        closeBridge(sessionId)
         currentSession.close()
         attempt++
         const delayMs = retryDelayMs(result.retryHint)
@@ -729,7 +720,7 @@ async function pumpAndFinalize(
         // Called unconditionally (not guarded by stored?.checkpoint) because
         // the new conversation ID is needed regardless of checkpoint state.
         if (result.retryHint === 'blob_not_found') {
-          const stored = getConversationState(convKey)
+          const stored = getConversationState(sessionId)
           if (stored) {
             resetConversation(stored)
             if (retryCtx.rebuildWithoutCheckpoint) {
@@ -738,7 +729,7 @@ async function pumpAndFinalize(
                 requestBytes: retryCtx.rebuildWithoutCheckpoint(stored),
               }
             }
-            persistConversation(convKey, stored, convConfig)
+            persistConversation(sessionId, stored, convConfig)
             console.error('[proxy] blob_not_found: rebuilt request with new conversation ID for retry')
           }
         }
@@ -761,18 +752,25 @@ async function pumpAndFinalize(
       }
 
       // ── Done or final retry failure — persist and clean up ──
-      const stored = getConversationState(convKey)
-      if (stored) {
-        // Update lineage only after successful turn completion (outcome === 'done').
-        // On retry/error, preserve previous committed lineage.
-        if (result.outcome === 'done' && lineageInfo) {
-          const completedTurns = [...lineageInfo.turns, { userText: lineageInfo.userText }]
-          stored.lineageTurnCount = completedTurns.length
-          stored.lineageFingerprint = computeLineageFingerprint(completedTurns)
+      // Update lineage only after successful turn completion (outcome === 'done').
+      // On retry/error, preserve previous committed lineage.
+      if (result.outcome === 'done' && lineageInfo) {
+        const completedTurns = [...lineageInfo.turns, { userText: lineageInfo.userText }]
+        commitTurn(
+          sessionId,
+          {
+            turnCount: completedTurns.length,
+            fingerprint: computeLineageFingerprint(completedTurns),
+          },
+          convConfig,
+        )
+      } else {
+        const stored = getConversationState(sessionId)
+        if (stored) {
+          persistConversation(sessionId, stored, convConfig)
         }
-        persistConversation(convKey, stored, convConfig)
       }
-      removeActiveSession(sessionKey)
+      closeBridge(sessionId)
       currentSession.close()
 
       // Surface the error when retries are exhausted
@@ -793,7 +791,7 @@ async function pumpAndFinalize(
     }
   } catch (error) {
     console.error('[proxy] pumpSession error:', error)
-    removeActiveSession(sessionKey)
+    closeBridge(sessionId)
     currentSession.close()
     ctx.close()
     if (debugInfo) {
@@ -860,7 +858,7 @@ async function main(): Promise<void> {
 
   function shutdown(): void {
     console.error('[proxy] Shutdown requested')
-    closeAllSessions()
+    closeAll()
     try {
       unlinkSync(portFilePath)
     } catch {
@@ -916,8 +914,7 @@ async function main(): Promise<void> {
 
   // 5. Start periodic session eviction
   const evictionTimer = setInterval(() => {
-    evictStaleSessions()
-    evictStaleConversations()
+    evict()
   }, 60_000)
   if (typeof evictionTimer === 'object' && 'unref' in evictionTimer) {
     evictionTimer.unref()
