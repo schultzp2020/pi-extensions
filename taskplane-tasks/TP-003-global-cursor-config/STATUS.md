@@ -65,23 +65,23 @@
 
 ## Discoveries
 
-| Discovery | Disposition | Location |
-| --------- | ----------- | -------- |
+| Discovery                                 | Disposition                         | Location                      |
+| ----------------------------------------- | ----------------------------------- | ----------------------------- |
 | CONTEXT.md already has Cursor Config term | Verified correct, no changes needed | packages/pi-cursor/CONTEXT.md |
 
 ---
 
 ## Execution Log
 
-| Timestamp  | Action      | Outcome                         |
-| ---------- | ----------- | ------------------------------- |
-| 2026-05-04 | Task staged | PROMPT.md and STATUS.md created |
-| 2026-05-04 05:55 | Task started | Runtime V2 lane-runner execution |
-| 2026-05-04 05:55 | Step 0 started | Preflight |
-| 2026-05-04 05:55 | Worker iter 1 | done in 28s, tools: 4 |
-| 2026-05-04 05:55 | No progress | Iteration 1: 0 new checkboxes (1/3 stall limit) |
-| 2026-05-04 05:59 | Worker iter 2 | done in 244s, tools: 36 |
-| 2026-05-04 05:59 | Task complete | .DONE created |
+| Timestamp        | Action         | Outcome                                         |
+| ---------------- | -------------- | ----------------------------------------------- |
+| 2026-05-04       | Task staged    | PROMPT.md and STATUS.md created                 |
+| 2026-05-04 05:55 | Task started   | Runtime V2 lane-runner execution                |
+| 2026-05-04 05:55 | Step 0 started | Preflight                                       |
+| 2026-05-04 05:55 | Worker iter 1  | done in 28s, tools: 4                           |
+| 2026-05-04 05:55 | No progress    | Iteration 1: 0 new checkboxes (1/3 stall limit) |
+| 2026-05-04 05:59 | Worker iter 2  | done in 244s, tools: 36                         |
+| 2026-05-04 05:59 | Task complete  | .DONE created                                   |
 
 ---
 
