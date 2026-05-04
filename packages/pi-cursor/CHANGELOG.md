@@ -1,5 +1,17 @@
 # @schultzp2020/pi-cursor
 
+## 0.2.0
+
+### Minor Changes
+
+- [#10](https://github.com/schultzp2020/pi-extensions/pull/10) [`f33a422`](https://github.com/schultzp2020/pi-extensions/commit/f33a422fde84d292c8010547b19c83f313c49984) Thanks [@schultzp2020](https://github.com/schultzp2020)! - Enforce tool gating across all Cursor proxy surfaces
+  - Gate MCP passthrough, native tool redirects, and interaction queries against Pi's enabled tool set so disabled tools fail closed instead of bypassing session tool registration.
+  - Reject Cursor-internal web search and exa queries unconditionally (no Pi tool equivalent).
+  - Add `buildEnabledToolSet` helper and `enabledToolNames` to `MessageProcessorContext`.
+  - Replace `any` casts with typed protobuf discriminated union narrowing in `nativeToMcpRedirect`, `handleInteractionUpdate`, and `handleInteractionQuery`.
+  - Extract `REDIRECTABLE_EXEC_CASES` shared constant to prevent classification/redirect list drift.
+  - Refactor `handleExecMessage` from positional params to `ExecContext` object.
+
 ## 0.1.4
 
 ### Patch Changes
