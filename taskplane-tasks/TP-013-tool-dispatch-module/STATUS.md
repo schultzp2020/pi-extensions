@@ -1,6 +1,6 @@
 # TP-013: Tool Dispatch Module — Status
 
-**Current Step:** Step 0: Preflight
+**Current Step:** Step 1: Create tool-dispatch.ts
 **Status:** 🟡 In Progress
 **Last Updated:** 2026-05-04
 **Review Level:** 1
@@ -26,12 +26,12 @@
 
 ### Step 1: Create tool-dispatch.ts
 
-**Status:** ⬜ Not Started
+**Status:** ✅ Complete
 
-- [ ] Create `tool-dispatch.ts` with `ToolDispatchContext` and `handleToolMessage`
-- [ ] Move exec, interaction query, and exec control handling from `cursor-messages.ts`
-- [ ] Wire imports from `native-tools.ts`, `connect-protocol.ts`, `request-context.ts`
-- [ ] Run targeted tests
+- [x] Create `tool-dispatch.ts` with `ToolDispatchContext` and `handleToolMessage`
+- [x] Move exec, interaction query, and exec control handling from `cursor-messages.ts`
+- [x] Wire imports from `native-tools.ts`, `connect-protocol.ts`, `request-context.ts`
+- [x] Run targeted tests (tool-gating + native-tools: 61 passed)
 
 ---
 
