@@ -13,7 +13,7 @@ A single HTTP/2 connection to Cursor's gRPC endpoint (`api2.cursor.sh`) that car
 _Avoid_: connection, stream, session
 
 **Internal API**:
-HTTP endpoints on the Proxy (`/internal/heartbeat`, `/internal/token`, `/internal/refresh-models`, `/internal/health`) used by all connected extension instances for ongoing communication — heartbeats, token delivery, and model refresh.
+HTTP endpoints on the Proxy (`/internal/heartbeat`, `/internal/token`, `/internal/refresh-models`, `/internal/health`, `/internal/cleanup-session`) used by all connected extension instances for ongoing communication — heartbeats, token delivery, model refresh, and session cleanup.
 _Avoid_: control API, management API, stdin protocol
 
 **Stdout Protocol**:
@@ -112,6 +112,10 @@ _Avoid_: settings file, preferences
 A Pi command that opens a single-level settings menu. Each row opens a second selector of valid values. Settings persist to the Cursor Config file and take effect on new requests.
 _Avoid_: cursor settings, config command
 
+**Debug Logger**:
+A structured JSONL debug logger gated behind `PI_CURSOR_PROVIDER_DEBUG=1`. When enabled, appends one JSON object per line to `~/.pi/agent/cursor-debug.jsonl` (configurable via `PI_CURSOR_PROVIDER_EXTENSION_DEBUG_FILE`). When disabled, all log functions are zero-cost no-ops. Logs event types: `request_start`, `request_end`, `session_create`, `session_resume`, `checkpoint_commit`, `checkpoint_discard`, `retry`, `tool_call`, `bridge_open`, `bridge_close`, `lifecycle`. Each entry includes `timestamp` (ISO 8601), `type`, `sessionId`, `requestId`, and type-specific payload. A companion timeline script (`scripts/debug-log-timeline.mjs`) transforms JSONL logs into human-readable timelines grouped by request, with `--session`, `--since`, and `--until` filtering.
+_Avoid_: debug mode, verbose mode, trace
+
 ## Image Bridging
 
 The message parsing layer (`openai-messages.ts`) preserves image content parts from OpenAI-format requests. When a user sends `image_url` content parts (screenshots, diagrams), `extractImageParts()` extracts them and `parseMessages()` carries them through as `ImagePart[]` on both `ParsedMessages.images` (current turn) and `ParsedConversationTurn.images` (history turns). The `textContent()` function continues to return text only — images are a separate channel. Downstream consumers (e.g., `cursor-session.ts`) can access parsed images to encode them into Cursor's protobuf format.
@@ -123,12 +127,15 @@ The message parsing layer (`openai-messages.ts`) preserves image content parts f
 - A **Bridge** translates **MCP Tool** calls into OpenAI `tool_calls` for Pi, with results sent back as MCP protobuf
 - The **Proxy** persists **Checkpoints**, **Checkpoint Lineage**, and **Blob Store** data to disk, keyed by **Session ID** + conversation
 - The **Proxy** validates **Checkpoint Lineage** on every request — discards stale Checkpoints on fork, compaction, or branch navigation
-- The **Proxy** exposes the **Internal API** for heartbeats, token delivery, and model refresh
+- The **Proxy** exposes the **Internal API** for heartbeats, token delivery, model refresh, and **Lifecycle Cleanup**
 - Extension instances discover the **Proxy** via the **Port File**, or spawn a new one if none exists
 - **Model Discovery** results are cached to disk as the **Model Cache** for fast subsequent startups
 - **Model Normalization** collapses raw Cursor variants into deduplicated models with **Effort Maps**
 - **Effort Resolution** combines the normalized model, **Max Mode**, and Pi's reasoning-effort setting to reconstruct the final Cursor model ID
 - The **`/cursor` Command** edits the **Cursor Config** and triggers provider re-registration when **Model Normalization** mode changes
+- **Lifecycle Cleanup** hooks (`session_before_switch`, `session_before_fork`, `session_before_tree`, `session_shutdown`) call the Internal API to close active Bridges and evict state before session transitions
+- On client disconnect, the Proxy sends a **CancelAction** protobuf to Cursor and suppresses pending Checkpoint commits to preserve the last committed state
+- The **Debug Logger** records structured events from both the Proxy (request lifecycle, sessions, checkpoints) and the extension (lifecycle hooks), output to JSONL when `PI_CURSOR_PROVIDER_DEBUG=1`
 
 ## Example dialogue
 

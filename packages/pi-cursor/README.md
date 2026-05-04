@@ -54,6 +54,31 @@ Read package.json and summarize the dependencies.
 
 Tool calls, multi-turn conversations, and reasoning all work.
 
+## Debug Logging
+
+Enable structured debug logging to diagnose proxy behavior:
+
+```bash
+export PI_CURSOR_PROVIDER_DEBUG=1
+```
+
+This writes JSONL entries to `~/.pi/agent/cursor-debug.jsonl`. Override the path:
+
+```bash
+export PI_CURSOR_PROVIDER_EXTENSION_DEBUG_FILE=/path/to/debug.jsonl
+```
+
+View a human-readable timeline:
+
+```bash
+node packages/pi-cursor/scripts/debug-log-timeline.mjs ~/.pi/agent/cursor-debug.jsonl
+
+# Filter by session or time range
+node packages/pi-cursor/scripts/debug-log-timeline.mjs --session <id> --since 2026-05-04T00:00:00Z
+```
+
+When disabled (default), all debug functions are zero-cost no-ops.
+
 ## Architecture
 
 ```

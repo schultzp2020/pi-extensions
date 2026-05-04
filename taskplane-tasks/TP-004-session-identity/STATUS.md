@@ -1,11 +1,11 @@
 # TP-004: Session identity from pi_session_id with lifecycle cleanup — Status
 
-**Current Step:** Not Started
-**Status:** 🔵 Ready for Execution
+**Current Step:** Step 5: Documentation & Delivery (final)
+**Status:** ✅ Complete
 **Last Updated:** 2026-05-04
 **Review Level:** 2
 **Review Counter:** 0
-**Iteration:** 0
+**Iteration:** 1
 **Size:** M
 
 > **Hydration:** Checkboxes represent meaningful outcomes, not individual code
@@ -16,61 +16,61 @@
 
 ### Step 0: Preflight
 
-**Status:** ⬜ Not Started
+**Status:** ✅ Complete
 
-- [ ] Required files exist with expected exports
-- [ ] Tests pass before changes
+- [x] Required files exist with expected exports
+- [x] Tests pass before changes
 
 ---
 
 ### Step 1: Inject pi_session_id via before_provider_request
 
-**Status:** ⬜ Not Started
+**Status:** ✅ Complete
 
-- [ ] Register `before_provider_request` hook to inject `pi_session_id` into request body
-- [ ] Replace random UUID with real Pi session ID
+- [x] Register `before_provider_request` hook to inject `pi_session_id` into request body
+- [x] Replace random UUID with real Pi session ID
 
 ---
 
 ### Step 2: Stabilize session key derivation
 
-**Status:** ⬜ Not Started
+**Status:** ✅ Complete
 
-- [ ] Stabilize `deriveSessionKey()` and `deriveConversationKey()` to use session ID only
-- [ ] Extract `pi_session_id` from request body in `main.ts` with header fallback
+- [x] Stabilize `deriveSessionKey()` and `deriveConversationKey()` to use session ID only
+- [x] Extract `pi_session_id` from request body in `main.ts` with header fallback
 
 ---
 
 ### Step 3: Add lifecycle cleanup and CancelAction
 
-**Status:** ⬜ Not Started
+**Status:** ✅ Complete
 
-- [ ] Add `session_before_switch`, `session_before_fork`, `session_before_tree` hooks
-- [ ] Add session cleanup endpoint/function for proxy
-- [ ] Send CancelAction protobuf on client disconnect
-- [ ] Preserve previous checkpoint on interrupted turns
+- [x] Add `session_before_switch`, `session_before_fork`, `session_before_tree` hooks
+- [x] Add session cleanup endpoint/function for proxy
+- [x] Send CancelAction protobuf on client disconnect
+- [x] Preserve previous checkpoint on interrupted turns
 
 ---
 
 ### Step 4: Testing & Verification
 
-**Status:** ⬜ Not Started
+**Status:** ✅ Complete
 
-- [ ] Session key stability verified
-- [ ] Lifecycle hooks registered and callable
-- [ ] FULL test suite passing
-- [ ] All failures fixed
-- [ ] Build passes
+- [x] Session key stability verified
+- [x] Lifecycle hooks registered and callable
+- [x] FULL test suite passing
+- [x] All failures fixed
+- [x] Build passes
 
 ---
 
 ### Step 5: Documentation & Delivery
 
-**Status:** ⬜ Not Started
+**Status:** ✅ Complete
 
-- [ ] "Must Update" docs modified
-- [ ] "Check If Affected" docs reviewed
-- [ ] Discoveries logged
+- [x] "Must Update" docs modified
+- [x] "Check If Affected" docs reviewed
+- [x] Discoveries logged
 
 ---
 
@@ -83,16 +83,23 @@
 
 ## Discoveries
 
-| Discovery | Disposition | Location |
-| --------- | ----------- | -------- |
+| Discovery                                                                                                       | Disposition                                               | Location                                        |
+| --------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------- | ----------------------------------------------- |
+| CONTEXT.md Session ID definition was already correct (pre-updated by prior task planning)                       | Verified, no change needed                                | packages/pi-cursor/CONTEXT.md                   |
+| ExtensionAPI has no direct sessionId property; must use session_start event + ctx.sessionManager.getSessionId() | Implemented with temporary UUID until session_start fires | packages/pi-cursor/src/index.ts                 |
+| `cleanupSessionById` uses `cancel()` which also suppresses checkpoint commits                                   | Desired behavior per ADR                                  | packages/pi-cursor/src/proxy/session-manager.ts |
 
 ---
 
 ## Execution Log
 
-| Timestamp  | Action      | Outcome                         |
-| ---------- | ----------- | ------------------------------- |
-| 2026-05-04 | Task staged | PROMPT.md and STATUS.md created |
+| Timestamp        | Action         | Outcome                          |
+| ---------------- | -------------- | -------------------------------- |
+| 2026-05-04       | Task staged    | PROMPT.md and STATUS.md created  |
+| 2026-05-04 05:55 | Task started   | Runtime V2 lane-runner execution |
+| 2026-05-04 05:55 | Step 0 started | Preflight                        |
+| 2026-05-04 06:07 | Worker iter 1  | done in 716s, tools: 135         |
+| 2026-05-04 06:07 | Task complete  | .DONE created                    |
 
 ---
 

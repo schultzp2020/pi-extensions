@@ -43,6 +43,14 @@ import {
   evictStaleConversations,
 } from './conversation-state.ts'
 import { CursorSession, type SessionOptions } from './cursor-session.ts'
+import {
+  debugRequestId,
+  logCheckpointCommit,
+  logRequestEnd,
+  logRequestStart,
+  logSessionCreate,
+  logSessionResume,
+} from './debug-logger.ts'
 import { jsonResponse, readBody } from './http-helpers.ts'
 import {
   configureInternalApi,
@@ -264,9 +272,22 @@ async function handleChatCompletion(
   }
 
   const { model: modelId, messages, stream = true, tools = [], tool_choice } = body
-  const sessionId = (req.headers['x-session-id'] as string | undefined) ?? 'default'
-  const sessionKey = deriveSessionKey(sessionId, messages)
-  const convKey = deriveConversationKey(sessionId, messages)
+  // Prefer pi_session_id from body (injected by before_provider_request), fall back to header
+  const bodyRecord = body as unknown as Record<string, unknown>
+  const sessionId =
+    (typeof bodyRecord.pi_session_id === 'string' ? bodyRecord.pi_session_id : undefined) ??
+    (req.headers['x-session-id'] as string | undefined) ??
+    'default'
+  const sessionKey = deriveSessionKey(sessionId)
+  const convKey = deriveConversationKey(sessionId)
+  const requestId = debugRequestId()
+  const requestStartTime = Date.now()
+
+  logRequestStart(sessionId, requestId, {
+    model: modelId,
+    messageCount: messages.length,
+    toolsCount: tools.length,
+  })
 
   const { systemPrompt, turns, userText, toolResults } = parseMessages(messages)
   const selectedTools = selectToolsForChoice(tools, tool_choice)
@@ -276,6 +297,7 @@ async function handleChatCompletion(
   if (toolResults.length > 0) {
     const existingSession = getActiveSession(sessionKey)
     if (existingSession?.alive) {
+      logSessionResume(sessionId, requestId, { sessionKey })
       const newResults = toolResults.map((r) => ({
         toolCallId: r.toolCallId,
         content: r.content,
@@ -283,13 +305,24 @@ async function handleChatCompletion(
       }))
       existingSession.sendToolResults(newResults)
 
+      // Cancel on client disconnect during tool-result continuation
+      req.on('close', () => {
+        if (existingSession.alive) {
+          existingSession.cancel()
+        }
+      })
+
       if (stream) {
         const completionId = `chatcmpl-${randomUUID().replaceAll('-', '').slice(0, 28)}`
         const created = Math.floor(Date.now() / 1000)
         const readableStream = new ReadableStream({
           start(controller) {
             const ctx = createSSECtx(controller, modelId, completionId, created)
-            void pumpAndFinalize(existingSession, ctx, sessionKey, convKey, convConfig)
+            void pumpAndFinalize(existingSession, ctx, sessionKey, convKey, convConfig, {
+              sid: sessionId,
+              rid: requestId,
+              startTime: requestStartTime,
+            })
           },
         })
         res.writeHead(200, SSE_HEADERS)
@@ -298,6 +331,7 @@ async function handleChatCompletion(
       } else {
         const response = await collectNonStreamingResponse(existingSession, modelId)
         removeActiveSession(sessionKey)
+        logRequestEnd(sessionId, requestId, { durationMs: Date.now() - requestStartTime })
         res.writeHead(response.status, Object.fromEntries(response.headers.entries()))
         res.end(await response.text())
       }
@@ -308,6 +342,7 @@ async function handleChatCompletion(
   }
 
   // ── Fresh request ──
+  logSessionCreate(sessionId, requestId, { sessionKey, conversationKey: convKey })
   const stored = resolveConversationState(convKey, convConfig)
   const effectiveUserText = userText || (toolResults.length > 0 ? toolResults.map((r) => r.content).join('\n') : '')
   const payload = buildCursorRequest(
@@ -335,10 +370,19 @@ async function handleChatCompletion(
         stored.blobStore.set(k, v)
       }
       persistConversation(convKey, stored, convConfig)
+      logCheckpointCommit(sessionId, requestId, { sizeBytes: checkpointBytes.length })
     },
   }
 
   const session = new CursorSession(sessionOptions)
+
+  // Cancel the Cursor session on client disconnect — sends CancelAction protobuf
+  // and preserves the previous committed checkpoint (no pending checkpoint commit)
+  req.on('close', () => {
+    if (session.alive) {
+      session.cancel()
+    }
+  })
 
   if (stream) {
     const completionId = `chatcmpl-${randomUUID().replaceAll('-', '').slice(0, 28)}`
@@ -346,7 +390,11 @@ async function handleChatCompletion(
     const readableStream = new ReadableStream({
       start(controller) {
         const ctx = createSSECtx(controller, modelId, completionId, created)
-        void pumpAndFinalize(session, ctx, sessionKey, convKey, convConfig)
+        void pumpAndFinalize(session, ctx, sessionKey, convKey, convConfig, {
+          sid: sessionId,
+          rid: requestId,
+          startTime: requestStartTime,
+        })
       },
     })
     res.writeHead(200, SSE_HEADERS)
@@ -355,6 +403,7 @@ async function handleChatCompletion(
   } else {
     const response = await collectNonStreamingResponse(session, modelId)
     persistConversation(convKey, stored, convConfig)
+    logRequestEnd(sessionId, requestId, { durationMs: Date.now() - requestStartTime })
     res.writeHead(response.status, Object.fromEntries(response.headers.entries()))
     res.end(await response.text())
   }
@@ -370,6 +419,7 @@ async function pumpAndFinalize(
   sessionKey: string,
   convKey: string,
   convConfig: ConversationConfig,
+  debugInfo?: { sid: string; rid: string; startTime: number },
 ): Promise<void> {
   try {
     const result: PumpResult = await pumpSession(session, ctx)
@@ -385,12 +435,25 @@ async function pumpAndFinalize(
       }
       removeActiveSession(sessionKey)
       session.close()
+      if (debugInfo) {
+        const error = result.outcome === 'retry' ? result.error : undefined
+        logRequestEnd(debugInfo.sid, debugInfo.rid, {
+          durationMs: Date.now() - debugInfo.startTime,
+          error,
+        })
+      }
     }
   } catch (error) {
     console.error('[proxy] pumpSession error:', error)
     removeActiveSession(sessionKey)
     session.close()
     ctx.close()
+    if (debugInfo) {
+      logRequestEnd(debugInfo.sid, debugInfo.rid, {
+        durationMs: Date.now() - debugInfo.startTime,
+        error: error instanceof Error ? error.message : String(error),
+      })
+    }
   }
 }
 
