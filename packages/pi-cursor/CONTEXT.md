@@ -9,7 +9,7 @@ A local Node.js HTTP server that translates OpenAI-format requests into Cursor's
 _Avoid_: bridge, server, gateway
 
 **Bridge**:
-A single HTTP/2 connection to Cursor's gRPC endpoint (`api2.cursor.sh`) that carries one conversation turn. Kept alive across tool-call round-trips within a single turn. Auto-resumes from Checkpoint on transient failures.
+A single HTTP/2 connection to Cursor's gRPC endpoint (`api2.cursor.sh`) that carries one conversation turn. Kept alive across tool-call round-trips within a single turn. On transient failures (`blob_not_found`, `resource_exhausted`, `timeout`) the Proxy retries up to `maxRetries` times (from Cursor Config), creating a fresh Bridge each attempt while the Checkpoint preserves conversation state.
 _Avoid_: connection, stream, session
 
 **Internal API**:

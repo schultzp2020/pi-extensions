@@ -1,7 +1,7 @@
 # TP-008: Retry execution for transient Cursor failures — Status
 
-**Current Step:** Step 0: Preflight
-**Status:** 🟡 In Progress
+**Current Step:** Step 3: Documentation & Delivery
+**Status:** ✅ Complete
 **Last Updated:** 2026-05-04
 **Review Level:** 0
 **Review Counter:** 0
@@ -46,11 +46,11 @@
 
 ### Step 3: Documentation & Delivery
 
-**Status:** ⬜ Not Started
+**Status:** ✅ Done
 
-- [ ] "Must Update" docs modified
-- [ ] "Check If Affected" docs reviewed
-- [ ] Discoveries logged
+- [x] "Must Update" docs modified
+- [x] "Check If Affected" docs reviewed
+- [x] Discoveries logged
 
 ---
 
@@ -63,8 +63,9 @@
 
 ## Discoveries
 
-| Discovery | Disposition | Location |
-| --------- | ----------- | -------- |
+| Discovery                                                                                        | Disposition                                                      | Location                             |
+| ------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------- | ------------------------------------ |
+| Non-streaming retry uses 502 status check (no retryHint access from collectNonStreamingResponse) | Acceptable — maxRetries caps waste, 502 only from session errors | packages/pi-cursor/src/proxy/main.ts |
 
 ---
 
