@@ -6,7 +6,7 @@ import { describe, it, beforeEach, afterEach, expect } from 'vitest'
 
 import {
   computeLineageFingerprint,
-  discardCheckpoint,
+  resetConversation,
   invalidateConversationState,
   persistConversation,
   pruneBlobs,
@@ -158,12 +158,13 @@ describe('validateLineage — checkpoint discard scenarios', () => {
     expect(validateLineage(stored, { turnCount: 3, fingerprint: 'abc' })).toBeTruthy()
   })
 
-  it('discardCheckpoint preserves blobStore (compaction scenario)', () => {
+  it('resetConversation resets conversationId, clears checkpoint + blobs (compaction scenario)', () => {
     const blobStore = new Map<string, Uint8Array>()
     blobStore.set('blob-key-1', new Uint8Array([10, 20, 30]))
     blobStore.set('blob-key-2', new Uint8Array([40, 50, 60]))
 
     const stored = makeStored({
+      conversationId: 'original-id',
       checkpoint: new Uint8Array([1, 2, 3]),
       lineageTurnCount: 5,
       lineageFingerprint: 'pre-compaction',
@@ -176,15 +177,33 @@ describe('validateLineage — checkpoint discard scenarios', () => {
     expect(validateLineage(stored, { turnCount: 1, fingerprint: 'post-compaction' })).toBeFalsy()
 
     // Use the actual helper used by main.ts
-    discardCheckpoint(stored)
+    resetConversation(stored)
 
-    // Checkpoint + history cleared, blobs preserved
+    // Conversation ID is reset to a new UUID
+    expect(stored.conversationId).not.toBe('original-id')
+    expect(stored.conversationId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/)
+
+    // Checkpoint + history + blobs all cleared (fresh conversation)
     expect(stored.checkpoint).toBeNull()
     expect(stored.checkpointHistory.size).toBe(0)
     expect(stored.checkpointArchive.size).toBe(0)
-    expect(stored.blobStore.size).toBe(2)
-    expect(stored.blobStore.get('blob-key-1')).toEqual(new Uint8Array([10, 20, 30]))
-    expect(stored.blobStore.get('blob-key-2')).toEqual(new Uint8Array([40, 50, 60]))
+    expect(stored.blobStore.size).toBe(0)
+  })
+
+  it('resetConversation on already-clean state (no checkpoint, empty blobs)', () => {
+    const stored = makeStored({
+      conversationId: 'original-id',
+      checkpoint: null,
+      blobStore: new Map(),
+    })
+
+    resetConversation(stored)
+
+    // Conversation ID still changes even if state was already clean
+    expect(stored.conversationId).not.toBe('original-id')
+    expect(stored.conversationId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/)
+    expect(stored.checkpoint).toBeNull()
+    expect(stored.blobStore.size).toBe(0)
   })
 })
 

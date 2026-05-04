@@ -186,14 +186,25 @@ export function validateLineage(stored: StoredConversation, incoming: LineageMet
 }
 
 /**
- * Discard checkpoint and history but preserve blobStore.
- * Use on lineage mismatch (compaction, fork, branch switch) so that
- * Cursor can still GetBlob for previously-stored data after a fresh rebuild.
+ * Discard checkpoint, history, and blobs, and assign a new conversation ID.
+ * Use on lineage mismatch (compaction, fork, branch switch).
+ *
+ * A new conversation ID is required because Cursor's server treats the
+ * `turns` field in ConversationStateStructure as blob references, not inline
+ * data.  Rebuilding turns from scratch produces bytes the server tries to
+ * look up via GetBlob, causing "Blob not found" errors.  A fresh ID ensures
+ * the server treats the next request as a brand-new conversation (empty turns)
+ * which always succeeds.
+ *
+ * The blobStore is cleared because old blobs belong to the previous
+ * conversation ID and will never be requested again.
  */
-export function discardCheckpoint(stored: StoredConversation): void {
+export function resetConversation(stored: StoredConversation): void {
+  stored.conversationId = randomUUID()
   stored.checkpoint = null
   stored.checkpointHistory.clear()
   stored.checkpointArchive.clear()
+  stored.blobStore.clear()
 }
 
 /**
