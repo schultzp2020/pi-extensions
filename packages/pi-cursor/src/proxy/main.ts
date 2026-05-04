@@ -44,12 +44,16 @@ import {
   validateLineage,
   type ConversationConfig,
   type LineageMetadata,
+  type StoredConversation,
+  discardCheckpoint,
   evictStaleConversations,
+  pruneBlobs,
 } from './conversation-state.ts'
 import { CursorSession, type RetryHint, type SessionOptions } from './cursor-session.ts'
 import {
   debugRequestId,
   logCheckpointCommit,
+  logLineageInvalidation,
   logRequestEnd,
   logRequestStart,
   logRetry,
@@ -431,10 +435,13 @@ async function handleChatCompletion(
     fingerprint: computeLineageFingerprint(turns),
   }
   if (stored.checkpoint !== null && !validateLineage(stored, incomingLineage)) {
-    stored.checkpoint = null
-    stored.checkpointHistory.clear()
-    stored.checkpointArchive.clear()
-    stored.blobStore.clear()
+    logLineageInvalidation(sessionId, requestId, {
+      storedTurnCount: stored.lineageTurnCount,
+      incomingTurnCount: incomingLineage.turnCount,
+      blobCount: stored.blobStore.size,
+    })
+    discardCheckpoint(stored)
+    // blobStore is intentionally preserved — see discardCheckpoint() docs.
   }
 
   const effectiveUserText = userText || (toolResults.length > 0 ? toolResults.map((r) => r.content).join('\n') : '')
@@ -460,12 +467,12 @@ async function handleChatCompletion(
     nativeToolsMode: cfg.nativeToolsMode,
     allowedRoot,
     convKey,
-    onCheckpoint: (checkpointBytes, blobStoreRef) => {
+    onCheckpoint: (checkpointBytes) => {
       stored.checkpoint = checkpointBytes
-      // Sync blob store reference
-      for (const [k, v] of blobStoreRef) {
-        stored.blobStore.set(k, v)
-      }
+      // blobStore is a shared Map reference — SetBlob mutations from
+      // handleKvMessage are already visible in stored.blobStore.
+      // Prune oldest blobs if the store exceeds the size cap.
+      pruneBlobs(stored.blobStore)
       persistConversation(convKey, stored, convConfig)
       logCheckpointCommit(sessionId, requestId, { sizeBytes: checkpointBytes.length })
     },
@@ -501,7 +508,23 @@ async function handleChatCompletion(
             rid: requestId,
             startTime: requestStartTime,
           },
-          { sessionOptions, req, maxRetries: cfg.maxRetries },
+          {
+            sessionOptions,
+            req,
+            maxRetries: cfg.maxRetries,
+            rebuildWithoutCheckpoint: (s) =>
+              buildCursorRequest(
+                modelId,
+                systemPrompt,
+                effectiveUserText,
+                turns,
+                s.conversationId,
+                null,
+                s.blobStore,
+                mcpTools,
+                cfg.nativeToolsMode,
+              ).requestBytes,
+          },
         )
       },
     })
@@ -567,6 +590,8 @@ interface RetryContext {
   sessionOptions: SessionOptions
   req: IncomingMessage
   maxRetries: number
+  /** Rebuild requestBytes without checkpoint for blob_not_found recovery. */
+  rebuildWithoutCheckpoint?: (stored: StoredConversation) => Uint8Array
 }
 
 /**
@@ -613,7 +638,26 @@ async function pumpAndFinalize(
         )
         await sleep(delayMs)
 
-        // New session with the same options — checkpoint preserves conversation state
+        // On blob_not_found: discard the stale checkpoint and rebuild
+        // requestBytes so the retry sends a fresh conversation to Cursor.
+        // The blobStore is preserved — old blobs may still be needed.
+        if (result.retryHint === 'blob_not_found') {
+          const stored = getConversationState(convKey)
+          if (stored?.checkpoint) {
+            discardCheckpoint(stored)
+            if (retryCtx.rebuildWithoutCheckpoint) {
+              retryCtx.sessionOptions = {
+                ...retryCtx.sessionOptions,
+                requestBytes: retryCtx.rebuildWithoutCheckpoint(stored),
+              }
+            }
+            persistConversation(convKey, stored, convConfig)
+            console.error('[proxy] blob_not_found: rebuilt request without checkpoint for retry')
+          }
+        }
+
+        // New session — either same options (transient error) or
+        // rebuilt options (blob_not_found checkpoint discard)
         currentSession = new CursorSession(retryCtx.sessionOptions)
         // Remove previous close handler to prevent listener accumulation
         if (streamCloseHandler) {

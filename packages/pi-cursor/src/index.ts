@@ -344,8 +344,14 @@ export default async function (pi: ExtensionAPI): Promise<void> {
     logLifecycle(sessionId, '', { event: 'session_start' })
   })
 
-  // Inject pi_session_id and pi_cwd into every provider request body
+  // Inject pi_session_id and pi_cwd only when the request is routed through the
+  // pi-cursor proxy (provider === 'cursor').  Other providers (anthropic-vertex,
+  // openai, etc.) send requests directly to their API and reject unknown fields.
   pi.on('before_provider_request', (event, ctx) => {
+    const currentModel = ctx.model
+    if (currentModel?.provider !== 'cursor') {
+      return event.payload
+    }
     const { payload } = event
     if (typeof payload === 'object' && payload !== null) {
       ;(payload as Record<string, unknown>).pi_session_id = sessionId
