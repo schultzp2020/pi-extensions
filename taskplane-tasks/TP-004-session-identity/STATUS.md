@@ -16,7 +16,7 @@
 
 ### Step 0: Preflight
 
-**Status:** ✅ Done
+**Status:** ✅ Complete
 
 - [x] Required files exist with expected exports
 - [x] Tests pass before changes
@@ -25,7 +25,7 @@
 
 ### Step 1: Inject pi_session_id via before_provider_request
 
-**Status:** ✅ Done
+**Status:** ✅ Complete
 
 - [x] Register `before_provider_request` hook to inject `pi_session_id` into request body
 - [x] Replace random UUID with real Pi session ID
@@ -34,7 +34,7 @@
 
 ### Step 2: Stabilize session key derivation
 
-**Status:** ✅ Done
+**Status:** ✅ Complete
 
 - [x] Stabilize `deriveSessionKey()` and `deriveConversationKey()` to use session ID only
 - [x] Extract `pi_session_id` from request body in `main.ts` with header fallback
@@ -43,7 +43,7 @@
 
 ### Step 3: Add lifecycle cleanup and CancelAction
 
-**Status:** ✅ Done
+**Status:** ✅ Complete
 
 - [x] Add `session_before_switch`, `session_before_fork`, `session_before_tree` hooks
 - [x] Add session cleanup endpoint/function for proxy
@@ -54,7 +54,7 @@
 
 ### Step 4: Testing & Verification
 
-**Status:** ✅ Done
+**Status:** ✅ Complete
 
 - [x] Session key stability verified
 - [x] Lifecycle hooks registered and callable
@@ -66,7 +66,7 @@
 
 ### Step 5: Documentation & Delivery
 
-**Status:** ✅ Done
+**Status:** ✅ Complete
 
 - [x] "Must Update" docs modified
 - [x] "Check If Affected" docs reviewed
@@ -98,6 +98,8 @@
 | 2026-05-04       | Task staged    | PROMPT.md and STATUS.md created  |
 | 2026-05-04 05:55 | Task started   | Runtime V2 lane-runner execution |
 | 2026-05-04 05:55 | Step 0 started | Preflight                        |
+| 2026-05-04 06:07 | Worker iter 1  | done in 716s, tools: 135         |
+| 2026-05-04 06:07 | Task complete  | .DONE created                    |
 
 ---
 
