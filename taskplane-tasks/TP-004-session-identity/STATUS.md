@@ -1,6 +1,6 @@
 # TP-004: Session identity from pi_session_id with lifecycle cleanup — Status
 
-**Current Step:** Step 3: Add lifecycle cleanup and CancelAction
+**Current Step:** Step 4: Testing & Verification
 **Status:** 🟡 In Progress
 **Last Updated:** 2026-05-04
 **Review Level:** 2
@@ -54,13 +54,13 @@
 
 ### Step 4: Testing & Verification
 
-**Status:** ⬜ Not Started
+**Status:** ✅ Done
 
-- [ ] Session key stability verified
-- [ ] Lifecycle hooks registered and callable
-- [ ] FULL test suite passing
-- [ ] All failures fixed
-- [ ] Build passes
+- [x] Session key stability verified
+- [x] Lifecycle hooks registered and callable
+- [x] FULL test suite passing
+- [x] All failures fixed
+- [x] Build passes
 
 ---
 
