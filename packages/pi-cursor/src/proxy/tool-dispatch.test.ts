@@ -33,8 +33,6 @@ import { type PendingExec, type ToolDispatchContext, handleExecMessage, handleTo
 function makeToolDefinition(toolName: string) {
   return create(McpToolDefinitionSchema, {
     toolName: `${MCP_TOOL_PREFIX}${toolName}`,
-    displayName: toolName,
-    description: `${toolName} tool`,
   })
 }
 
@@ -71,6 +69,20 @@ function decodeClientFrame(frame: Buffer) {
   // Skip 5-byte connect frame header
   const payload = frame.subarray(5)
   return fromBinary(AgentClientMessageSchema, payload)
+}
+
+function getExecClientMessage(frame: ReturnType<typeof decodeClientFrame>) {
+  if (frame.message.case !== 'execClientMessage') {
+    throw new Error(`Expected execClientMessage, got ${String(frame.message.case)}`)
+  }
+  return frame.message.value
+}
+
+function getInteractionResponse(frame: ReturnType<typeof decodeClientFrame>) {
+  if (frame.message.case !== 'interactionResponse') {
+    throw new Error(`Expected interactionResponse, got ${String(frame.message.case)}`)
+  }
+  return frame.message.value
 }
 
 function makeExecServerMessage(messageCase: string, value: unknown) {
@@ -130,11 +142,10 @@ describe('handleToolMessage', () => {
 
       // Verify rejection response
       const response = decodeClientFrame(ctx.sentFrames[0])
-      expect(response.message.case).toBe('execClientMessage')
-      const execMsg = response.message.value
+      const execMsg = getExecClientMessage(response)
       expect(execMsg.message.case).toBe('shellResult')
-      const shellResult = execMsg.message.value
-      expect(shellResult.result.case).toBe('rejected')
+      if (execMsg.message.case !== 'shellResult') throw new Error('unreachable')
+      expect(execMsg.message.value.result.case).toBe('rejected')
     })
 
     it('redirect mode — redirects native tool to MCP exec', () => {
@@ -183,8 +194,7 @@ describe('handleToolMessage', () => {
       expect(ctx.sentFrames).toHaveLength(1)
 
       const response = decodeClientFrame(ctx.sentFrames[0])
-      expect(response.message.case).toBe('interactionResponse')
-      const interactionResponse = response.message.value
+      const interactionResponse = getInteractionResponse(response)
       expect(interactionResponse.result.case).toBe(responseCase)
     })
   })
@@ -246,7 +256,7 @@ describe('handleToolMessage', () => {
 
       // Verify it's an MCP error result
       const response = decodeClientFrame(ctx.sentFrames[0])
-      expect(response.message.case).toBe('execClientMessage')
+      getExecClientMessage(response) // throws if not execClientMessage
     })
 
     it('rejects redirected native tool when target MCP tool is not enabled', () => {
@@ -273,13 +283,13 @@ describe('handleToolMessage', () => {
       expect(handled).toBe(true)
       expect(ctx.sentFrames.length).toBeGreaterThanOrEqual(1)
       const response = decodeClientFrame(ctx.sentFrames[0])
-      expect(response.message.case).toBe('execClientMessage')
-      expect(response.message.value.message.case).toBe('backgroundShellSpawnResult')
+      const execMsg = getExecClientMessage(response)
+      expect(execMsg.message.case).toBe('backgroundShellSpawnResult')
     })
 
     it('rejects writeShellStdin with error', () => {
       const ctx = makeCtx()
-      const args = create(WriteShellStdinArgsSchema, { toolCallId: 'tc-1' })
+      const args = create(WriteShellStdinArgsSchema, {})
       const msg = makeExecAgentMessage('writeShellStdinArgs', args)
 
       const handled = handleToolMessage(msg, ctx)
@@ -287,8 +297,8 @@ describe('handleToolMessage', () => {
       expect(handled).toBe(true)
       expect(ctx.sentFrames.length).toBeGreaterThanOrEqual(1)
       const response = decodeClientFrame(ctx.sentFrames[0])
-      expect(response.message.case).toBe('execClientMessage')
-      expect(response.message.value.message.case).toBe('writeShellStdinResult')
+      const execMsg2 = getExecClientMessage(response)
+      expect(execMsg2.message.case).toBe('writeShellStdinResult')
     })
 
     it('rejects diagnostics with empty result', () => {
@@ -301,8 +311,8 @@ describe('handleToolMessage', () => {
       expect(handled).toBe(true)
       expect(ctx.sentFrames.length).toBeGreaterThanOrEqual(1)
       const response = decodeClientFrame(ctx.sentFrames[0])
-      expect(response.message.case).toBe('execClientMessage')
-      expect(response.message.value.message.case).toBe('diagnosticsResult')
+      const execMsg3 = getExecClientMessage(response)
+      expect(execMsg3.message.case).toBe('diagnosticsResult')
     })
   })
 
