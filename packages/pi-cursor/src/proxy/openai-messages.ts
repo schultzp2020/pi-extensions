@@ -4,6 +4,12 @@
 export interface ContentPart {
   type: string
   text?: string
+  image_url?: { url: string; detail?: string }
+}
+
+export interface ImagePart {
+  url: string
+  detail?: string
 }
 
 export interface OpenAIToolCall {
@@ -33,12 +39,14 @@ export interface ToolResultInfo {
 export interface ParsedConversationTurn {
   userText: string
   assistantText: string
+  images: ImagePart[]
 }
 
 export interface ParsedMessages {
   systemPrompt: string
   turns: ParsedConversationTurn[]
   userText: string
+  images: ImagePart[]
   toolResults: ToolResultInfo[]
 }
 
@@ -62,6 +70,28 @@ export function textContent(content: string | ContentPart[] | null | undefined):
 }
 
 /**
+ * Extract image content parts from a message's content.
+ * Returns empty array for string or null content.
+ */
+export function extractImageParts(content: string | ContentPart[] | null): ImagePart[] {
+  if (content === null || typeof content === 'string') {
+    return []
+  }
+  return content
+    .filter(
+      (part): part is ContentPart & { image_url: { url: string; detail?: string } } =>
+        part.type === 'image_url' && typeof part.image_url?.url === 'string',
+    )
+    .map((part) => {
+      const result: ImagePart = { url: part.image_url.url }
+      if (part.image_url.detail !== undefined) {
+        result.detail = part.image_url.detail
+      }
+      return result
+    })
+}
+
+/**
  * Parse an array of OpenAI messages into structured internal representation.
  *
  * Extracts:
@@ -74,7 +104,6 @@ export function parseMessages(messages: OpenAIMessage[]): ParsedMessages {
   let systemPrompt = ''
   const turns: ParsedConversationTurn[] = []
   const toolResults: ToolResultInfo[] = []
-  let userText = ''
 
   // Build a map of tool_call_id → tool name from assistant messages
   const toolCallNames = new Map<string, string>()
@@ -87,7 +116,7 @@ export function parseMessages(messages: OpenAIMessage[]): ParsedMessages {
   }
 
   // Collect user messages for turn pairing
-  const userMessages: { index: number; text: string }[] = []
+  const userMessages: { index: number; text: string; images: ImagePart[] }[] = []
   const assistantMessages: { index: number; text: string }[] = []
 
   for (let i = 0; i < messages.length; i++) {
@@ -100,7 +129,7 @@ export function parseMessages(messages: OpenAIMessage[]): ParsedMessages {
         break
       }
       case 'user': {
-        userMessages.push({ index: i, text: textContent(msg.content) })
+        userMessages.push({ index: i, text: textContent(msg.content), images: extractImageParts(msg.content) })
         break
       }
       case 'assistant': {
@@ -122,9 +151,9 @@ export function parseMessages(messages: OpenAIMessage[]): ParsedMessages {
 
   // Pair user/assistant messages into turns.
   // The last user message becomes userText; earlier ones pair with assistants.
-  if (userMessages.length > 0) {
-    userText = userMessages.at(-1)?.text ?? ''
-  }
+  const lastUserMsg = userMessages.length > 0 ? userMessages.at(-1) : undefined
+  const userText = lastUserMsg?.text ?? ''
+  const images: ImagePart[] = lastUserMsg?.images ?? []
 
   // Build turns from sequential user→assistant pairs
   let userIdx = 0
@@ -137,6 +166,7 @@ export function parseMessages(messages: OpenAIMessage[]): ParsedMessages {
       turns.push({
         userText: user.text,
         assistantText: assistant.text,
+        images: user.images,
       })
       userIdx++
       assistantIdx++
@@ -145,7 +175,7 @@ export function parseMessages(messages: OpenAIMessage[]): ParsedMessages {
     }
   }
 
-  return { systemPrompt, turns, userText, toolResults }
+  return { systemPrompt, turns, userText, images, toolResults }
 }
 
 /**

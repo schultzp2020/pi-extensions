@@ -1,6 +1,6 @@
 # TP-005: Image content part bridging — Status
 
-**Current Step:** Step 0: Preflight
+**Current Step:** Step 1: Preserve image content parts
 **Status:** 🟡 In Progress
 **Last Updated:** 2026-05-04
 **Review Level:** 0
@@ -25,10 +25,10 @@
 
 ### Step 1: Preserve image content parts
 
-**Status:** ⬜ Not Started
+**Status:** ✅ Complete
 
-- [ ] Extend `ContentPart` type to include image URL data
-- [ ] Add image extraction function and carry image parts through `parseMessages()`
+- [x] Extend `ContentPart` type to include image URL data
+- [x] Add image extraction function and carry image parts through `parseMessages()`
 
 ---
 
