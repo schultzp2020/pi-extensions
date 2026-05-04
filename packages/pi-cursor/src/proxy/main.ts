@@ -192,15 +192,18 @@ const MAX_EFFECTIVE_PROMPT_BYTES = 100_000
  */
 export function foldTurnsIntoSystemPrompt(
   systemPrompt: string,
-  turns: { userText: string; assistantText: string }[],
+  turns: { userText: string; assistantText: string; isCompaction?: boolean }[],
 ): string {
   if (turns.length === 0) {
     return systemPrompt
   }
 
-  const contextParts = turns.map(
-    (t) => `User: ${t.userText}${t.assistantText ? `\nAssistant: ${t.assistantText}` : ''}`,
-  )
+  const contextParts = turns.map((t) => {
+    if (t.isCompaction) {
+      return `<context>\n${t.userText}\n</context>`
+    }
+    return `User: ${t.userText}${t.assistantText ? `\nAssistant: ${t.assistantText}` : ''}`
+  })
 
   // Try full fold first
   const fullFold = `${systemPrompt}\n\nPrevious conversation context:\n${contextParts.join('\n\n')}`
@@ -208,29 +211,55 @@ export function foldTurnsIntoSystemPrompt(
     return fullFold
   }
 
-  // Truncate oldest turns until under the cap
+  // Truncate oldest turns until under the cap.
+  // Compaction/context-summary turns are prioritized — they are reserved first
+  // so that pre-compaction context survives truncation.  Real conversation turns
+  // fill the remaining budget newest-first.
   console.error(
     `[proxy] Folded system prompt exceeds ${String(MAX_EFFECTIVE_PROMPT_BYTES)} bytes — truncating oldest turns`,
   )
-  const kept: string[] = []
   const prefix = `${systemPrompt}\n\nPrevious conversation context (oldest turns truncated):\n`
   let budget = MAX_EFFECTIVE_PROMPT_BYTES - new TextEncoder().encode(prefix).byteLength
 
-  // Walk from newest to oldest, keeping what fits
-  for (let i = contextParts.length - 1; i >= 0; i--) {
-    const partBytes = new TextEncoder().encode(contextParts[i]).byteLength + 2 // +2 for '\n\n' separator
+  // Partition into compaction and regular indices
+  const compactionIndices: number[] = []
+  const regularIndices: number[] = []
+  for (let i = 0; i < turns.length; i++) {
+    if (turns[i].isCompaction) {
+      compactionIndices.push(i)
+    } else {
+      regularIndices.push(i)
+    }
+  }
+
+  // Reserve budget for compaction turns first (in original order)
+  const keptIndices = new Set<number>()
+  for (const idx of compactionIndices) {
+    const partBytes = new TextEncoder().encode(contextParts[idx]).byteLength + 2
     if (partBytes > budget) {
       break
     }
     budget -= partBytes
-    kept.unshift(contextParts[i])
+    keptIndices.add(idx)
   }
 
-  if (kept.length === 0) {
-    // Even one turn doesn't fit — just return the system prompt
+  // Fill remaining budget with regular turns, newest first
+  for (let i = regularIndices.length - 1; i >= 0; i--) {
+    const idx = regularIndices[i]
+    const partBytes = new TextEncoder().encode(contextParts[idx]).byteLength + 2
+    if (partBytes > budget) {
+      break
+    }
+    budget -= partBytes
+    keptIndices.add(idx)
+  }
+
+  if (keptIndices.size === 0) {
     return systemPrompt
   }
 
+  // Reassemble in original order
+  const kept = [...keptIndices].sort((a, b) => a - b).map((i) => contextParts[i])
   return `${prefix}${kept.join('\n\n')}`
 }
 
@@ -238,7 +267,7 @@ function buildCursorRequest(
   modelId: string,
   systemPrompt: string,
   userText: string,
-  turns: { userText: string; assistantText: string }[],
+  turns: { userText: string; assistantText: string; isCompaction?: boolean }[],
   conversationId: string,
   checkpoint: Uint8Array | null,
   blobStore: Map<string, Uint8Array>,
