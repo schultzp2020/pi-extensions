@@ -1,6 +1,6 @@
 # TP-011: Structured debug logging and timeline — Status
 
-**Current Step:** Step 4: Testing & Verification
+**Current Step:** Step 5: Documentation & Delivery
 **Status:** 🟡 In Progress
 **Last Updated:** 2026-05-04
 **Review Level:** 0
@@ -55,18 +55,18 @@
 
 ### Step 4: Testing & Verification
 
-**Status:** 🟨 In Progress
+**Status:** ✅ Complete
 
-- [ ] FULL test suite passing
-- [ ] All failures fixed
-- [ ] Build passes
-- [ ] Manual smoke test with debug logging enabled
+- [x] FULL test suite passing (9 files, 94 tests)
+- [x] All failures fixed (none needed)
+- [x] Build passes
+- [x] Manual smoke test with debug logging enabled (JSONL output verified, timeline script works, no-op when disabled)
 
 ---
 
 ### Step 5: Documentation & Delivery
 
-**Status:** ⬜ Not Started
+**Status:** 🟨 In Progress
 
 - [ ] "Must Update" docs modified
 - [ ] "Check If Affected" docs reviewed
