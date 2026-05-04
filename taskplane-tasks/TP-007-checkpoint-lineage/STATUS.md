@@ -1,11 +1,11 @@
 # TP-007: Checkpoint lineage for fork and compaction safety — Status
 
-**Current Step:** Not Started
-**Status:** 🔵 Ready for Execution
+**Current Step:** Step 0: Preflight
+**Status:** 🟡 In Progress
 **Last Updated:** 2026-05-04
 **Review Level:** 1
 **Review Counter:** 0
-**Iteration:** 0
+**Iteration:** 2
 **Size:** M
 
 > **Hydration:** Checkboxes represent meaningful outcomes, not individual code
@@ -16,11 +16,11 @@
 
 ### Step 0: Preflight
 
-**Status:** ⬜ Not Started
+**Status:** ✅ Done
 
-- [ ] Required files exist with expected exports
-- [ ] TP-004 changes present (stable session identity)
-- [ ] Tests pass before changes
+- [x] Required files exist with expected exports
+- [x] TP-004 changes present (stable session identity)
+- [x] Tests pass before changes
 
 ---
 
@@ -81,9 +81,13 @@
 
 ## Execution Log
 
-| Timestamp  | Action      | Outcome                         |
-| ---------- | ----------- | ------------------------------- |
-| 2026-05-04 | Task staged | PROMPT.md and STATUS.md created |
+| Timestamp        | Action         | Outcome                                         |
+| ---------------- | -------------- | ----------------------------------------------- |
+| 2026-05-04       | Task staged    | PROMPT.md and STATUS.md created                 |
+| 2026-05-04 06:40 | Task started   | Runtime V2 lane-runner execution                |
+| 2026-05-04 06:40 | Step 0 started | Preflight                                       |
+| 2026-05-04 06:41 | Worker iter 1  | done in 10s, tools: 2                           |
+| 2026-05-04 06:41 | No progress    | Iteration 1: 0 new checkboxes (1/3 stall limit) |
 
 ---
 
