@@ -1,0 +1,6 @@
+{
+  "$schema": "https://raw.githubusercontent.com/fallow-rs/fallow/main/schema.json",
+  "ignorePatterns": ["**/proto/*_pb.ts"],
+  "ignoreDependencies": ["@bufbuild/protoc-gen-es"],
+  "dynamicallyLoaded": ["packages/pi-cursor/scripts/debug-log-timeline.mjs"]
+}

@@ -1,11 +1,11 @@
 # TP-014: Request Lifecycle Module — Status
 
-**Current Step:** Not Started
-**Status:** 🔵 Ready for Execution
+**Current Step:** Step 4: Documentation & Delivery
+**Status:** ✅ Complete
 **Last Updated:** 2026-05-04
 **Review Level:** 1
 **Review Counter:** 0
-**Iteration:** 0
+**Iteration:** 1
 **Size:** L
 
 > **Hydration:** Checkboxes represent meaningful outcomes, not individual code
@@ -16,58 +16,58 @@
 
 ### Step 0: Preflight
 
-**Status:** ⬜ Not Started
+**Status:** ✅ Complete
 
-- [ ] Map the full `handleChatCompletion` path in `main.ts` — what moves vs. what stays
-- [ ] Read `session-state.ts` interface (from TP-012)
-- [ ] Read `openai-stream.ts` streaming/non-streaming delegation
-- [ ] Read `request-builder.test.ts` existing coverage
-- [ ] Identify module-level state for Proxy Context
+- [x] Map the full `handleChatCompletion` path in `main.ts` — what moves vs. what stays
+- [x] Read `session-state.ts` interface (from TP-012)
+- [x] Read `openai-stream.ts` streaming/non-streaming delegation
+- [x] Read `request-builder.test.ts` existing coverage
+- [x] Identify module-level state for Proxy Context
 
 ---
 
 ### Step 1: Define Proxy Context and extract request-lifecycle.ts
 
-**Status:** ⬜ Not Started
+**Status:** ✅ Complete
 
-- [ ] Define `ProxyContext` type
-- [ ] Create `request-lifecycle.ts` with `handleChatCompletion` and all internal helpers moved from `main.ts`
-- [ ] Export `buildRunRequest` and `foldTurnsIntoSystemPrompt` for testing
-- [ ] Run targeted tests
+- [x] Define `ProxyContext` type
+- [x] Create `request-lifecycle.ts` with `handleChatCompletion` and all internal helpers moved from `main.ts`
+- [x] Export `buildRunRequest` and `foldTurnsIntoSystemPrompt` for testing
+- [x] Run targeted tests
 
 ---
 
 ### Step 2: Slim down main.ts and retarget tests
 
-**Status:** ⬜ Not Started
+**Status:** ✅ Complete
 
-- [ ] Slim `main.ts` to ~200 lines (startup, routing, model mgmt, Internal API)
-- [ ] Construct and pass `ProxyContext`
-- [ ] Retarget `request-builder.test.ts` imports
-- [ ] Create `request-lifecycle.test.ts` with retry, lineage, checkpoint, streaming tests
-- [ ] Run targeted tests
+- [x] Slim `main.ts` to ~200 lines (startup, routing, model mgmt, Internal API)
+- [x] Construct and pass `ProxyContext`
+- [x] Retarget `request-builder.test.ts` imports
+- [x] Create `request-lifecycle.test.ts` with retry, lineage, checkpoint, streaming tests
+- [x] Run targeted tests
 
 ---
 
 ### Step 3: Testing & Verification
 
-**Status:** ⬜ Not Started
+**Status:** ✅ Complete
 
-- [ ] FULL test suite passing
-- [ ] All failures fixed
-- [ ] Build passes
-- [ ] Verify `main.ts` ~200 lines with no request handling logic
-- [ ] Verify no imports from deleted modules
+- [x] FULL test suite passing (266 tests, 13 files)
+- [x] All failures fixed (none needed)
+- [x] Build passes
+- [x] Verify `main.ts` ~200 lines with no request handling logic (210 lines, handleChatCompletion only imported/delegated)
+- [x] Verify no imports from deleted modules (request-lifecycle.ts imports only from session-state.ts)
 
 ---
 
 ### Step 4: Documentation & Delivery
 
-**Status:** ⬜ Not Started
+**Status:** ✅ Complete
 
-- [ ] "Must Update" docs modified
-- [ ] "Check If Affected" docs reviewed
-- [ ] Discoveries logged
+- [x] "Must Update" docs modified (CONTEXT.md already has correct Request Lifecycle and Proxy Context definitions matching implementation)
+- [x] "Check If Affected" docs reviewed (ADRs 0001/0002/0006/0008 don't reference file paths — architectural contracts preserved: Proxy still standalone, retries still in Proxy, effort resolution preserved, lineage validation preserved)
+- [x] Discoveries logged (no unexpected discoveries)
 
 ---
 
@@ -87,9 +87,14 @@
 
 ## Execution Log
 
-| Timestamp  | Action      | Outcome                         |
-| ---------- | ----------- | ------------------------------- |
-| 2026-05-04 | Task staged | PROMPT.md and STATUS.md created |
+| Timestamp        | Action          | Outcome                                                                                                                                                                                                                                                                                                                                                                        |
+| ---------------- | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 2026-05-04       | Task staged     | PROMPT.md and STATUS.md created                                                                                                                                                                                                                                                                                                                                                |
+| 2026-05-04 19:31 | Task started    | Runtime V2 lane-runner execution                                                                                                                                                                                                                                                                                                                                               |
+| 2026-05-04 19:31 | Step 0 started  | Preflight                                                                                                                                                                                                                                                                                                                                                                      |
+| 2026-05-04 19:32 | Step 0 complete | Preflight: main.ts mapped - lines 82-831 move to request-lifecycle.ts; lines 832-952 (main function, startup, model mgmt) stay. Module-level state: cachedNormalizedSet, getNormalizedModelSet, invalidateNormalizedModels stay in main.ts. ProxyContext needs: accessToken getter, getNormalizedSet, convConfig, cfg (nativeToolsMode, maxMode, maxRetries), debug logger fns |
+| 2026-05-04 19:45 | Worker iter 1   | done in 835s, tools: 113                                                                                                                                                                                                                                                                                                                                                       |
+| 2026-05-04 19:45 | Task complete   | .DONE created                                                                                                                                                                                                                                                                                                                                                                  |
 
 ---
 

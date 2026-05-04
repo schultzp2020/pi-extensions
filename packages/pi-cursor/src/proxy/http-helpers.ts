@@ -27,3 +27,8 @@ export function jsonResponse(res: ServerResponse, status: number, body: unknown)
   res.writeHead(status, { 'Content-Type': 'application/json' })
   res.end(JSON.stringify(body))
 }
+
+/** Send an OpenAI-shaped error JSON response. */
+export function errorResponse(res: ServerResponse, status: number, message: string, code = 'server_error'): void {
+  jsonResponse(res, status, { error: { message, type: 'server_error', code } })
+}

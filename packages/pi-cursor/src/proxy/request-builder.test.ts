@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { foldTurnsIntoSystemPrompt } from './main.ts'
+import { foldTurnsIntoSystemPrompt } from './request-lifecycle.ts'
 
 describe('foldTurnsIntoSystemPrompt', () => {
   it('returns original system prompt when turns is empty', () => {
@@ -129,5 +129,22 @@ describe('foldTurnsIntoSystemPrompt', () => {
     expect(result).toContain('User: newest-regular')
     // Oldest regular turn should be dropped (budget exceeded)
     expect(result).not.toContain('oldest-regular')
+  })
+
+  it('skips oversized turns and keeps smaller ones that fit', () => {
+    // Three regular turns: oversized middle turn should be skipped,
+    // not cause remaining turns to be dropped.
+    const hugeText = 'x'.repeat(120_000) // exceeds 100KB cap on its own
+    const turns = [
+      { userText: 'oldest', assistantText: 'A1' },
+      { userText: hugeText, assistantText: 'A2' }, // oversized — skip
+      { userText: 'newest', assistantText: 'A3' },
+    ]
+    const result = foldTurnsIntoSystemPrompt('System', turns)
+    // Newest and oldest fit — both should be kept
+    expect(result).toContain('User: newest')
+    expect(result).toContain('User: oldest')
+    // Oversized turn should be dropped
+    expect(result).not.toContain('xxxx')
   })
 })
