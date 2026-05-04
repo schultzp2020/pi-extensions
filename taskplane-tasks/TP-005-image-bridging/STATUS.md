@@ -1,7 +1,7 @@
 # TP-005: Image content part bridging — Status
 
-**Current Step:** Step 2: Testing & Verification
-**Status:** 🟡 In Progress
+**Current Step:** Step 3: Documentation & Delivery
+**Status:** ✅ Complete
 **Last Updated:** 2026-05-04
 **Review Level:** 0
 **Review Counter:** 0
@@ -45,11 +45,11 @@
 
 ### Step 3: Documentation & Delivery
 
-**Status:** ⬜ Not Started
+**Status:** ✅ Complete
 
-- [ ] "Must Update" docs modified
-- [ ] "Check If Affected" docs reviewed
-- [ ] Discoveries logged
+- [x] "Must Update" docs modified
+- [x] "Check If Affected" docs reviewed (README.md — image support not yet user-visible, no change needed)
+- [x] Discoveries logged
 
 ---
 
@@ -62,8 +62,9 @@
 
 ## Discoveries
 
-| Discovery | Disposition | Location |
-| --------- | ----------- | -------- |
+| Discovery                                                   | Disposition                                                   | Location                                |
+| ----------------------------------------------------------- | ------------------------------------------------------------- | --------------------------------------- |
+| Proto file has no image message types — only model metadata | Out of scope — protobuf encoding handled in cursor-session.ts | packages/pi-cursor/proto/aiserver.proto |
 
 ---
 
