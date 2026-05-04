@@ -22,13 +22,9 @@ import { ValueSchema } from '@bufbuild/protobuf/wkt'
 
 import {
   AgentClientMessageSchema,
-  AgentConversationTurnStructureSchema,
   AgentRunRequestSchema,
-  AssistantMessageSchema,
   ConversationActionSchema,
   ConversationStateStructureSchema,
-  ConversationStepSchema,
-  ConversationTurnStructureSchema,
   McpToolDefinitionSchema,
   type McpToolDefinition,
   ModelDetailsSchema,
@@ -45,7 +41,7 @@ import {
   type ConversationConfig,
   type LineageMetadata,
   type StoredConversation,
-  discardCheckpoint,
+  resetConversation,
   evictStaleConversations,
   pruneBlobs,
 } from './conversation-state.ts'
@@ -181,6 +177,63 @@ function decodeCheckpointState(
   }
 }
 
+/**
+ * Maximum byte size for the effective system prompt after folding turns.
+ * Older turns are dropped (newest-first) when the combined size exceeds this.
+ */
+const MAX_EFFECTIVE_PROMPT_BYTES = 100_000
+
+/**
+ * Fold prior conversation turns into the system prompt so the LLM retains
+ * context even when no checkpoint is available (e.g. after compaction).
+ *
+ * If the combined size exceeds MAX_EFFECTIVE_PROMPT_BYTES, the oldest turns
+ * are dropped and a note is prepended indicating truncation.
+ */
+export function foldTurnsIntoSystemPrompt(
+  systemPrompt: string,
+  turns: { userText: string; assistantText: string }[],
+): string {
+  if (turns.length === 0) {
+    return systemPrompt
+  }
+
+  const contextParts = turns.map(
+    (t) => `User: ${t.userText}${t.assistantText ? `\nAssistant: ${t.assistantText}` : ''}`,
+  )
+
+  // Try full fold first
+  const fullFold = `${systemPrompt}\n\nPrevious conversation context:\n${contextParts.join('\n\n')}`
+  if (new TextEncoder().encode(fullFold).byteLength <= MAX_EFFECTIVE_PROMPT_BYTES) {
+    return fullFold
+  }
+
+  // Truncate oldest turns until under the cap
+  console.error(
+    `[proxy] Folded system prompt exceeds ${String(MAX_EFFECTIVE_PROMPT_BYTES)} bytes — truncating oldest turns`,
+  )
+  const kept: string[] = []
+  const prefix = `${systemPrompt}\n\nPrevious conversation context (oldest turns truncated):\n`
+  let budget = MAX_EFFECTIVE_PROMPT_BYTES - new TextEncoder().encode(prefix).byteLength
+
+  // Walk from newest to oldest, keeping what fits
+  for (let i = contextParts.length - 1; i >= 0; i--) {
+    const partBytes = new TextEncoder().encode(contextParts[i]).byteLength + 2 // +2 for '\n\n' separator
+    if (partBytes > budget) {
+      break
+    }
+    budget -= partBytes
+    kept.unshift(contextParts[i])
+  }
+
+  if (kept.length === 0) {
+    // Even one turn doesn't fit — just return the system prompt
+    return systemPrompt
+  }
+
+  return `${prefix}${kept.join('\n\n')}`
+}
+
 function buildCursorRequest(
   modelId: string,
   systemPrompt: string,
@@ -196,46 +249,28 @@ function buildCursorRequest(
   const decodedCheckpoint = checkpoint ? decodeCheckpointState(checkpoint) : null
 
   let conversationState: ReturnType<typeof create<typeof ConversationStateStructureSchema>>
+  let effectiveSystemPrompt = systemPrompt
+
   if (decodedCheckpoint) {
     conversationState = decodedCheckpoint
   } else {
-    // Build turns from scratch
-    const turnBytes: Uint8Array[] = []
-    for (const turn of turns) {
-      const userMsg = create(UserMessageSchema, {
-        text: turn.userText,
-        messageId: randomUUID(),
-      })
-      const userMsgBytes = toBinary(UserMessageSchema, userMsg)
-
-      const stepBytes: Uint8Array[] = []
-      if (turn.assistantText) {
-        const step = create(ConversationStepSchema, {
-          message: {
-            case: 'assistantMessage',
-            value: create(AssistantMessageSchema, { text: turn.assistantText }),
-          },
-        })
-        stepBytes.push(toBinary(ConversationStepSchema, step))
-      }
-
-      const agentTurn = create(AgentConversationTurnStructureSchema, {
-        userMessage: userMsgBytes,
-        steps: stepBytes,
-      })
-      const turnStructure = create(ConversationTurnStructureSchema, {
-        turn: { case: 'agentConversationTurn', value: agentTurn },
-      })
-      turnBytes.push(toBinary(ConversationTurnStructureSchema, turnStructure))
+    // No checkpoint — start a fresh conversation with empty turns.
+    //
+    // Cursor's server treats the `turns` field as blob references (not inline
+    // data).  Putting serialized turn bytes there causes "Blob not found"
+    // errors.  Instead, fold any prior turns into the system prompt so the
+    // LLM still sees the conversation context.
+    if (turns.length > 0) {
+      effectiveSystemPrompt = foldTurnsIntoSystemPrompt(systemPrompt, turns)
     }
-    conversationState = create(ConversationStateStructureSchema, { turns: turnBytes })
+    conversationState = create(ConversationStateStructureSchema, { turns: [] })
   }
 
   const userMessage = create(UserMessageSchema, {
     text: userText,
     messageId: randomUUID(),
   })
-  const requestContext = buildRequestContext(mcpTools, systemPrompt || undefined, nativeToolsMode)
+  const requestContext = buildRequestContext(mcpTools, effectiveSystemPrompt || undefined, nativeToolsMode)
   const action = create(ConversationActionSchema, {
     action: {
       case: 'userMessageAction',
@@ -403,7 +438,7 @@ async function handleChatCompletion(
         const reader = readableStream.getReader() as ReadableStreamDefaultReader<Uint8Array>
         void pipeReaderToResponse(reader, res)
       } else {
-        const response = await collectNonStreamingResponse(existingSession, modelId)
+        const { response } = await collectNonStreamingResponse(existingSession, modelId)
         // Update lineage after successful tool-result turn completion
         const stored = getConversationState(convKey)
         if (stored && response.ok) {
@@ -429,7 +464,7 @@ async function handleChatCompletion(
 
   // ── Lineage validation ──
   // Compute incoming lineage from completed turns and validate against stored lineage.
-  // On mismatch (fork, compaction, branch switch), discard the stale checkpoint.
+  // On mismatch (fork, compaction, branch switch), reset the conversation.
   const incomingLineage: LineageMetadata = {
     turnCount: turns.length,
     fingerprint: computeLineageFingerprint(turns),
@@ -440,8 +475,7 @@ async function handleChatCompletion(
       incomingTurnCount: incomingLineage.turnCount,
       blobCount: stored.blobStore.size,
     })
-    discardCheckpoint(stored)
-    // blobStore is intentionally preserved — see discardCheckpoint() docs.
+    resetConversation(stored)
   }
 
   const effectiveUserText = userText || (toolResults.length > 0 ? toolResults.map((r) => r.content).join('\n') : '')
@@ -535,20 +569,41 @@ async function handleChatCompletion(
     // ── Non-streaming with retry ──
     let nonStreamAttempt = 0
     let currentNonStreamSession = session
-    let response: Response
+    let currentNonStreamOptions = sessionOptions
+    let result = await collectNonStreamingResponse(currentNonStreamSession, modelId)
     let nonStreamCloseHandler: (() => void) | null = null
-    for (;;) {
-      response = await collectNonStreamingResponse(currentNonStreamSession, modelId)
-      if (response.ok || nonStreamAttempt >= cfg.maxRetries) {
-        break
-      }
+    while (!result.response.ok && nonStreamAttempt < cfg.maxRetries) {
       nonStreamAttempt++
-      const hint: RetryHint = response.status === 429 ? 'resource_exhausted' : 'timeout'
+      const hint: RetryHint = result.retryHint ?? (result.response.status === 429 ? 'resource_exhausted' : 'timeout')
       const delayMs = retryDelayMs(hint)
       logRetry(sessionId, requestId, { attempt: nonStreamAttempt, hint, delayMs })
-      console.error(`[proxy] Non-streaming retry ${nonStreamAttempt}/${cfg.maxRetries} (status ${response.status})`)
+      console.error(
+        `[proxy] Non-streaming retry ${nonStreamAttempt}/${cfg.maxRetries} (status ${result.response.status})`,
+      )
       await sleep(delayMs)
-      currentNonStreamSession = new CursorSession(sessionOptions)
+
+      // On blob_not_found: reset conversation and rebuild request (mirrors streaming path)
+      if (hint === 'blob_not_found') {
+        resetConversation(stored)
+        currentNonStreamOptions = {
+          ...currentNonStreamOptions,
+          requestBytes: buildCursorRequest(
+            modelId,
+            systemPrompt,
+            effectiveUserText,
+            turns,
+            stored.conversationId,
+            null,
+            stored.blobStore,
+            mcpTools,
+            cfg.nativeToolsMode,
+          ).requestBytes,
+        }
+        persistConversation(convKey, stored, convConfig)
+        console.error('[proxy] blob_not_found: rebuilt non-streaming request with new conversation ID for retry')
+      }
+
+      currentNonStreamSession = new CursorSession(currentNonStreamOptions)
       // Remove previous close handler to prevent listener accumulation
       if (nonStreamCloseHandler) {
         req.removeListener('close', nonStreamCloseHandler)
@@ -560,7 +615,9 @@ async function handleChatCompletion(
         }
       }
       req.on('close', nonStreamCloseHandler)
+      result = await collectNonStreamingResponse(currentNonStreamSession, modelId)
     }
+    const { response } = result
     // Update lineage after successful non-streaming turn completion
     if (response.ok) {
       const completedTurns = [...turns, { userText: effectiveUserText }]
@@ -638,13 +695,14 @@ async function pumpAndFinalize(
         )
         await sleep(delayMs)
 
-        // On blob_not_found: discard the stale checkpoint and rebuild
-        // requestBytes so the retry sends a fresh conversation to Cursor.
-        // The blobStore is preserved — old blobs may still be needed.
+        // On blob_not_found: reset conversation (new ID, clear blobs) and
+        // rebuild requestBytes so the retry starts a fresh Cursor conversation.
+        // Called unconditionally (not guarded by stored?.checkpoint) because
+        // the new conversation ID is needed regardless of checkpoint state.
         if (result.retryHint === 'blob_not_found') {
           const stored = getConversationState(convKey)
-          if (stored?.checkpoint) {
-            discardCheckpoint(stored)
+          if (stored) {
+            resetConversation(stored)
             if (retryCtx.rebuildWithoutCheckpoint) {
               retryCtx.sessionOptions = {
                 ...retryCtx.sessionOptions,
@@ -652,7 +710,7 @@ async function pumpAndFinalize(
               }
             }
             persistConversation(convKey, stored, convConfig)
-            console.error('[proxy] blob_not_found: rebuilt request without checkpoint for retry')
+            console.error('[proxy] blob_not_found: rebuilt request with new conversation ID for retry')
           }
         }
 

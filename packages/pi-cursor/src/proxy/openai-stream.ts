@@ -330,7 +330,15 @@ function nonStreamingErrorResponse(message: string, code = 'non_streaming_error'
  * Collect all events from a CursorSession and return a complete
  * non-streaming chat.completion response (for `stream: false` requests).
  */
-export async function collectNonStreamingResponse(session: CursorSession, modelId: string): Promise<Response> {
+export interface NonStreamingResult {
+  response: Response
+  retryHint?: RetryHint
+}
+
+export async function collectNonStreamingResponse(
+  session: CursorSession,
+  modelId: string,
+): Promise<NonStreamingResult> {
   const tagFilter = createThinkingTagFilter()
   let text = ''
   let usage: OpenAIUsage | null = null
@@ -349,16 +357,21 @@ export async function collectNonStreamingResponse(session: CursorSession, modelI
       usage = pickBetterUsage(usage, buildUsage(event.outputTokens, event.totalTokens))
     } else if (event.type === 'toolCall' || event.type === 'batchReady') {
       finalizeSession()
-      return nonStreamingErrorResponse(
-        'Unexpected tool activity while collecting a non-streaming response',
-        'unexpected_tool_activity',
-      )
+      return {
+        response: nonStreamingErrorResponse(
+          'Unexpected tool activity while collecting a non-streaming response',
+          'unexpected_tool_activity',
+        ),
+      }
     } else if (event.type === 'done') {
       if (event.retryHint || event.error) {
         finalizeSession()
-        return nonStreamingErrorResponse(
-          event.error ?? 'Cursor session ended before a non-streaming response was complete',
-        )
+        return {
+          response: nonStreamingErrorResponse(
+            event.error ?? 'Cursor session ended before a non-streaming response was complete',
+          ),
+          retryHint: event.retryHint,
+        }
       }
       text += tagFilter.flush().content
       break
@@ -367,15 +380,17 @@ export async function collectNonStreamingResponse(session: CursorSession, modelI
 
   finalizeSession()
 
-  return new Response(
-    JSON.stringify({
-      id: `chatcmpl-${generateCompletionId()}`,
-      object: 'chat.completion',
-      created: Math.floor(Date.now() / 1000),
-      model: modelId,
-      choices: [{ index: 0, message: { role: 'assistant', content: text }, finish_reason: 'stop' }],
-      ...(usage ? { usage } : {}),
-    }),
-    { headers: { 'Content-Type': 'application/json' } },
-  )
+  return {
+    response: new Response(
+      JSON.stringify({
+        id: `chatcmpl-${generateCompletionId()}`,
+        object: 'chat.completion',
+        created: Math.floor(Date.now() / 1000),
+        model: modelId,
+        choices: [{ index: 0, message: { role: 'assistant', content: text }, finish_reason: 'stop' }],
+        ...(usage ? { usage } : {}),
+      }),
+      { headers: { 'Content-Type': 'application/json' } },
+    ),
+  }
 }
