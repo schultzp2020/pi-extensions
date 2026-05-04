@@ -6,8 +6,6 @@
 import { createHash } from 'node:crypto'
 
 import type { CursorSession } from './cursor-session.ts'
-import type { OpenAIMessage } from './openai-messages.ts'
-import { textContent } from './openai-messages.ts'
 
 interface ActiveSession {
   session: CursorSession
@@ -17,22 +15,12 @@ interface ActiveSession {
 const activeSessions = new Map<string, ActiveSession>()
 const SESSION_TTL_MS = 30 * 60 * 1000 // 30 minutes
 
-export function deriveSessionKey(sessionId: string, messages: OpenAIMessage[]): string {
-  const firstUserMsg = messages.find((m) => m.role === 'user')
-  const firstUserText = firstUserMsg ? textContent(firstUserMsg.content) : ''
-  return createHash('sha256')
-    .update(`session:${sessionId}:${firstUserText.slice(0, 200)}`)
-    .digest('hex')
-    .slice(0, 16)
+export function deriveSessionKey(sessionId: string): string {
+  return createHash('sha256').update(`session:${sessionId}`).digest('hex').slice(0, 16)
 }
 
-export function deriveConversationKey(sessionId: string, messages: OpenAIMessage[]): string {
-  const firstUserMsg = messages.find((m) => m.role === 'user')
-  const firstUserText = firstUserMsg ? textContent(firstUserMsg.content) : ''
-  return createHash('sha256')
-    .update(`conv:${sessionId}:${firstUserText.slice(0, 200)}`)
-    .digest('hex')
-    .slice(0, 16)
+export function deriveConversationKey(sessionId: string): string {
+  return createHash('sha256').update(`conv:${sessionId}`).digest('hex').slice(0, 16)
 }
 
 export function getActiveSession(key: string): CursorSession | undefined {
@@ -63,6 +51,19 @@ export function evictStaleSessions(): void {
       entry.session.close()
       activeSessions.delete(key)
     }
+  }
+}
+
+/**
+ * Close all active sessions for a given session ID and evict their state.
+ * Derives the session key from the ID and removes the matching entry.
+ */
+export function cleanupSessionById(sessionId: string): void {
+  const key = deriveSessionKey(sessionId)
+  const entry = activeSessions.get(key)
+  if (entry) {
+    entry.session.cancel()
+    activeSessions.delete(key)
   }
 }
 

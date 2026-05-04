@@ -42,7 +42,9 @@ Select **Cursor** from the provider dropdown, then your browser opens to Cursor'
 /model
 ```
 
-Pick any Cursor model from the list. Models that support max mode appear as both `model-name` and `model-name-max` variants.
+Pick any Cursor model from the list. By default (`modelMappings=normalized`), effort-level variants are collapsed — e.g. `gpt-5.4-low`, `gpt-5.4-medium`, `gpt-5.4-high` become a single `gpt-5.4` entry, with Pi's reasoning-effort setting controlling the variant sent to Cursor.
+
+Set `modelMappings` to `raw` (or `PI_CURSOR_RAW_MODELS=1`) to see all raw Cursor model variants.
 
 ### 3. Chat
 
@@ -53,6 +55,70 @@ Read package.json and summarize the dependencies.
 ```
 
 Tool calls, multi-turn conversations, and reasoning all work.
+
+## Settings
+
+Run `/cursor` in Pi to open the settings menu. Each setting shows its current value and an `[ENV]` tag when overridden by an environment variable (read-only in that case).
+
+| Setting           | Values                         | Default      | Env Override                  |
+| ----------------- | ------------------------------ | ------------ | ----------------------------- |
+| Native Tools Mode | `reject`, `redirect`, `native` | `reject`     | `PI_CURSOR_NATIVE_TOOLS_MODE` |
+| Max Mode          | `on`, `off`                    | `off`        | `PI_CURSOR_MAX_MODE`          |
+| Model Mappings    | `normalized`, `raw`            | `normalized` | `PI_CURSOR_RAW_MODELS`        |
+| Max Retries       | `0`, `1`, `2`, `3`, `5`        | `2`          | `PI_CURSOR_MAX_RETRIES`       |
+
+Settings persist to `~/.pi/agent/cursor-config.json`. Changing **Model Mappings** triggers provider re-registration to update the model picker. **Max Mode** is hidden when Model Mappings is set to `raw`.
+
+## Native Tools Mode
+
+Controls how Cursor's built-in tool calls (read, write, shell, grep, ls, delete, fetch) are handled:
+
+| Mode               | Behavior                                                                               |
+| ------------------ | -------------------------------------------------------------------------------------- |
+| `reject` (default) | All native Cursor tool calls are rejected. Only Pi's MCP tools succeed.                |
+| `redirect`         | Overlapping native tools are transparently redirected through Pi equivalents.          |
+| `native`           | Overlapping tools execute locally within the proxy, sandboxed to the nearest git root. |
+
+Configure via the `/cursor` command or environment variable:
+
+```bash
+export PI_CURSOR_NATIVE_TOOLS_MODE=native  # or reject, redirect
+```
+
+Or set it in `~/.pi/agent/cursor-config.json`:
+
+```json
+{
+  "nativeToolsMode": "native"
+}
+```
+
+In `native` mode, filesystem operations are sandboxed to the **Allowed Root** — the nearest git root of the session's working directory. Paths outside this boundary are rejected.
+
+## Debug Logging
+
+Enable structured debug logging to diagnose proxy behavior:
+
+```bash
+export PI_CURSOR_PROVIDER_DEBUG=1
+```
+
+This writes JSONL entries to `~/.pi/agent/cursor-debug.jsonl`. Override the path:
+
+```bash
+export PI_CURSOR_PROVIDER_EXTENSION_DEBUG_FILE=/path/to/debug.jsonl
+```
+
+View a human-readable timeline:
+
+```bash
+node packages/pi-cursor/scripts/debug-log-timeline.mjs ~/.pi/agent/cursor-debug.jsonl
+
+# Filter by session or time range
+node packages/pi-cursor/scripts/debug-log-timeline.mjs --session <id> --since 2026-05-04T00:00:00Z
+```
+
+When disabled (default), all debug functions are zero-cost no-ops.
 
 ## Architecture
 

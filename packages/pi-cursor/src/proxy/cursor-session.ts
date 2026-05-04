@@ -12,7 +12,9 @@ import { create, fromBinary, toBinary } from '@bufbuild/protobuf'
 import {
   AgentClientMessageSchema,
   AgentServerMessageSchema,
+  CancelActionSchema,
   ClientHeartbeatSchema,
+  ConversationActionSchema,
   DeleteResultSchema,
   DeleteSuccessSchema,
   ExecClientControlMessageSchema,
@@ -32,6 +34,7 @@ import {
   WriteResultSchema,
   WriteSuccessSchema,
 } from '../proto/agent_pb.ts'
+import type { NativeToolsMode } from './config.ts'
 import {
   createConnectFrameParser,
   decodeConnectUnaryBody,
@@ -67,6 +70,8 @@ export interface SessionOptions {
   blobStore: Map<string, Uint8Array>
   mcpTools: McpToolDefinition[]
   cloudRule?: string
+  nativeToolsMode: NativeToolsMode
+  allowedRoot?: string
   convKey: string
   onCheckpoint?: (bytes: Uint8Array, blobStore: Map<string, Uint8Array>) => void
 }
@@ -343,6 +348,7 @@ export class CursorSession {
    * Send tool results back to Cursor for the pending execs.
    * After results are sent, the session resumes streaming.
    */
+  // fallow-ignore-next-line unused-class-member
   sendToolResults(results: { toolCallId: string; content: string; isError?: boolean }[]): void {
     const remaining: PendingExec[] = []
 
@@ -394,6 +400,30 @@ export class CursorSession {
       this.clearInactivityTimer()
       this.closeTransport()
     }
+  }
+
+  /**
+   * Send CancelAction protobuf to Cursor and close the session.
+   * Does NOT commit the pending checkpoint — preserves the previous committed checkpoint.
+   */
+  cancel(): void {
+    if (!this._alive) {
+      return
+    }
+    try {
+      const cancelAction = create(ConversationActionSchema, {
+        action: { case: 'cancelAction', value: create(CancelActionSchema, {}) },
+      })
+      const cancelMsg = create(AgentClientMessageSchema, {
+        message: { case: 'conversationAction', value: cancelAction },
+      })
+      this.h2Stream.write(frameConnectMessage(toBinary(AgentClientMessageSchema, cancelMsg)))
+    } catch {
+      // Best-effort cancel — transport may already be closed
+    }
+    // Suppress the onCheckpoint callback so no pending checkpoint is committed
+    this.options.onCheckpoint = undefined
+    this.close()
   }
 
   // ── H2 connection setup ──
@@ -478,6 +508,8 @@ export class CursorSession {
         mcpTools: this.options.mcpTools,
         enabledToolNames: this.enabledToolNames,
         cloudRule: this.options.cloudRule,
+        nativeToolsMode: this.options.nativeToolsMode,
+        allowedRoot: this.options.allowedRoot,
         sendFrame: (data) => this.write(data),
         state: this.streamState,
         onText: (text, isThinking) => {

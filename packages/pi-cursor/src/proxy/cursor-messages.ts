@@ -56,8 +56,9 @@ import {
   WriteShellStdinErrorSchema,
   WriteShellStdinResultSchema,
 } from '../proto/agent_pb.ts'
+import type { NativeToolsMode } from './config.ts'
 import { frameConnectMessage } from './connect-protocol.ts'
-import { classifyExecMessage, fixMcpArgNames, stripMcpToolPrefix } from './native-tools.ts'
+import { classifyExecMessage, executeNativeLocally, fixMcpArgNames, stripMcpToolPrefix } from './native-tools.ts'
 import { buildRequestContext } from './request-context.ts'
 
 export interface StreamState {
@@ -413,17 +414,85 @@ function handleKvMessage(
   }
 }
 
+const REJECT_OVERLAPPING_REASON = 'Tool not available in this environment. Use the MCP tools provided instead.'
+
+/** Reject an overlapping native tool exec with the appropriate result type. */
+function rejectOverlappingExec(execMsg: ExecServerMessage, sendFrame: (data: Buffer) => void): void {
+  const execCase = execMsg.message.case
+  if (execCase === 'shellArgs' || execCase === 'shellStreamArgs') {
+    const args = execMsg.message.value
+    const result = create(ShellResultSchema, {
+      result: {
+        case: 'rejected',
+        value: create(ShellRejectedSchema, {
+          command: args.command || '',
+          workingDirectory: args.workingDirectory || '',
+          reason: REJECT_OVERLAPPING_REASON,
+          isReadonly: false,
+        }),
+      },
+    })
+    sendExecResult(execMsg, 'shellResult', result, sendFrame)
+    return
+  }
+  sendMcpResult(execMsg, REJECT_OVERLAPPING_REASON, sendFrame, true)
+}
+
+/** Dispatch a redirected native tool call to MCP, checking tool enablement first. */
+function dispatchRedirect(
+  execMsg: ExecServerMessage,
+  redirect: NativeRedirectInfo,
+  enabledToolNames: Set<string>,
+  sendFrame: (data: Buffer) => void,
+  onMcpExec: (exec: PendingExec) => void,
+): void {
+  const execCase = execMsg.message.case
+  if (!enabledToolNames.has(redirect.toolName)) {
+    const rejectReason = toolNotEnabledMessage(redirect.toolName)
+    if (execCase === 'shellArgs' || execCase === 'shellStreamArgs') {
+      const args = execMsg.message.value
+      const result = create(ShellResultSchema, {
+        result: {
+          case: 'rejected',
+          value: create(ShellRejectedSchema, {
+            command: args.command || '',
+            workingDirectory: args.workingDirectory || '',
+            reason: rejectReason,
+            isReadonly: false,
+          }),
+        },
+      })
+      sendExecResult(execMsg, 'shellResult', result, sendFrame)
+      return
+    }
+    sendMcpResult(execMsg, rejectReason, sendFrame, true)
+    return
+  }
+
+  onMcpExec({
+    execId: execMsg.execId,
+    execMsgId: execMsg.id,
+    toolCallId: redirect.toolCallId,
+    toolName: redirect.toolName,
+    decodedArgs: redirect.decodedArgs,
+    nativeResultType: redirect.nativeResultType,
+    nativeArgs: redirect.nativeArgs,
+  })
+}
+
 export interface ExecContext {
   mcpTools: McpToolDefinition[]
   enabledToolNames: Set<string>
   cloudRule: string | undefined
+  nativeToolsMode: NativeToolsMode
+  allowedRoot?: string
   sendFrame: (data: Buffer) => void
   onMcpExec: (exec: PendingExec) => void
   state?: StreamState
 }
 
 export function handleExecMessage(execMsg: ExecServerMessage, ctx: ExecContext): void {
-  const { mcpTools, enabledToolNames, cloudRule, sendFrame, onMcpExec, state } = ctx
+  const { mcpTools, enabledToolNames, cloudRule, nativeToolsMode, sendFrame, onMcpExec, state } = ctx
   const execCase = execMsg.message.case
 
   // MCP tool calls — decode args and pass through
@@ -451,7 +520,7 @@ export function handleExecMessage(execMsg: ExecServerMessage, ctx: ExecContext):
 
   // RequestContext — respond inline with MCP tools and cloud rule
   if (execCase === 'requestContextArgs') {
-    const requestContext = buildRequestContext(mcpTools, cloudRule)
+    const requestContext = buildRequestContext(mcpTools, cloudRule, nativeToolsMode)
     const result = create(RequestContextResultSchema, {
       result: {
         case: 'success',
@@ -462,47 +531,42 @@ export function handleExecMessage(execMsg: ExecServerMessage, ctx: ExecContext):
     return
   }
 
-  // --- Redirect supported native tools through Pi MCP ---
+  // --- Route overlapping native tools based on nativeToolsMode ---
   const classification = classifyExecMessage(execCase ?? '')
 
   if (classification === 'redirect') {
     if (state) {
       state.totalExecCount++
     }
+
+    // reject mode: reject all overlapping tools with explicit error
+    if (nativeToolsMode === 'reject') {
+      rejectOverlappingExec(execMsg, sendFrame)
+      return
+    }
+
+    // native mode: dispatch to proxy-local execution
+    if (nativeToolsMode === 'native' && ctx.allowedRoot) {
+      const { allowedRoot } = ctx
+      executeNativeLocally(execMsg, allowedRoot)
+        .then((nativeResult) => {
+          sendExecResult(execMsg, nativeResult.resultType, nativeResult.result, sendFrame)
+        })
+        .catch((error) => {
+          sendMcpResult(
+            execMsg,
+            `Native execution failed: ${error instanceof Error ? error.message : String(error)}`,
+            sendFrame,
+            true,
+          )
+        })
+      return
+    }
+
+    // redirect mode (default): redirect overlapping tools to MCP
     const nativeRedirect = nativeToMcpRedirect(execMsg)
     if (nativeRedirect) {
-      if (!enabledToolNames.has(nativeRedirect.toolName)) {
-        const rejectReason = toolNotEnabledMessage(nativeRedirect.toolName)
-        if (execCase === 'shellArgs' || execCase === 'shellStreamArgs') {
-          const args = execMsg.message.value
-          const result = create(ShellResultSchema, {
-            result: {
-              case: 'rejected',
-              value: create(ShellRejectedSchema, {
-                command: args.command || '',
-                workingDirectory: args.workingDirectory || '',
-                reason: rejectReason,
-                isReadonly: false,
-              }),
-            },
-          })
-          sendExecResult(execMsg, 'shellResult', result, sendFrame)
-          return
-        }
-
-        sendMcpResult(execMsg, rejectReason, sendFrame, true)
-        return
-      }
-
-      onMcpExec({
-        execId: execMsg.execId,
-        execMsgId: execMsg.id,
-        toolCallId: nativeRedirect.toolCallId,
-        toolName: nativeRedirect.toolName,
-        decodedArgs: nativeRedirect.decodedArgs,
-        nativeResultType: nativeRedirect.nativeResultType,
-        nativeArgs: nativeRedirect.nativeArgs,
-      })
+      dispatchRedirect(execMsg, nativeRedirect, enabledToolNames, sendFrame, onMcpExec)
       return
     }
   }
@@ -639,6 +703,8 @@ export interface MessageProcessorContext {
   mcpTools: McpToolDefinition[]
   enabledToolNames: Set<string>
   cloudRule?: string
+  nativeToolsMode: NativeToolsMode
+  allowedRoot?: string
   sendFrame: (data: Buffer) => void
   state: StreamState
   onText: (text: string, isThinking: boolean) => void
@@ -666,6 +732,8 @@ export function processServerMessage(msg: AgentServerMessage, ctx: MessageProces
       mcpTools: ctx.mcpTools,
       enabledToolNames: ctx.enabledToolNames,
       cloudRule: ctx.cloudRule,
+      nativeToolsMode: ctx.nativeToolsMode,
+      allowedRoot: ctx.allowedRoot,
       sendFrame: ctx.sendFrame,
       onMcpExec: ctx.onMcpExec,
       state: ctx.state,

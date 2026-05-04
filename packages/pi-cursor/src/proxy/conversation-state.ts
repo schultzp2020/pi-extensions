@@ -1,6 +1,8 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+
+import type { ParsedConversationTurn } from './openai-messages.ts'
 
 export interface StoredConversation {
   conversationId: string
@@ -9,6 +11,13 @@ export interface StoredConversation {
   lastAccessMs: number
   checkpointHistory: Map<string, Uint8Array>
   checkpointArchive: Map<string, Uint8Array>
+  lineageTurnCount: number
+  lineageFingerprint: string | null
+}
+
+export interface LineageMetadata {
+  turnCount: number
+  fingerprint: string
 }
 
 export interface ConversationConfig {
@@ -21,6 +30,8 @@ interface DiskFormat {
   blobStore: Record<string, string>
   checkpointHistory: Record<string, string>
   checkpointArchive: Record<string, string>
+  lineageTurnCount?: number
+  lineageFingerprint?: string | null
 }
 
 const cache = new Map<string, StoredConversation>()
@@ -56,6 +67,8 @@ function createFreshConversation(): StoredConversation {
     lastAccessMs: Date.now(),
     checkpointHistory: new Map(),
     checkpointArchive: new Map(),
+    lineageTurnCount: 0,
+    lineageFingerprint: null,
   }
 }
 
@@ -74,6 +87,8 @@ function loadFromDisk(convKey: string, config: ConversationConfig): StoredConver
       lastAccessMs: Date.now(),
       checkpointHistory: decodeMap(data.checkpointHistory),
       checkpointArchive: decodeMap(data.checkpointArchive),
+      lineageTurnCount: data.lineageTurnCount ?? 0,
+      lineageFingerprint: data.lineageFingerprint ?? null,
     }
     return stored
   } catch {
@@ -118,7 +133,7 @@ export function resolveConversationState(convKey: string, config: ConversationCo
  * Persist conversation state to disk atomically (write to temp file, then rename).
  */
 export function persistConversation(convKey: string, stored: StoredConversation, config: ConversationConfig): void {
-  mkdirSync(config.conversationDiskDir, { recursive: true })
+  mkdirSync(config.conversationDiskDir, { recursive: true, mode: 0o700 })
 
   const data: DiskFormat = {
     conversationId: stored.conversationId,
@@ -126,12 +141,45 @@ export function persistConversation(convKey: string, stored: StoredConversation,
     blobStore: encodeMap(stored.blobStore),
     checkpointHistory: encodeMap(stored.checkpointHistory),
     checkpointArchive: encodeMap(stored.checkpointArchive),
+    lineageTurnCount: stored.lineageTurnCount,
+    lineageFingerprint: stored.lineageFingerprint,
   }
 
   const filePath = diskPath(convKey, config)
   const tmpPath = `${filePath}.tmp.${randomUUID()}`
-  writeFileSync(tmpPath, JSON.stringify(data, null, 2), 'utf-8')
+  writeFileSync(tmpPath, JSON.stringify(data, null, 2), { encoding: 'utf-8', mode: 0o600 })
   renameSync(tmpPath, filePath)
+}
+
+/**
+ * Compute a SHA256 fingerprint from the completed conversation turns.
+ * The fingerprint covers only user text of each turn in order, so that
+ * it can be computed after turn completion without capturing the streamed
+ * assistant response text.  Same-depth forks with different user messages
+ * are detected; same-message re-rolls are exceedingly rare and tolerated.
+ */
+export function computeLineageFingerprint(turns: Pick<ParsedConversationTurn, 'userText'>[]): string {
+  const hash = createHash('sha256')
+  for (const turn of turns) {
+    hash.update(turn.userText)
+    hash.update('\0')
+  }
+  return hash.digest('hex')
+}
+
+/**
+ * Check whether the stored lineage matches the incoming lineage.
+ * Returns false if turn count or fingerprint mismatch.
+ */
+export function validateLineage(stored: StoredConversation, incoming: LineageMetadata): boolean {
+  if (stored.lineageTurnCount !== incoming.turnCount) {
+    return false
+  }
+  // Fresh conversations (no fingerprint stored yet) are always valid
+  if (stored.lineageFingerprint === null) {
+    return true
+  }
+  return stored.lineageFingerprint === incoming.fingerprint
 }
 
 /**

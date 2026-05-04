@@ -1,11 +1,11 @@
 # TP-008: Retry execution for transient Cursor failures — Status
 
-**Current Step:** Not Started
-**Status:** 🔵 Ready for Execution
+**Current Step:** Step 3: Documentation & Delivery
+**Status:** ✅ Complete
 **Last Updated:** 2026-05-04
 **Review Level:** 0
 **Review Counter:** 0
-**Iteration:** 0
+**Iteration:** 1
 **Size:** S
 
 > **Hydration:** Checkboxes represent meaningful outcomes, not individual code
@@ -16,41 +16,41 @@
 
 ### Step 0: Preflight
 
-**Status:** ⬜ Not Started
+**Status:** ✅ Complete
 
-- [ ] Required files exist with retry hint signals and config module
-- [ ] Tests pass before changes
+- [x] Required files exist with retry hint signals and config module
+- [x] Tests pass before changes
 
 ---
 
 ### Step 1: Implement retry loop
 
-**Status:** ⬜ Not Started
+**Status:** ✅ Complete
 
-- [ ] Import and read `maxRetries` from config
-- [ ] Wrap session pump in retry loop with attempt counting
-- [ ] Add retry delay based on `retryHint` type
-- [ ] Log retry attempts
+- [x] Import and read `maxRetries` from config
+- [x] Wrap session pump in retry loop with attempt counting
+- [x] Add retry delay based on `retryHint` type
+- [x] Log retry attempts
 
 ---
 
 ### Step 2: Testing & Verification
 
-**Status:** ⬜ Not Started
+**Status:** ✅ Complete
 
-- [ ] FULL test suite passing
-- [ ] All failures fixed
-- [ ] Build passes
+- [x] FULL test suite passing
+- [x] All failures fixed
+- [x] Build passes
 
 ---
 
 ### Step 3: Documentation & Delivery
 
-**Status:** ⬜ Not Started
+**Status:** ✅ Complete
 
-- [ ] "Must Update" docs modified
-- [ ] "Check If Affected" docs reviewed
-- [ ] Discoveries logged
+- [x] "Must Update" docs modified
+- [x] "Check If Affected" docs reviewed
+- [x] Discoveries logged
 
 ---
 
@@ -63,16 +63,21 @@
 
 ## Discoveries
 
-| Discovery | Disposition | Location |
-| --------- | ----------- | -------- |
+| Discovery                                                                                        | Disposition                                                      | Location                             |
+| ------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------- | ------------------------------------ |
+| Non-streaming retry uses 502 status check (no retryHint access from collectNonStreamingResponse) | Acceptable — maxRetries caps waste, 502 only from session errors | packages/pi-cursor/src/proxy/main.ts |
 
 ---
 
 ## Execution Log
 
-| Timestamp  | Action      | Outcome                         |
-| ---------- | ----------- | ------------------------------- |
-| 2026-05-04 | Task staged | PROMPT.md and STATUS.md created |
+| Timestamp        | Action         | Outcome                          |
+| ---------------- | -------------- | -------------------------------- |
+| 2026-05-04       | Task staged    | PROMPT.md and STATUS.md created  |
+| 2026-05-04 07:02 | Task started   | Runtime V2 lane-runner execution |
+| 2026-05-04 07:02 | Step 0 started | Preflight                        |
+| 2026-05-04 07:12 | Worker iter 1  | done in 562s, tools: 64          |
+| 2026-05-04 07:12 | Task complete  | .DONE created                    |
 
 ---
 

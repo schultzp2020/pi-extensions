@@ -1,7 +1,7 @@
 // src/proxy/openai-messages.test.ts
 import { describe, it, expect } from 'vitest'
 
-import { parseMessages, selectToolsForChoice, textContent } from './openai-messages.ts'
+import { extractImageParts, parseMessages, selectToolsForChoice, textContent } from './openai-messages.ts'
 import type { OpenAIMessage, OpenAIToolDef } from './openai-messages.ts'
 
 describe('textContent', () => {
@@ -24,6 +24,61 @@ describe('textContent', () => {
 
   it('handles empty array', () => {
     expect(textContent([])).toBe('')
+  })
+})
+
+describe('extractImageParts', () => {
+  it('returns empty array for string content', () => {
+    expect(extractImageParts('hello')).toEqual([])
+  })
+
+  it('returns empty array for null content', () => {
+    expect(extractImageParts(null)).toEqual([])
+  })
+
+  it('extracts image URLs from content array', () => {
+    const parts = [
+      { type: 'text', text: 'Check this image' },
+      { type: 'image_url', image_url: { url: 'https://example.com/img.png' } },
+    ]
+    const result = extractImageParts(parts)
+    expect(result).toEqual([{ url: 'https://example.com/img.png' }])
+  })
+
+  it('extracts multiple images', () => {
+    const parts = [
+      { type: 'image_url', image_url: { url: 'https://example.com/a.png' } },
+      { type: 'image_url', image_url: { url: 'https://example.com/b.png', detail: 'high' } },
+    ]
+    const result = extractImageParts(parts)
+    expect(result).toHaveLength(2)
+    expect(result[0]).toEqual({ url: 'https://example.com/a.png' })
+    expect(result[1]).toEqual({ url: 'https://example.com/b.png', detail: 'high' })
+  })
+
+  it('preserves detail field when present', () => {
+    const parts = [{ type: 'image_url', image_url: { url: 'https://example.com/img.png', detail: 'low' } }]
+    const result = extractImageParts(parts)
+    expect(result).toEqual([{ url: 'https://example.com/img.png', detail: 'low' }])
+  })
+
+  it('handles mixed text and image content', () => {
+    const parts = [
+      { type: 'text', text: 'before' },
+      { type: 'image_url', image_url: { url: 'data:image/png;base64,abc' } },
+      { type: 'text', text: 'after' },
+    ]
+    const result = extractImageParts(parts)
+    expect(result).toEqual([{ url: 'data:image/png;base64,abc' }])
+  })
+
+  it('returns empty array for content with no images', () => {
+    const parts = [{ type: 'text', text: 'just text' }]
+    expect(extractImageParts(parts)).toEqual([])
+  })
+
+  it('returns empty array for empty content array', () => {
+    expect(extractImageParts([])).toEqual([])
   })
 })
 
@@ -106,6 +161,64 @@ describe('parseMessages', () => {
     const result = parseMessages(messages)
     expect(result.turns).toHaveLength(0)
     expect(result.userText).toBe('Just one message')
+  })
+
+  it('preserves image parts from user messages', () => {
+    const messages: OpenAIMessage[] = [
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'What is in this image?' },
+          { type: 'image_url', image_url: { url: 'https://example.com/screenshot.png' } },
+        ],
+      },
+    ]
+    const result = parseMessages(messages)
+    expect(result.userText).toBe('What is in this image?')
+    expect(result.images).toEqual([{ url: 'https://example.com/screenshot.png' }])
+  })
+
+  it('handles messages with only images (no text parts)', () => {
+    const messages: OpenAIMessage[] = [
+      {
+        role: 'user',
+        content: [{ type: 'image_url', image_url: { url: 'https://example.com/diagram.png', detail: 'high' } }],
+      },
+    ]
+    const result = parseMessages(messages)
+    expect(result.userText).toBe('')
+    expect(result.images).toEqual([{ url: 'https://example.com/diagram.png', detail: 'high' }])
+  })
+
+  it('handles messages with text and images mixed across turns', () => {
+    const messages: OpenAIMessage[] = [
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'First question' },
+          { type: 'image_url', image_url: { url: 'https://example.com/img1.png' } },
+        ],
+      },
+      { role: 'assistant', content: 'I see the image.' },
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'Second question' },
+          { type: 'image_url', image_url: { url: 'https://example.com/img2.png' } },
+        ],
+      },
+    ]
+    const result = parseMessages(messages)
+    expect(result.turns).toHaveLength(1)
+    expect(result.turns[0].images).toEqual([{ url: 'https://example.com/img1.png' }])
+    expect(result.userText).toBe('Second question')
+    expect(result.images).toEqual([{ url: 'https://example.com/img2.png' }])
+  })
+
+  it('returns empty images for string content user messages', () => {
+    const messages: OpenAIMessage[] = [{ role: 'user', content: 'Just text' }]
+    const result = parseMessages(messages)
+    expect(result.images).toEqual([])
   })
 })
 

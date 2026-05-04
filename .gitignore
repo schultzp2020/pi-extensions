@@ -23,3 +23,6 @@ dist/
 
 # Pi project-local packages (if using pi install -l)
 .pi/npm/
+
+# Agent review artifacts
+reviews/

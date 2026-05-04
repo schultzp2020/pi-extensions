@@ -25,33 +25,13 @@ import { callCursorUnaryRpc } from './cursor-session.ts'
 const AVAILABLE_MODELS_PATH = '/aiserver.v1.AiService/AvailableModels'
 const GET_USABLE_MODELS_PATH = '/agent.v1.AgentService/GetUsableModels'
 
+/**
+ * Default context window used when the API doesn't report a value.
+ * The AvailableModels RPC provides real context limits for all models;
+ * this is only used by the legacy GetUsableModels fallback path.
+ */
 const DEFAULT_CONTEXT_WINDOW = 200_000
 const DEFAULT_MAX_TOKENS = 64_000
-
-/** Hardcoded context-window fallbacks for known models. */
-const MODEL_LIMITS: Partial<Record<string, { context?: number; maxTokens?: number }>> = {
-  'claude-4-sonnet': { context: 1_000_000 },
-  'claude-4-sonnet-1m': { context: 1_000_000 },
-  'claude-4.5-haiku': { context: 200_000 },
-  'claude-4.5-opus': { context: 1_000_000 },
-  'claude-4.5-sonnet': { context: 1_000_000 },
-  'claude-4.6-opus': { context: 1_000_000 },
-  'claude-4.6-sonnet': { context: 1_000_000 },
-  'composer-1.5': { context: 1_000_000 },
-  'composer-2': { context: 200_000 },
-  'gemini-2.5-flash': { context: 1_000_000 },
-  'gemini-3-flash': { context: 1_000_000 },
-  'gemini-3.1-pro': { context: 1_000_000 },
-  'gpt-5.1': { context: 272_000 },
-  'gpt-5.1-codex-max': { context: 272_000 },
-  'gpt-5.1-codex-mini': { context: 272_000 },
-  'gpt-5.2': { context: 272_000 },
-  'gpt-5.2-codex': { context: 272_000 },
-  'gpt-5.3-codex': { context: 272_000 },
-  'gpt-5.4': { context: 922_000 },
-  'gpt-5.4-mini': { context: 272_000 },
-  'gpt-5.4-nano': { context: 272_000 },
-}
 
 export interface CursorModel {
   id: string
@@ -156,24 +136,6 @@ function formatToken(token: string): string {
   return token.charAt(0).toUpperCase() + token.slice(1)
 }
 
-function fallbackContext(modelId: string): number {
-  const exact = MODEL_LIMITS[modelId]
-  if (exact?.context) {
-    return exact.context
-  }
-
-  // Strip mode suffixes and try base model
-  const base = modelId.replaceAll(/-(max-thinking|thinking|max|high|medium|low|fast|xhigh|none)$/g, '')
-  if (base !== modelId) {
-    const baseLimits = MODEL_LIMITS[base]
-    if (baseLimits?.context) {
-      return baseLimits.context
-    }
-  }
-
-  return DEFAULT_CONTEXT_WINDOW
-}
-
 function decodeConnectResponse<T>(schema: Parameters<typeof fromBinary>[0], payload: Uint8Array): T | null {
   try {
     return fromBinary(schema, payload) as T
@@ -202,7 +164,7 @@ function normalizeAvailableModel(m: AvailableModelsResponse_AvailableModel): Cur
     return []
   }
 
-  const context = m.contextTokenLimit ?? fallbackContext(id)
+  const context = m.contextTokenLimit ?? DEFAULT_CONTEXT_WINDOW
   const name = resolveCursorModelName(id, m.clientDisplayName)
 
   const base: CursorModel = {
@@ -284,15 +246,12 @@ function normalizeLegacyModels(models: readonly ModelDetails[]): CursorModel[] {
       continue
     }
 
-    const ctx = fallbackContext(id)
-    const exactLimits = MODEL_LIMITS[id]
-
     byId.set(id, {
       id,
       name: pickLegacyName(m),
       reasoning: m.thinkingDetails !== undefined,
-      contextWindow: ctx,
-      maxTokens: exactLimits?.maxTokens ?? DEFAULT_MAX_TOKENS,
+      contextWindow: DEFAULT_CONTEXT_WINDOW,
+      maxTokens: DEFAULT_MAX_TOKENS,
       supportsImages: false, // GetUsableModels doesn't expose this
       supportsMaxMode: m.maxMode === true,
     })
