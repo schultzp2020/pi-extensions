@@ -37,12 +37,12 @@
 
 ### Step 2: Testing & Verification
 
-**Status:** ⬜ Not Started
+**Status:** ✅ Done
 
-- [ ] Create `config.test.ts` with load/save/resolve/override tests
-- [ ] FULL test suite passing
-- [ ] All failures fixed
-- [ ] Build passes
+- [x] Create `config.test.ts` with load/save/resolve/override tests
+- [x] FULL test suite passing (110 passed, 0 failed)
+- [x] All failures fixed (none needed)
+- [x] Build passes
 
 ---
 
