@@ -1,6 +1,6 @@
 # TP-004: Session identity from pi_session_id with lifecycle cleanup — Status
 
-**Current Step:** Step 0: Preflight
+**Current Step:** Step 1: Inject pi_session_id via before_provider_request
 **Status:** 🟡 In Progress
 **Last Updated:** 2026-05-04
 **Review Level:** 2
@@ -25,10 +25,10 @@
 
 ### Step 1: Inject pi_session_id via before_provider_request
 
-**Status:** ⬜ Not Started
+**Status:** ✅ Done
 
-- [ ] Register `before_provider_request` hook to inject `pi_session_id` into request body
-- [ ] Replace random UUID with real Pi session ID
+- [x] Register `before_provider_request` hook to inject `pi_session_id` into request body
+- [x] Replace random UUID with real Pi session ID
 
 ---
 

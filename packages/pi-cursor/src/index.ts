@@ -67,7 +67,8 @@ function loadStoredToken(): string | null {
 }
 
 export default async function (pi: ExtensionAPI): Promise<void> {
-  const sessionId = crypto.randomUUID()
+  // Temporary ID for initial proxy connection; replaced by real Pi session ID on session_start
+  let sessionId: string = crypto.randomUUID()
   let currentPort: number | null = null
   let models: CursorModel[] = loadModelCache()
 
@@ -158,6 +159,25 @@ export default async function (pi: ExtensionAPI): Promise<void> {
   }
 
   register()
+
+  // Capture real Pi session ID once the session is available
+  pi.on('session_start', (_event, ctx) => {
+    const realId = ctx.sessionManager.getSessionId()
+    if (realId && realId !== sessionId) {
+      sessionId = realId
+      // Re-register provider so the X-Session-Id header uses the real ID
+      register()
+    }
+  })
+
+  // Inject pi_session_id into every provider request body
+  pi.on('before_provider_request', (event) => {
+    const {payload} = event
+    if (typeof payload === 'object' && payload !== null) {
+      ;(payload as Record<string, unknown>).pi_session_id = sessionId
+    }
+    return payload
+  })
 
   pi.on('session_shutdown', () => {
     stopHeartbeat()
