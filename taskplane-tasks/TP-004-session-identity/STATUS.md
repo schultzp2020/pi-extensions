@@ -1,6 +1,6 @@
 # TP-004: Session identity from pi_session_id with lifecycle cleanup — Status
 
-**Current Step:** Step 2: Stabilize session key derivation
+**Current Step:** Step 3: Add lifecycle cleanup and CancelAction
 **Status:** 🟡 In Progress
 **Last Updated:** 2026-05-04
 **Review Level:** 2
@@ -43,12 +43,12 @@
 
 ### Step 3: Add lifecycle cleanup and CancelAction
 
-**Status:** ⬜ Not Started
+**Status:** ✅ Done
 
-- [ ] Add `session_before_switch`, `session_before_fork`, `session_before_tree` hooks
-- [ ] Add session cleanup endpoint/function for proxy
-- [ ] Send CancelAction protobuf on client disconnect
-- [ ] Preserve previous checkpoint on interrupted turns
+- [x] Add `session_before_switch`, `session_before_fork`, `session_before_tree` hooks
+- [x] Add session cleanup endpoint/function for proxy
+- [x] Send CancelAction protobuf on client disconnect
+- [x] Preserve previous checkpoint on interrupted turns
 
 ---
 

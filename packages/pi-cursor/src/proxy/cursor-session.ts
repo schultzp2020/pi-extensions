@@ -12,7 +12,9 @@ import { create, fromBinary, toBinary } from '@bufbuild/protobuf'
 import {
   AgentClientMessageSchema,
   AgentServerMessageSchema,
+  CancelActionSchema,
   ClientHeartbeatSchema,
+  ConversationActionSchema,
   DeleteResultSchema,
   DeleteSuccessSchema,
   ExecClientControlMessageSchema,
@@ -394,6 +396,30 @@ export class CursorSession {
       this.clearInactivityTimer()
       this.closeTransport()
     }
+  }
+
+  /**
+   * Send CancelAction protobuf to Cursor and close the session.
+   * Does NOT commit the pending checkpoint — preserves the previous committed checkpoint.
+   */
+  cancel(): void {
+    if (!this._alive) {
+      return
+    }
+    try {
+      const cancelAction = create(ConversationActionSchema, {
+        action: { case: 'cancelAction', value: create(CancelActionSchema, {}) },
+      })
+      const cancelMsg = create(AgentClientMessageSchema, {
+        message: { case: 'conversationAction', value: cancelAction },
+      })
+      this.h2Stream.write(frameConnectMessage(toBinary(AgentClientMessageSchema, cancelMsg)))
+    } catch {
+      // Best-effort cancel — transport may already be closed
+    }
+    // Suppress the onCheckpoint callback so no pending checkpoint is committed
+    this.options.onCheckpoint = undefined
+    this.close()
   }
 
   // ── H2 connection setup ──

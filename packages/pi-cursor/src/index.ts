@@ -172,14 +172,45 @@ export default async function (pi: ExtensionAPI): Promise<void> {
 
   // Inject pi_session_id into every provider request body
   pi.on('before_provider_request', (event) => {
-    const {payload} = event
+    const { payload } = event
     if (typeof payload === 'object' && payload !== null) {
       ;(payload as Record<string, unknown>).pi_session_id = sessionId
     }
     return payload
   })
 
-  pi.on('session_shutdown', () => {
+  // ── Lifecycle cleanup hooks ──
+  // Each calls the proxy's cleanup endpoint to close active sessions and evict state
+
+  async function cleanupCurrentSession(): Promise<void> {
+    if (!currentPort) {
+      return
+    }
+    try {
+      await fetch(`http://localhost:${String(currentPort)}/internal/cleanup-session`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId }),
+      })
+    } catch {
+      // Best-effort cleanup — proxy may be unreachable
+    }
+  }
+
+  pi.on('session_before_switch', async () => {
+    await cleanupCurrentSession()
+  })
+
+  pi.on('session_before_fork', async () => {
+    await cleanupCurrentSession()
+  })
+
+  pi.on('session_before_tree', async () => {
+    await cleanupCurrentSession()
+  })
+
+  pi.on('session_shutdown', async () => {
+    await cleanupCurrentSession()
     stopHeartbeat()
   })
 }

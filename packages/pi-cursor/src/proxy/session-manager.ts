@@ -55,6 +55,19 @@ export function evictStaleSessions(): void {
   }
 }
 
+/**
+ * Close all active sessions for a given session ID and evict their state.
+ * Derives the session key from the ID and removes the matching entry.
+ */
+export function cleanupSessionById(sessionId: string): void {
+  const key = deriveSessionKey(sessionId)
+  const entry = activeSessions.get(key)
+  if (entry) {
+    entry.session.cancel()
+    activeSessions.delete(key)
+  }
+}
+
 export function closeAllSessions(): void {
   for (const [, entry] of activeSessions) {
     entry.session.close()

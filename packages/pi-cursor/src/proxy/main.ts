@@ -267,7 +267,7 @@ async function handleChatCompletion(
   // Prefer pi_session_id from body (injected by before_provider_request), fall back to header
   const bodyRecord = body as unknown as Record<string, unknown>
   const sessionId =
-    (typeof bodyRecord.pi_session_id === 'string' ? (bodyRecord.pi_session_id) : undefined) ??
+    (typeof bodyRecord.pi_session_id === 'string' ? bodyRecord.pi_session_id : undefined) ??
     (req.headers['x-session-id'] as string | undefined) ??
     'default'
   const sessionKey = deriveSessionKey(sessionId)
@@ -287,6 +287,13 @@ async function handleChatCompletion(
         isError: false,
       }))
       existingSession.sendToolResults(newResults)
+
+      // Cancel on client disconnect during tool-result continuation
+      req.on('close', () => {
+        if (existingSession.alive) {
+          existingSession.cancel()
+        }
+      })
 
       if (stream) {
         const completionId = `chatcmpl-${randomUUID().replaceAll('-', '').slice(0, 28)}`
@@ -344,6 +351,14 @@ async function handleChatCompletion(
   }
 
   const session = new CursorSession(sessionOptions)
+
+  // Cancel the Cursor session on client disconnect — sends CancelAction protobuf
+  // and preserves the previous committed checkpoint (no pending checkpoint commit)
+  req.on('close', () => {
+    if (session.alive) {
+      session.cancel()
+    }
+  })
 
   if (stream) {
     const completionId = `chatcmpl-${randomUUID().replaceAll('-', '').slice(0, 28)}`
