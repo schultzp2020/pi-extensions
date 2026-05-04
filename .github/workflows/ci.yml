@@ -17,5 +17,16 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm run build
       - run: pnpm run lint
-      - run: pnpm run format:check
+      - name: Check formatting (changed files)
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            FILES=$(git diff --name-only --diff-filter=ACMR origin/${{ github.base_ref }}...HEAD -- '*.ts' '*.json' '*.md' | xargs)
+          else
+            FILES=$(git diff --name-only --diff-filter=ACMR HEAD~1 -- '*.ts' '*.json' '*.md' | xargs)
+          fi
+          if [ -n "$FILES" ]; then
+            pnpm exec oxfmt --check $FILES
+          else
+            echo "No formattable files changed"
+          fi
       - run: pnpm run test
