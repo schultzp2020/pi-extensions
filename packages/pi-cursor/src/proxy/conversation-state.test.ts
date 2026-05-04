@@ -6,8 +6,10 @@ import { describe, it, beforeEach, afterEach, expect } from 'vitest'
 
 import {
   computeLineageFingerprint,
+  discardCheckpoint,
   invalidateConversationState,
   persistConversation,
+  pruneBlobs,
   resolveConversationState,
   validateLineage,
   type StoredConversation,
@@ -154,6 +156,71 @@ describe('validateLineage — checkpoint discard scenarios', () => {
       lineageFingerprint: 'abc',
     })
     expect(validateLineage(stored, { turnCount: 3, fingerprint: 'abc' })).toBeTruthy()
+  })
+
+  it('discardCheckpoint preserves blobStore (compaction scenario)', () => {
+    const blobStore = new Map<string, Uint8Array>()
+    blobStore.set('blob-key-1', new Uint8Array([10, 20, 30]))
+    blobStore.set('blob-key-2', new Uint8Array([40, 50, 60]))
+
+    const stored = makeStored({
+      checkpoint: new Uint8Array([1, 2, 3]),
+      lineageTurnCount: 5,
+      lineageFingerprint: 'pre-compaction',
+      blobStore,
+      checkpointHistory: new Map([['h1', new Uint8Array([1])]]),
+      checkpointArchive: new Map([['a1', new Uint8Array([2])]]),
+    })
+
+    // Lineage mismatch (compaction reduced turns)
+    expect(validateLineage(stored, { turnCount: 1, fingerprint: 'post-compaction' })).toBeFalsy()
+
+    // Use the actual helper used by main.ts
+    discardCheckpoint(stored)
+
+    // Checkpoint + history cleared, blobs preserved
+    expect(stored.checkpoint).toBeNull()
+    expect(stored.checkpointHistory.size).toBe(0)
+    expect(stored.checkpointArchive.size).toBe(0)
+    expect(stored.blobStore.size).toBe(2)
+    expect(stored.blobStore.get('blob-key-1')).toEqual(new Uint8Array([10, 20, 30]))
+    expect(stored.blobStore.get('blob-key-2')).toEqual(new Uint8Array([40, 50, 60]))
+  })
+})
+
+describe('pruneBlobs', () => {
+  it('does nothing when under the cap', () => {
+    const store = new Map<string, Uint8Array>()
+    store.set('a', new Uint8Array([1]))
+    store.set('b', new Uint8Array([2]))
+    expect(pruneBlobs(store)).toBe(0)
+    expect(store.size).toBe(2)
+  })
+
+  it('evicts oldest entries when over the cap', () => {
+    const store = new Map<string, Uint8Array>()
+    // Fill to 130 (cap is 128)
+    for (let i = 0; i < 130; i++) {
+      store.set(`key-${String(i).padStart(3, '0')}`, new Uint8Array([i]))
+    }
+    expect(store.size).toBe(130)
+    const evicted = pruneBlobs(store)
+    expect(evicted).toBe(2)
+    expect(store.size).toBe(128)
+    // Oldest two (key-000, key-001) should be gone
+    expect(store.has('key-000')).toBeFalsy()
+    expect(store.has('key-001')).toBeFalsy()
+    // Newest should remain
+    expect(store.has('key-129')).toBeTruthy()
+  })
+
+  it('handles exact cap boundary', () => {
+    const store = new Map<string, Uint8Array>()
+    for (let i = 0; i < 128; i++) {
+      store.set(`k${i}`, new Uint8Array([i]))
+    }
+    expect(pruneBlobs(store)).toBe(0)
+    expect(store.size).toBe(128)
   })
 })
 

@@ -24,6 +24,7 @@ type DebugEventType =
   | 'tool_call'
   | 'bridge_open'
   | 'bridge_close'
+  | 'lineage_invalidation'
   | 'lifecycle'
 
 interface DebugLogEntry {
@@ -222,6 +223,26 @@ export function logRetry(
     attempt: payload.attempt,
     hint: payload.hint,
     delayMs: payload.delayMs,
+  })
+}
+
+/** Log lineage invalidation (compaction, fork, branch switch). */
+export function logLineageInvalidation(
+  sessionId: string,
+  requestId: string,
+  payload: { storedTurnCount: number; incomingTurnCount: number; blobCount: number },
+): void {
+  if (!_enabled) {
+    return
+  }
+  writeEntry({
+    timestamp: new Date().toISOString(),
+    type: 'lineage_invalidation',
+    sessionId,
+    requestId,
+    storedTurnCount: payload.storedTurnCount,
+    incomingTurnCount: payload.incomingTurnCount,
+    blobCount: payload.blobCount,
   })
 }
 

@@ -4,6 +4,9 @@ import { join } from 'node:path'
 
 import type { ParsedConversationTurn } from './openai-messages.ts'
 
+/** Maximum number of blobs retained per conversation. LRU-evicted on overflow. */
+const MAX_BLOB_COUNT = 128
+
 export interface StoredConversation {
   conversationId: string
   checkpoint: Uint8Array | null
@@ -180,6 +183,38 @@ export function validateLineage(stored: StoredConversation, incoming: LineageMet
     return true
   }
   return stored.lineageFingerprint === incoming.fingerprint
+}
+
+/**
+ * Discard checkpoint and history but preserve blobStore.
+ * Use on lineage mismatch (compaction, fork, branch switch) so that
+ * Cursor can still GetBlob for previously-stored data after a fresh rebuild.
+ */
+export function discardCheckpoint(stored: StoredConversation): void {
+  stored.checkpoint = null
+  stored.checkpointHistory.clear()
+  stored.checkpointArchive.clear()
+}
+
+/**
+ * Evict oldest blobs when the store exceeds MAX_BLOB_COUNT.
+ * Map iteration order is insertion-order, so deleting from the front
+ * evicts the oldest entries first (LRU approximation).
+ */
+export function pruneBlobs(blobStore: Map<string, Uint8Array>): number {
+  const excess = blobStore.size - MAX_BLOB_COUNT
+  if (excess <= 0) {
+    return 0
+  }
+  let evicted = 0
+  for (const key of blobStore.keys()) {
+    if (evicted >= excess) {
+      break
+    }
+    blobStore.delete(key)
+    evicted++
+  }
+  return evicted
 }
 
 /**

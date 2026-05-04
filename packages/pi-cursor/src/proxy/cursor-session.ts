@@ -73,7 +73,7 @@ export interface SessionOptions {
   nativeToolsMode: NativeToolsMode
   allowedRoot?: string
   convKey: string
-  onCheckpoint?: (bytes: Uint8Array, blobStore: Map<string, Uint8Array>) => void
+  onCheckpoint?: (bytes: Uint8Array) => void
 }
 
 function classifyConnectError(errorMessage: string): RetryHint | undefined {
@@ -528,7 +528,7 @@ export class CursorSession {
         onCheckpoint: (checkpointBytes) => {
           this._checkpointChunkSeq = this._chunkSeq
           this.streamState.checkpointAfterExec = true
-          this.options.onCheckpoint?.(checkpointBytes, this.blobStore)
+          this.options.onCheckpoint?.(checkpointBytes)
         },
         onNotify: (note) => {
           this.queue.push({ type: 'text', text: `\n${note}\n`, isThinking: false })
