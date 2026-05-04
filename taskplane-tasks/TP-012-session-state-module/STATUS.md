@@ -1,11 +1,11 @@
 # TP-012: Session State Module — Status
 
-**Current Step:** Not Started
-**Status:** 🔵 Ready for Execution
+**Current Step:** Step 0: Preflight
+**Status:** 🟡 In Progress
 **Last Updated:** 2026-05-04
 **Review Level:** 1
 **Review Counter:** 0
-**Iteration:** 0
+**Iteration:** 1
 **Size:** M
 
 > **Hydration:** Checkboxes represent meaningful outcomes, not individual code
@@ -16,12 +16,12 @@
 
 ### Step 0: Preflight
 
-**Status:** ⬜ Not Started
+**Status:** ✅ Complete
 
-- [ ] Read `session-manager.ts` and `session-manager.test.ts`
-- [ ] Read `conversation-state.ts` and `conversation-state.test.ts`
-- [ ] Identify all coordination call sites in `main.ts`
-- [ ] Identify `cleanupSessionById` usage in `internal-api.ts`
+- [x] Read `session-manager.ts` and `session-manager.test.ts`
+- [x] Read `conversation-state.ts` and `conversation-state.test.ts`
+- [x] Identify all coordination call sites in `main.ts`
+- [x] Identify `cleanupSessionById` usage in `internal-api.ts`
 
 ---
 
@@ -89,6 +89,8 @@
 | Timestamp  | Action      | Outcome                         |
 | ---------- | ----------- | ------------------------------- |
 | 2026-05-04 | Task staged | PROMPT.md and STATUS.md created |
+| 2026-05-04 19:16 | Task started | Runtime V2 lane-runner execution |
+| 2026-05-04 19:16 | Step 0 started | Preflight |
 
 ---
 
