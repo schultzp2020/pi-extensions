@@ -1,6 +1,6 @@
 # TP-009: Native tools mode with proxy-local execution — Status
 
-**Current Step:** Step 0: Preflight
+**Current Step:** Step 1: Mode-dependent prompt guidance
 **Status:** 🟡 In Progress
 **Last Updated:** 2026-05-04
 **Review Level:** 1
@@ -25,10 +25,10 @@
 
 ### Step 1: Mode-dependent prompt guidance
 
-**Status:** ⬜ Not Started
+**Status:** ✅ Done
 
-- [ ] Make prompt guidance conditional on native tools mode
-- [ ] Pass mode through to `buildRequestContext()` in main.ts
+- [x] Make prompt guidance conditional on native tools mode
+- [x] Pass mode through to `buildRequestContext()` in main.ts
 
 ---
 

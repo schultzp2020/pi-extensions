@@ -35,7 +35,7 @@ import {
   UserMessageActionSchema,
   UserMessageSchema,
 } from '../proto/agent_pb.ts'
-import { resolveEffective } from './config.ts'
+import { resolveEffective, type NativeToolsMode } from './config.ts'
 import {
   computeLineageFingerprint,
   getConversationState,
@@ -179,6 +179,7 @@ function buildCursorRequest(
   checkpoint: Uint8Array | null,
   blobStore: Map<string, Uint8Array>,
   mcpTools: McpToolDefinition[],
+  nativeToolsMode: NativeToolsMode = 'reject',
 ): { requestBytes: Uint8Array; blobStore: Map<string, Uint8Array>; mcpTools: McpToolDefinition[] } {
   // Try decoding a persisted checkpoint
   const decodedCheckpoint = checkpoint ? decodeCheckpointState(checkpoint) : null
@@ -223,7 +224,7 @@ function buildCursorRequest(
     text: userText,
     messageId: randomUUID(),
   })
-  const requestContext = buildRequestContext(mcpTools, systemPrompt || undefined)
+  const requestContext = buildRequestContext(mcpTools, systemPrompt || undefined, nativeToolsMode)
   const action = create(ConversationActionSchema, {
     action: {
       case: 'userMessageAction',
@@ -438,6 +439,7 @@ async function handleChatCompletion(
     stored.checkpoint,
     stored.blobStore,
     mcpTools,
+    cfg.nativeToolsMode,
   )
 
   const sessionOptions: SessionOptions = {
@@ -446,6 +448,7 @@ async function handleChatCompletion(
     blobStore: payload.blobStore,
     mcpTools,
     cloudRule: systemPrompt || undefined,
+    nativeToolsMode: cfg.nativeToolsMode,
     convKey,
     onCheckpoint: (checkpointBytes, blobStoreRef) => {
       stored.checkpoint = checkpointBytes
@@ -502,7 +505,9 @@ async function handleChatCompletion(
     let response: Response
     for (;;) {
       response = await collectNonStreamingResponse(currentNonStreamSession, modelId)
-      if (response.ok || nonStreamAttempt >= cfg.maxRetries) {break}
+      if (response.ok || nonStreamAttempt >= cfg.maxRetries) {
+        break
+      }
       nonStreamAttempt++
       console.error(`[proxy] Non-streaming retry ${nonStreamAttempt}/${cfg.maxRetries} (status ${response.status})`)
       await sleep(1000)

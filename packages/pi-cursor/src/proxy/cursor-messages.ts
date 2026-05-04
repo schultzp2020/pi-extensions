@@ -56,6 +56,7 @@ import {
   WriteShellStdinErrorSchema,
   WriteShellStdinResultSchema,
 } from '../proto/agent_pb.ts'
+import type { NativeToolsMode } from './config.ts'
 import { frameConnectMessage } from './connect-protocol.ts'
 import { classifyExecMessage, fixMcpArgNames, stripMcpToolPrefix } from './native-tools.ts'
 import { buildRequestContext } from './request-context.ts'
@@ -417,13 +418,14 @@ export interface ExecContext {
   mcpTools: McpToolDefinition[]
   enabledToolNames: Set<string>
   cloudRule: string | undefined
+  nativeToolsMode: NativeToolsMode
   sendFrame: (data: Buffer) => void
   onMcpExec: (exec: PendingExec) => void
   state?: StreamState
 }
 
 export function handleExecMessage(execMsg: ExecServerMessage, ctx: ExecContext): void {
-  const { mcpTools, enabledToolNames, cloudRule, sendFrame, onMcpExec, state } = ctx
+  const { mcpTools, enabledToolNames, cloudRule, nativeToolsMode, sendFrame, onMcpExec, state } = ctx
   const execCase = execMsg.message.case
 
   // MCP tool calls — decode args and pass through
@@ -451,7 +453,7 @@ export function handleExecMessage(execMsg: ExecServerMessage, ctx: ExecContext):
 
   // RequestContext — respond inline with MCP tools and cloud rule
   if (execCase === 'requestContextArgs') {
-    const requestContext = buildRequestContext(mcpTools, cloudRule)
+    const requestContext = buildRequestContext(mcpTools, cloudRule, nativeToolsMode)
     const result = create(RequestContextResultSchema, {
       result: {
         case: 'success',
@@ -639,6 +641,7 @@ export interface MessageProcessorContext {
   mcpTools: McpToolDefinition[]
   enabledToolNames: Set<string>
   cloudRule?: string
+  nativeToolsMode: NativeToolsMode
   sendFrame: (data: Buffer) => void
   state: StreamState
   onText: (text: string, isThinking: boolean) => void
@@ -666,6 +669,7 @@ export function processServerMessage(msg: AgentServerMessage, ctx: MessageProces
       mcpTools: ctx.mcpTools,
       enabledToolNames: ctx.enabledToolNames,
       cloudRule: ctx.cloudRule,
+      nativeToolsMode: ctx.nativeToolsMode,
       sendFrame: ctx.sendFrame,
       onMcpExec: ctx.onMcpExec,
       state: ctx.state,

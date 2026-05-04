@@ -34,6 +34,7 @@ import {
   WriteResultSchema,
   WriteSuccessSchema,
 } from '../proto/agent_pb.ts'
+import type { NativeToolsMode } from './config.ts'
 import {
   createConnectFrameParser,
   decodeConnectUnaryBody,
@@ -69,6 +70,7 @@ export interface SessionOptions {
   blobStore: Map<string, Uint8Array>
   mcpTools: McpToolDefinition[]
   cloudRule?: string
+  nativeToolsMode: NativeToolsMode
   convKey: string
   onCheckpoint?: (bytes: Uint8Array, blobStore: Map<string, Uint8Array>) => void
 }
@@ -504,6 +506,7 @@ export class CursorSession {
         mcpTools: this.options.mcpTools,
         enabledToolNames: this.enabledToolNames,
         cloudRule: this.options.cloudRule,
+        nativeToolsMode: this.options.nativeToolsMode,
         sendFrame: (data) => this.write(data),
         state: this.streamState,
         onText: (text, isThinking) => {
