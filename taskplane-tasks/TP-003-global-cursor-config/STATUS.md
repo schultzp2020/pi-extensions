@@ -1,7 +1,7 @@
 # TP-003: Global Cursor config with env override — Status
 
-**Current Step:** Step 0: Preflight
-**Status:** 🟡 In Progress
+**Current Step:** Step 3: Documentation & Delivery
+**Status:** ✅ Complete
 **Last Updated:** 2026-05-04
 **Review Level:** 0
 **Review Counter:** 0
@@ -48,11 +48,11 @@
 
 ### Step 3: Documentation & Delivery
 
-**Status:** ⬜ Not Started
+**Status:** ✅ Done
 
-- [ ] "Must Update" docs modified
-- [ ] "Check If Affected" docs reviewed
-- [ ] Discoveries logged
+- [x] "Must Update" docs modified (CONTEXT.md already has Cursor Config term — verified correct)
+- [x] "Check If Affected" docs reviewed (README.md has no config references — no update needed)
+- [x] Discoveries logged
 
 ---
 
@@ -67,6 +67,7 @@
 
 | Discovery | Disposition | Location |
 | --------- | ----------- | -------- |
+| CONTEXT.md already has Cursor Config term | Verified correct, no changes needed | packages/pi-cursor/CONTEXT.md |
 
 ---
 
