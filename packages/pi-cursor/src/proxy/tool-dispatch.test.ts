@@ -222,7 +222,21 @@ describe('handleToolMessage', () => {
 
       handleExecMessage(execMsg, ctx)
 
-      // Should have sent a response
+      // Should have sent a response (result + stream close)
+      expect(ctx.sentFrames.length).toBeGreaterThanOrEqual(1)
+    })
+
+    it('sends stream-close without result when $unknown has no recoverable field', () => {
+      const ctx = makeCtx()
+      const execMsg = create(ExecServerMessageSchema, {
+        id: 2,
+        execId: 'exec-2',
+      })
+      // No $unknown field set — unrecognized exec with nothing to mirror
+
+      handleExecMessage(execMsg, ctx)
+
+      // Should still send a stream-close so the server doesn't hang
       expect(ctx.sentFrames.length).toBeGreaterThanOrEqual(1)
     })
   })

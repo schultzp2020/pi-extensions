@@ -386,6 +386,8 @@ describe('resetConversation', () => {
     expect(stored.checkpointHistory.size).toBe(0)
     expect(stored.checkpointArchive.size).toBe(0)
     expect(stored.blobStore.size).toBe(0)
+    expect(stored.lineageTurnCount).toBe(0)
+    expect(stored.lineageFingerprint).toBeNull()
   })
 
   it('resets even when state is already clean', () => {

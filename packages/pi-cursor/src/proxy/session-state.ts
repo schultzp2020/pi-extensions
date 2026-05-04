@@ -369,8 +369,8 @@ export function getConversationState(sessionId: string): StoredConversation | un
 
 /**
  * Evict stale entries — both Bridges and Conversations — using a
- * single TTL sweep.  Evicting a conversation also closes its Bridge
- * (a Bridge without conversation state is useless).
+ * independent TTL sweeps.  Bridge and Conversation keys are derived
+ * separately, so each is evicted based on its own `lastAccessMs`.
  */
 export function evict(): void {
   const now = Date.now()
