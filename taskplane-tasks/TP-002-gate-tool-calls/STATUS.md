@@ -15,6 +15,7 @@
 ---
 
 ### Step 0: Preflight
+
 **Status:** ⬜ Not Started
 
 - [ ] `cursor-messages.ts` exports `MessageProcessorContext`, `handleExecMessage`, `processServerMessage`
@@ -25,6 +26,7 @@
 ---
 
 ### Step 1: Add enabled tool set to MessageProcessorContext
+
 **Status:** ⬜ Not Started
 
 - [ ] Add `buildEnabledToolSet()` to `native-tools.ts`
@@ -34,6 +36,7 @@
 ---
 
 ### Step 2: Gate all tool call paths
+
 **Status:** ⬜ Not Started
 
 - [ ] Gate MCP passthrough against enabled set
@@ -44,6 +47,7 @@
 ---
 
 ### Step 3: Testing & Verification
+
 **Status:** ⬜ Not Started
 
 - [ ] Create `tool-gating.test.ts` with gating tests
@@ -55,6 +59,7 @@
 ---
 
 ### Step 4: Documentation & Delivery
+
 **Status:** ⬜ Not Started
 
 - [ ] "Must Update" docs modified
@@ -65,32 +70,32 @@
 
 ## Reviews
 
-| # | Type | Step | Verdict | File |
-|---|------|------|---------|------|
+| #   | Type | Step | Verdict | File |
+| --- | ---- | ---- | ------- | ---- |
 
 ---
 
 ## Discoveries
 
 | Discovery | Disposition | Location |
-|-----------|-------------|----------|
+| --------- | ----------- | -------- |
 
 ---
 
 ## Execution Log
 
-| Timestamp | Action | Outcome |
-|-----------|--------|---------|
+| Timestamp  | Action      | Outcome                         |
+| ---------- | ----------- | ------------------------------- |
 | 2026-05-03 | Task staged | PROMPT.md and STATUS.md created |
 
 ---
 
 ## Blockers
 
-*None*
+_None_
 
 ---
 
 ## Notes
 
-*Reserved for execution notes*
+_Reserved for execution notes_

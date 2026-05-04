@@ -39,6 +39,7 @@ config surfaces or protocol changes needed.
 ## Context to Read First
 
 **Tier 2 (area context):**
+
 - `packages/pi-cursor/CONTEXT.md`
 
 ## Environment
@@ -82,6 +83,7 @@ in `native-tools.ts` for reuse and testability.
 - [ ] Run targeted tests: `cd packages/pi-cursor && npx vitest run`
 
 **Artifacts:**
+
 - `packages/pi-cursor/src/proxy/native-tools.ts` (modified)
 - `packages/pi-cursor/src/proxy/cursor-messages.ts` (modified)
 - `packages/pi-cursor/src/proxy/cursor-session.ts` (modified)
@@ -136,6 +138,7 @@ correct approach — they were never in Pi's tool set to begin with.
 - [ ] Run targeted tests: `cd packages/pi-cursor && npx vitest run`
 
 **Artifacts:**
+
 - `packages/pi-cursor/src/proxy/cursor-messages.ts` (modified)
 
 ### Step 3: Testing & Verification
@@ -153,6 +156,7 @@ correct approach — they were never in Pi's tool set to begin with.
 - [ ] Build passes: `cd packages/pi-cursor && npx rolldown --config rolldown.config.ts`
 
 **Artifacts:**
+
 - `packages/pi-cursor/src/proxy/tool-gating.test.ts` (new)
 - `packages/pi-cursor/src/proxy/native-tools.test.ts` (modified)
 
@@ -165,9 +169,11 @@ correct approach — they were never in Pi's tool set to begin with.
 ## Documentation Requirements
 
 **Must Update:**
+
 - `packages/pi-cursor/CONTEXT.md` — Update the "Native Tool Redirection" definition to mention that redirects are gated against the enabled tool set. Add a new term "Tool Gating" describing the filtering behavior.
 
 **Check If Affected:**
+
 - `packages/pi-cursor/README.md` — Update if it documents tool behavior
 
 ## Completion Criteria
