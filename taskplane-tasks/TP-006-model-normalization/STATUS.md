@@ -1,11 +1,11 @@
 # TP-006: Model normalization and effort mapping — Status
 
-**Current Step:** Step 0: Preflight
+**Current Step:** Step 1: Create model normalization module
 **Status:** 🟡 In Progress
 **Last Updated:** 2026-05-04
 **Review Level:** 1
 **Review Counter:** 0
-**Iteration:** 1
+**Iteration:** 2
 **Size:** L
 
 > **Hydration:** Checkboxes represent meaningful outcomes, not individual code
@@ -25,12 +25,12 @@
 
 ### Step 1: Create model normalization module
 
-**Status:** ⬜ Not Started
+**Status:** ✅ Complete
 
-- [ ] Implement `parseModelId()` with correct suffix stripping order
-- [ ] Implement `processModels()` to deduplicate and build family metadata
-- [ ] Implement `buildEffortMap()` with fallback chain
-- [ ] Implement `resolveModelId()` for request-time reconstruction
+- [x] Implement `parseModelId()` with correct suffix stripping order
+- [x] Implement `processModels()` to deduplicate and build family metadata
+- [x] Implement `buildEffortMap()` with fallback chain
+- [x] Implement `resolveModelId()` for request-time reconstruction
 
 ---
 
@@ -82,11 +82,13 @@
 
 ## Execution Log
 
-| Timestamp        | Action         | Outcome                          |
-| ---------------- | -------------- | -------------------------------- |
-| 2026-05-04       | Task staged    | PROMPT.md and STATUS.md created  |
-| 2026-05-04 06:17 | Task started   | Runtime V2 lane-runner execution |
-| 2026-05-04 06:17 | Step 0 started | Preflight                        |
+| Timestamp        | Action         | Outcome                           |
+| ---------------- | -------------- | --------------------------------- |
+| 2026-05-04       | Task staged    | PROMPT.md and STATUS.md created   |
+| 2026-05-04 06:17 | Task started   | Runtime V2 lane-runner execution  |
+| 2026-05-04 06:17 | Step 0 started | Preflight                         |
+| 2026-05-04 06:27 | Worker iter 1  | done in 601s, tools: 23           |
+| 2026-05-04 06:27 | Step 1 started | Create model normalization module |
 
 ---
 
