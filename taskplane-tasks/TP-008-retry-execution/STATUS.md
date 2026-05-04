@@ -25,12 +25,12 @@
 
 ### Step 1: Implement retry loop
 
-**Status:** ⬜ Not Started
+**Status:** ✅ Done
 
-- [ ] Import and read `maxRetries` from config
-- [ ] Wrap session pump in retry loop with attempt counting
-- [ ] Add retry delay based on `retryHint` type
-- [ ] Log retry attempts
+- [x] Import and read `maxRetries` from config
+- [x] Wrap session pump in retry loop with attempt counting
+- [x] Add retry delay based on `retryHint` type
+- [x] Log retry attempts
 
 ---
 

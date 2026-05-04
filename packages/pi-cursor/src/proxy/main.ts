@@ -46,7 +46,7 @@ import {
   type LineageMetadata,
   evictStaleConversations,
 } from './conversation-state.ts'
-import { CursorSession, type SessionOptions } from './cursor-session.ts'
+import { CursorSession, type RetryHint, type SessionOptions } from './cursor-session.ts'
 import {
   debugRequestId,
   logCheckpointCommit,
@@ -98,6 +98,29 @@ interface ChatCompletionRequest {
   max_tokens?: number
   tools?: OpenAIToolDef[]
   tool_choice?: string | { type: string; function: { name: string } }
+}
+
+// ── Retry helpers ──
+
+/** Delay (ms) before retrying based on the failure hint. */
+function retryDelayMs(hint: RetryHint): number {
+  switch (hint) {
+    case 'blob_not_found': {
+      return 200
+    }
+    case 'resource_exhausted': {
+      return 2000
+    }
+    case 'timeout': {
+      return 1000
+    }
+  }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms)
+  })
 }
 
 function errorResponse(res: ServerResponse, status: number, message: string, code = 'server_error'): void {
@@ -453,18 +476,43 @@ async function handleChatCompletion(
     const readableStream = new ReadableStream({
       start(controller) {
         const ctx = createSSECtx(controller, modelId, completionId, created)
-        void pumpAndFinalize(session, ctx, sessionKey, convKey, convConfig, lineageInfo, {
-          sid: sessionId,
-          rid: requestId,
-          startTime: requestStartTime,
-        })
+        void pumpAndFinalize(
+          session,
+          ctx,
+          sessionKey,
+          convKey,
+          convConfig,
+          lineageInfo,
+          {
+            sid: sessionId,
+            rid: requestId,
+            startTime: requestStartTime,
+          },
+          { sessionOptions, req, maxRetries: cfg.maxRetries },
+        )
       },
     })
     res.writeHead(200, SSE_HEADERS)
     const reader = readableStream.getReader() as ReadableStreamDefaultReader<Uint8Array>
     void pipeReaderToResponse(reader, res)
   } else {
-    const response = await collectNonStreamingResponse(session, modelId)
+    // ── Non-streaming with retry ──
+    let nonStreamAttempt = 0
+    let currentNonStreamSession = session
+    let response: Response
+    for (;;) {
+      response = await collectNonStreamingResponse(currentNonStreamSession, modelId)
+      if (response.ok || nonStreamAttempt >= cfg.maxRetries) {break}
+      nonStreamAttempt++
+      console.error(`[proxy] Non-streaming retry ${nonStreamAttempt}/${cfg.maxRetries} (status ${response.status})`)
+      await sleep(1000)
+      currentNonStreamSession = new CursorSession(sessionOptions)
+      req.on('close', () => {
+        if (currentNonStreamSession.alive) {
+          currentNonStreamSession.cancel()
+        }
+      })
+    }
     // Update lineage after successful non-streaming turn completion
     if (response.ok) {
       const completedTurns = [...turns, { userText: effectiveUserText }]
@@ -487,8 +535,20 @@ interface LineageInfo {
 }
 
 /**
+ * Context for creating new sessions on retry. When omitted, retries are
+ * disabled (e.g. tool-result resume where session options are unavailable).
+ */
+interface RetryContext {
+  sessionOptions: SessionOptions
+  req: IncomingMessage
+  maxRetries: number
+}
+
+/**
  * Pump a session and handle batchReady (keep session alive for tool-result
- * continuation) or done (clean up).
+ * continuation) or done (clean up).  When `retryCtx` is provided and
+ * `pumpSession` returns a retryable failure, the failed session is closed
+ * and a fresh session is created (up to `maxRetries` times).
  */
 async function pumpAndFinalize(
   session: CursorSession,
@@ -498,15 +558,43 @@ async function pumpAndFinalize(
   convConfig: ConversationConfig,
   lineageInfo?: LineageInfo,
   debugInfo?: { sid: string; rid: string; startTime: number },
+  retryCtx?: RetryContext,
 ): Promise<void> {
-  try {
-    const result: PumpResult = await pumpSession(session, ctx)
+  let currentSession = session
+  let attempt = 0
 
-    if (result.outcome === 'batchReady') {
-      // Keep session alive for tool-result continuation
-      setActiveSession(sessionKey, session)
-    } else {
-      // Done or retry — persist conversation state and clean up
+  try {
+    for (;;) {
+      const result: PumpResult = await pumpSession(currentSession, ctx)
+
+      if (result.outcome === 'batchReady') {
+        // Keep session alive for tool-result continuation
+        setActiveSession(sessionKey, currentSession)
+        return
+      }
+
+      // ── Retryable failure — create a new session and retry ──
+      if (result.outcome === 'retry' && retryCtx && attempt < retryCtx.maxRetries) {
+        removeActiveSession(sessionKey)
+        currentSession.close()
+        attempt++
+        const delayMs = retryDelayMs(result.retryHint)
+        console.error(
+          `[proxy] Retry ${attempt}/${retryCtx.maxRetries} after ${result.retryHint}: ${result.error} (delay ${delayMs}ms)`,
+        )
+        await sleep(delayMs)
+
+        // New session with the same options — checkpoint preserves conversation state
+        currentSession = new CursorSession(retryCtx.sessionOptions)
+        retryCtx.req.on('close', () => {
+          if (currentSession.alive) {
+            currentSession.cancel()
+          }
+        })
+        continue
+      }
+
+      // ── Done or final retry failure — persist and clean up ──
       const stored = getConversationState(convKey)
       if (stored) {
         // Update lineage only after successful turn completion (outcome === 'done').
@@ -519,7 +607,15 @@ async function pumpAndFinalize(
         persistConversation(convKey, stored, convConfig)
       }
       removeActiveSession(sessionKey)
-      session.close()
+      currentSession.close()
+
+      // Surface the error when retries are exhausted
+      if (result.outcome === 'retry') {
+        ctx.sendChunk({ content: `\n[Error: ${result.error} (retries exhausted)]` })
+        ctx.sendChunk({}, 'stop')
+        ctx.sendDone()
+      }
+
       if (debugInfo) {
         const error = result.outcome === 'retry' ? result.error : undefined
         logRequestEnd(debugInfo.sid, debugInfo.rid, {
@@ -527,11 +623,12 @@ async function pumpAndFinalize(
           error,
         })
       }
+      return
     }
   } catch (error) {
     console.error('[proxy] pumpSession error:', error)
     removeActiveSession(sessionKey)
-    session.close()
+    currentSession.close()
     ctx.close()
     if (debugInfo) {
       logRequestEnd(debugInfo.sid, debugInfo.rid, {
