@@ -1,11 +1,11 @@
 # TP-005: Image content part bridging — Status
 
-**Current Step:** Not Started
-**Status:** 🔵 Ready for Execution
+**Current Step:** Step 3: Documentation & Delivery
+**Status:** ✅ Complete
 **Last Updated:** 2026-05-04
 **Review Level:** 0
 **Review Counter:** 0
-**Iteration:** 0
+**Iteration:** 1
 **Size:** S
 
 > **Hydration:** Checkboxes represent meaningful outcomes, not individual code
@@ -16,40 +16,40 @@
 
 ### Step 0: Preflight
 
-**Status:** ⬜ Not Started
+**Status:** ✅ Complete
 
-- [ ] Required files exist with expected exports
-- [ ] Tests pass before changes
+- [x] Required files exist with expected exports
+- [x] Tests pass before changes
 
 ---
 
 ### Step 1: Preserve image content parts
 
-**Status:** ⬜ Not Started
+**Status:** ✅ Complete
 
-- [ ] Extend `ContentPart` type to include image URL data
-- [ ] Add image extraction function and carry image parts through `parseMessages()`
+- [x] Extend `ContentPart` type to include image URL data
+- [x] Add image extraction function and carry image parts through `parseMessages()`
 
 ---
 
 ### Step 2: Testing & Verification
 
-**Status:** ⬜ Not Started
+**Status:** ✅ Complete
 
-- [ ] Add image content part tests to `openai-messages.test.ts`
-- [ ] FULL test suite passing
-- [ ] All failures fixed
-- [ ] Build passes
+- [x] Add image content part tests to `openai-messages.test.ts`
+- [x] FULL test suite passing
+- [x] All failures fixed
+- [x] Build passes
 
 ---
 
 ### Step 3: Documentation & Delivery
 
-**Status:** ⬜ Not Started
+**Status:** ✅ Complete
 
-- [ ] "Must Update" docs modified
-- [ ] "Check If Affected" docs reviewed
-- [ ] Discoveries logged
+- [x] "Must Update" docs modified
+- [x] "Check If Affected" docs reviewed (README.md — image support not yet user-visible, no change needed)
+- [x] Discoveries logged
 
 ---
 
@@ -62,16 +62,21 @@
 
 ## Discoveries
 
-| Discovery | Disposition | Location |
-| --------- | ----------- | -------- |
+| Discovery                                                   | Disposition                                                   | Location                                |
+| ----------------------------------------------------------- | ------------------------------------------------------------- | --------------------------------------- |
+| Proto file has no image message types — only model metadata | Out of scope — protobuf encoding handled in cursor-session.ts | packages/pi-cursor/proto/aiserver.proto |
 
 ---
 
 ## Execution Log
 
-| Timestamp  | Action      | Outcome                         |
-| ---------- | ----------- | ------------------------------- |
-| 2026-05-04 | Task staged | PROMPT.md and STATUS.md created |
+| Timestamp        | Action         | Outcome                          |
+| ---------------- | -------------- | -------------------------------- |
+| 2026-05-04       | Task staged    | PROMPT.md and STATUS.md created  |
+| 2026-05-04 05:55 | Task started   | Runtime V2 lane-runner execution |
+| 2026-05-04 05:55 | Step 0 started | Preflight                        |
+| 2026-05-04 06:02 | Worker iter 1  | done in 431s, tools: 75          |
+| 2026-05-04 06:02 | Task complete  | .DONE created                    |
 
 ---
 

@@ -112,6 +112,10 @@ _Avoid_: settings file, preferences
 A Pi command that opens a single-level settings menu. Each row opens a second selector of valid values. Settings persist to the Cursor Config file and take effect on new requests.
 _Avoid_: cursor settings, config command
 
+## Image Bridging
+
+The message parsing layer (`openai-messages.ts`) preserves image content parts from OpenAI-format requests. When a user sends `image_url` content parts (screenshots, diagrams), `extractImageParts()` extracts them and `parseMessages()` carries them through as `ImagePart[]` on both `ParsedMessages.images` (current turn) and `ParsedConversationTurn.images` (history turns). The `textContent()` function continues to return text only — images are a separate channel. Downstream consumers (e.g., `cursor-session.ts`) can access parsed images to encode them into Cursor's protobuf format.
+
 ## Relationships
 
 - The **Proxy** spawns one or more **Bridges** to handle concurrent requests, isolated by **Session ID**
