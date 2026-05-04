@@ -28,6 +28,10 @@ _Avoid_: lock file, discovery file
 The real Pi session ID, injected into every request via the `pi_session_id` field in the request body using a `before_provider_request` hook. Used to isolate Bridges, Checkpoints, and Blob Stores between different Pi sessions sharing the same Proxy.
 _Avoid_: session key, session token, X-Session-Id header
 
+**Session State**:
+The complete per-session state that the Proxy manages for a given Session ID: the active Bridge (if any), Conversation State (Checkpoint, Blob Store, Checkpoint Lineage), and lifecycle operations (resolve, register, commit, cleanup, evict). A single module behind one interface, keyed by Session ID. The Bridge and Conversation State have different lifetimes — the Bridge is ephemeral (one turn), the Conversation State is persistent (across turns and Proxy restarts) — but are managed together. Cleanup closes the Bridge without evicting Conversation State; TTL eviction removes both.
+_Avoid_: session manager, session tracker
+
 **Model Discovery**:
 A gRPC call to Cursor's `AvailableModels` or `GetUsableModels` endpoint that returns all models the user's subscription can access. Performed once on Proxy startup, and again on demand via the Internal API or `/cursor` command. When `modelMappings=normalized`, discovered models pass through the Model Normalization pipeline (`processModels`) before being registered with Pi.
 _Avoid_: model fetch, model sync
@@ -112,6 +116,18 @@ _Avoid_: settings file, preferences
 A Pi command registered via `pi.registerCommand('cursor', ...)` that opens a single-level settings menu. Displays four settings: Native Tools Mode (`reject`/`redirect`/`native`), Max Mode (`on`/`off`, hidden when `modelMappings=raw`), Model Mappings (`normalized`/`raw`), and Max Retries (`0`/`1`/`2`/`3`/`5`). Each row shows the current effective value and an `[ENV]` indicator when overridden by an environment variable. Env-overridden settings are read-only. Selecting a row opens a second selector with valid values. On selection, persists the change via `saveConfig()` to the Cursor Config file. When `modelMappings` changes, triggers provider re-registration by calling `register()`, which re-processes models through Model Normalization (or bypasses it for `raw` mode) and updates the Pi model picker.
 _Avoid_: cursor settings, config command
 
+**Tool Dispatch**:
+The module that routes incoming Cursor tool messages to the correct handler: exec messages (classify → reject/redirect/execute natively), interaction queries (web search, exa, ask question — all rejected), and exec control messages (abort). Owns the policy of which tool calls are handled and how; delegates actual native execution to the native-tools implementation. Separated from the message processor, which handles text streaming, Blob Store KV handshakes, and Checkpoint updates.
+_Avoid_: tool handler, tool router, exec handler
+
+**Request Lifecycle**:
+The module that owns the full lifecycle of a single `/v1/chat/completions` request inside the Proxy: parse the request body → resolve model → parse messages → resolve Session State → validate Checkpoint Lineage → build protobuf `RunRequest` → create Bridge → retry on transient failures → stream or collect response → commit Checkpoint and Lineage. Contains the request builder (protobuf assembly from OpenAI messages) as an internal seam. One deep entry point: `handleChatCompletion(req, res, ctx)`.
+_Avoid_: request handler, request pipeline
+
+**Proxy Context**:
+The shared Proxy state that is stable across requests and injected into each Request Lifecycle invocation: access token, normalized model set, conversation directory, global Cursor Config settings (Native Tools Mode, Max Mode, max retries), and Debug Logger functions.
+_Avoid_: server state, global config
+
 **Debug Logger**:
 A structured JSONL debug logger gated behind `PI_CURSOR_PROVIDER_DEBUG=1`. When enabled, appends one JSON object per line to `~/.pi/agent/cursor-debug.jsonl` (configurable via `PI_CURSOR_PROVIDER_EXTENSION_DEBUG_FILE`). When disabled, all log functions are zero-cost no-ops. Logs event types: `request_start`, `request_end`, `session_create`, `session_resume`, `checkpoint_commit`, `checkpoint_discard`, `retry`, `tool_call`, `bridge_open`, `bridge_close`, `lifecycle`. Each entry includes `timestamp` (ISO 8601), `type`, `sessionId`, `requestId`, and type-specific payload. A companion timeline script (`scripts/debug-log-timeline.mjs`) transforms JSONL logs into human-readable timelines grouped by request, with `--session`, `--since`, and `--until` filtering.
 _Avoid_: debug mode, verbose mode, trace
@@ -123,10 +139,11 @@ The message parsing layer (`openai-messages.ts`) preserves image content parts f
 ## Relationships
 
 - The **Proxy** spawns one or more **Bridges** to handle concurrent requests, isolated by **Session ID**
-- A **Bridge** translates tool calls according to the current **Native Tools Mode**: reject, redirect through Pi, or execute locally within the **Allowed Root**
+- **Tool Dispatch** routes incoming Cursor tool messages according to the current **Native Tools Mode**: reject, redirect through Pi, or execute locally within the **Allowed Root**
+- A **Bridge** carries tool calls that **Tool Dispatch** processes
 - A **Bridge** translates **MCP Tool** calls into OpenAI `tool_calls` for Pi, with results sent back as MCP protobuf
-- The **Proxy** persists **Checkpoints**, **Checkpoint Lineage**, and **Blob Store** data to disk, keyed by **Session ID** + conversation
-- The **Proxy** validates **Checkpoint Lineage** on every request — discards stale Checkpoints on fork, compaction, or branch navigation
+- **Session State** manages the active **Bridge** and **Conversation State** (Checkpoint, Blob Store, Checkpoint Lineage) as a unit, keyed by **Session ID**
+- **Session State** persists Conversation State to disk and validates **Checkpoint Lineage** on every request — discards stale Checkpoints on fork, compaction, or branch navigation
 - The **Proxy** exposes the **Internal API** for heartbeats, token delivery, model refresh, and **Lifecycle Cleanup**
 - Extension instances discover the **Proxy** via the **Port File**, or spawn a new one if none exists
 - **Model Discovery** results are cached to disk as the **Model Cache** for fast subsequent startups
@@ -134,6 +151,8 @@ The message parsing layer (`openai-messages.ts`) preserves image content parts f
 - **Effort Resolution** combines the normalized model, **Max Mode**, and Pi's reasoning-effort setting to reconstruct the final Cursor model ID
 - The **`/cursor` Command** edits the **Cursor Config** and triggers provider re-registration when **Model Normalization** mode changes
 - **Lifecycle Cleanup** hooks (`session_before_switch`, `session_before_fork`, `session_before_tree`, `session_shutdown`) call the Internal API to close active Bridges and evict state before session transitions
+- The **Request Lifecycle** orchestrates the full request path: Session State resolution → protobuf construction → Bridge creation → retry loop → response streaming → Checkpoint commit
+- The **Proxy Context** carries stable state (access token, models, config) into each **Request Lifecycle** invocation
 - On client disconnect, the Proxy sends a **CancelAction** protobuf to Cursor and suppresses pending Checkpoint commits to preserve the last committed state
 - The **Debug Logger** records structured events from both the Proxy (request lifecycle, sessions, checkpoints) and the extension (lifecycle hooks), output to JSONL when `PI_CURSOR_PROVIDER_DEBUG=1`
 
