@@ -16,7 +16,7 @@ import { join } from 'node:path'
 import { createInterface } from 'node:readline'
 
 import { resolveEffective } from './config.ts'
-import { jsonResponse } from './http-helpers.ts'
+import { errorResponse, jsonResponse } from './http-helpers.ts'
 import {
   configureInternalApi,
   getAccessToken,
@@ -48,7 +48,7 @@ function getNormalizedModelSet(): NormalizedModelSet {
 }
 
 /** Call when raw models change (discovery, refresh) to invalidate cached normalization */
-export function invalidateNormalizedModels(): void {
+function invalidateNormalizedModels(): void {
   cachedNormalizedSet = null
 }
 
@@ -63,10 +63,6 @@ function handleModelsRequest(res: ServerResponse, models: CursorModel[]): void {
     owned_by: 'cursor',
   }))
   jsonResponse(res, 200, { object: 'list', data })
-}
-
-function errorResponse(res: ServerResponse, status: number, message: string, code = 'server_error'): void {
-  jsonResponse(res, status, { error: { message, type: 'server_error', code } })
 }
 
 // ── Startup ──

@@ -46,7 +46,7 @@ import {
   logSessionCreate,
   logSessionResume,
 } from './debug-logger.ts'
-import { jsonResponse, readBody } from './http-helpers.ts'
+import { errorResponse, readBody } from './http-helpers.ts'
 import { resolveModelId, type NormalizedModelSet } from './model-normalization.ts'
 import { MCP_TOOL_PREFIX, resolveAllowedRoot } from './native-tools.ts'
 import { type OpenAIMessage, type OpenAIToolDef, parseMessages, selectToolsForChoice } from './openai-messages.ts'
@@ -62,6 +62,8 @@ import {
   closeBridge,
   commitTurn,
   computeLineageFingerprint,
+  deriveBridgeKey,
+  deriveConvKey,
   getConversationState,
   persistConversation,
   pruneBlobs,
@@ -132,15 +134,14 @@ function retryDelayMs(hint: RetryHint): number {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
-    setTimeout(resolve, ms)
+    setTimeout(resolve, ms).unref()
   })
 }
 
-// ── Validation ──
+/** Shared encoder instance — avoids repeated allocation in hot paths. */
+const encoder = new TextEncoder()
 
-function errorResponse(res: ServerResponse, status: number, message: string, code = 'server_error'): void {
-  jsonResponse(res, status, { error: { message, type: 'server_error', code } })
-}
+// ── Validation ──
 
 function isChatCompletionRequest(value: unknown): value is ChatCompletionRequest {
   if (!value || typeof value !== 'object') {
@@ -221,7 +222,7 @@ export function foldTurnsIntoSystemPrompt(
 
   // Try full fold first
   const fullFold = `${systemPrompt}\n\nPrevious conversation context:\n${contextParts.join('\n\n')}`
-  if (new TextEncoder().encode(fullFold).byteLength <= MAX_EFFECTIVE_PROMPT_BYTES) {
+  if (encoder.encode(fullFold).byteLength <= MAX_EFFECTIVE_PROMPT_BYTES) {
     return fullFold
   }
 
@@ -233,7 +234,7 @@ export function foldTurnsIntoSystemPrompt(
     `[proxy] Folded system prompt exceeds ${String(MAX_EFFECTIVE_PROMPT_BYTES)} bytes — truncating oldest turns`,
   )
   const prefix = `${systemPrompt}\n\nPrevious conversation context (oldest turns truncated):\n`
-  let budget = MAX_EFFECTIVE_PROMPT_BYTES - new TextEncoder().encode(prefix).byteLength
+  let budget = MAX_EFFECTIVE_PROMPT_BYTES - encoder.encode(prefix).byteLength
 
   // Partition into compaction and regular indices
   const compactionIndices: number[] = []
@@ -249,9 +250,9 @@ export function foldTurnsIntoSystemPrompt(
   // Reserve budget for compaction turns first (in original order)
   const keptIndices = new Set<number>()
   for (const idx of compactionIndices) {
-    const partBytes = new TextEncoder().encode(contextParts[idx]).byteLength + 2
+    const partBytes = encoder.encode(contextParts[idx]).byteLength + 2
     if (partBytes > budget) {
-      break
+      continue // skip oversized turn, try remaining
     }
     budget -= partBytes
     keptIndices.add(idx)
@@ -260,9 +261,9 @@ export function foldTurnsIntoSystemPrompt(
   // Fill remaining budget with regular turns, newest first
   for (let i = regularIndices.length - 1; i >= 0; i--) {
     const idx = regularIndices[i]
-    const partBytes = new TextEncoder().encode(contextParts[idx]).byteLength + 2
+    const partBytes = encoder.encode(contextParts[idx]).byteLength + 2
     if (partBytes > budget) {
-      break
+      continue // skip oversized turn, try remaining
     }
     budget -= partBytes
     keptIndices.add(idx)
@@ -528,8 +529,13 @@ async function pipeReaderToResponse(
         res.write(value)
       }
     }
-  } catch {
-    /* client disconnect */
+  } catch (error) {
+    // Expected: client disconnect (ECONNRESET, ERR_STREAM_PREMATURE_CLOSE).
+    // Log unexpected errors at debug level.
+    const { code } = error as NodeJS.ErrnoException
+    if (code !== 'ECONNRESET' && code !== 'ERR_STREAM_PREMATURE_CLOSE') {
+      console.error('[proxy] pipeReaderToResponse error:', error)
+    }
   } finally {
     if (!res.writableEnded) {
       res.end()
@@ -571,19 +577,18 @@ export async function handleChatCompletion(
 
   // Resolve the final Cursor model ID when normalization is active
   const cfg = ctx.config
+  const bodyRecord = body as unknown as Record<string, unknown>
   let modelId: string
   if (cfg.modelMappings === 'normalized') {
     const modelSet = ctx.getNormalizedSet()
     // Extract Pi's reasoning-effort from the request body (injected by Pi)
-    const bodyObj = body as unknown as Record<string, unknown>
-    const effort = typeof bodyObj.reasoning_effort === 'string' ? bodyObj.reasoning_effort : null
+    const effort = typeof bodyRecord.reasoning_effort === 'string' ? bodyRecord.reasoning_effort : null
     modelId = resolveModelId(requestedModelId, effort, cfg.maxMode, modelSet)
   } else {
     modelId = requestedModelId
   }
 
   // Prefer pi_session_id from body (injected by before_provider_request), fall back to header
-  const bodyRecord = body as unknown as Record<string, unknown>
   const sessionId =
     (typeof bodyRecord.pi_session_id === 'string' ? bodyRecord.pi_session_id : undefined) ??
     (req.headers['x-session-id'] as string | undefined) ??
@@ -606,7 +611,7 @@ export async function handleChatCompletion(
   if (toolResults.length > 0) {
     const { bridge: existingSession } = resolveSession(sessionId, convConfig)
     if (existingSession?.alive) {
-      logSessionResume(sessionId, requestId, { sessionKey: sessionId })
+      logSessionResume(sessionId, requestId, { sessionKey: deriveBridgeKey(sessionId) })
       const newResults = toolResults.map((r) => ({
         toolCallId: r.toolCallId,
         content: r.content,
@@ -666,7 +671,10 @@ export async function handleChatCompletion(
 
   // ── Fresh request ──
   const { conversation: stored, lineageInvalidated } = resolveSession(sessionId, convConfig, turns)
-  logSessionCreate(sessionId, requestId, { sessionKey: sessionId, conversationKey: sessionId })
+  logSessionCreate(sessionId, requestId, {
+    sessionKey: deriveBridgeKey(sessionId),
+    conversationKey: deriveConvKey(sessionId),
+  })
   if (lineageInvalidated) {
     logLineageInvalidation(sessionId, requestId, {
       storedTurnCount: stored.lineageTurnCount,

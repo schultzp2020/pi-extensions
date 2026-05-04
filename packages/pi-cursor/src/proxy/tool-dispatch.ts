@@ -54,7 +54,7 @@ import { buildRequestContext } from './request-context.ts'
 
 // ── Types ──
 
-export type NativeResultType =
+type NativeResultType =
   | 'readResult'
   | 'writeResult'
   | 'deleteResult'
@@ -78,7 +78,7 @@ export interface PendingExec {
 }
 
 /** Minimal state interface — satisfied by StreamState in cursor-messages. */
-export interface ToolDispatchState {
+interface ToolDispatchState {
   totalExecCount: number
 }
 
@@ -303,6 +303,8 @@ function sendUnknownExecResult(execMsg: ExecServerMessage, sendFrame: (data: Buf
       case: execMsg.message.case,
       id: execMsg.id,
     })
+    // Send a bare stream-close so the server doesn't hang waiting for a response
+    sendExecStreamClose(execMsg.id, sendFrame)
     return
   }
   const resultFieldNo = argsField.no

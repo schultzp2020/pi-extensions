@@ -20,14 +20,9 @@ import {
   WebSearchRequestQuerySchema,
   WriteArgsSchema,
 } from '../proto/agent_pb.ts'
-import {
-  createStreamState,
-  type ExecContext,
-  handleExecMessage,
-  processServerMessage,
-  type PendingExec,
-} from './cursor-messages.ts'
+import { createStreamState, processServerMessage } from './cursor-messages.ts'
 import { buildEnabledToolSet, MCP_TOOL_PREFIX } from './native-tools.ts'
+import { handleExecMessage, type PendingExec, type ToolDispatchContext } from './tool-dispatch.ts'
 
 const TOOL_DISABLED_REASON = (toolName: string): string => `Tool '${toolName}' is not enabled in this session`
 
@@ -202,7 +197,7 @@ function runExec(execMsg: ReturnType<typeof makeMcpExecMessage>, enabledToolName
   const sentFrames: Buffer[] = []
   const execs: PendingExec[] = []
 
-  const ctx: ExecContext = {
+  const ctx: ToolDispatchContext = {
     mcpTools: [],
     enabledToolNames,
     cloudRule: undefined,
@@ -537,15 +532,22 @@ describe('processServerMessage interaction query rejection', () => {
     ['exaFetchRequestQuery', 'exaFetchRequestResponse'],
   ] as const)('rejects %s queries (always rejected — no Pi tool equivalent)', (queryCase, responseCase) => {
     const sentFrames: Buffer[] = []
+    const state = createStreamState()
+    const sendFrame = (data: Buffer) => sentFrames.push(Buffer.from(data))
     const recognized = processServerMessage(makeInteractionMessage(queryCase), {
       blobStore: new Map(),
-      mcpTools: [],
-      enabledToolNames: buildEnabledToolSet([]),
-      nativeToolsMode: 'reject',
-      sendFrame: (data) => sentFrames.push(Buffer.from(data)),
-      state: createStreamState(),
+      sendFrame,
+      state,
       onText: () => {},
-      onMcpExec: () => {},
+      toolDispatch: {
+        sendFrame,
+        mcpTools: [],
+        enabledToolNames: buildEnabledToolSet([]),
+        cloudRule: undefined,
+        nativeToolsMode: 'reject',
+        onMcpExec: () => {},
+        state,
+      },
     })
 
     expect(recognized).toBeTruthy()
@@ -584,15 +586,22 @@ describe('processServerMessage interaction query rejection', () => {
       makeToolDefinition('bash'),
       makeToolDefinition('grep'),
     ])
+    const state = createStreamState()
+    const sendFrame = (data: Buffer) => sentFrames.push(Buffer.from(data))
     const recognized = processServerMessage(makeInteractionMessage(queryCase), {
       blobStore: new Map(),
-      mcpTools: [],
-      enabledToolNames,
-      nativeToolsMode: 'reject',
-      sendFrame: (data) => sentFrames.push(Buffer.from(data)),
-      state: createStreamState(),
+      sendFrame,
+      state,
       onText: () => {},
-      onMcpExec: () => {},
+      toolDispatch: {
+        sendFrame,
+        mcpTools: [],
+        enabledToolNames,
+        cloudRule: undefined,
+        nativeToolsMode: 'reject',
+        onMcpExec: () => {},
+        state,
+      },
     })
 
     expect(recognized).toBeTruthy()

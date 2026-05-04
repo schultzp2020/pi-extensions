@@ -61,6 +61,7 @@ vi.mock('./debug-logger.ts', () => ({
 vi.mock('./http-helpers.ts', () => ({
   readBody: vi.fn<() => unknown>(),
   jsonResponse: vi.fn<() => void>(),
+  errorResponse: vi.fn<() => void>(),
 }))
 
 // Mock model-normalization
@@ -80,7 +81,7 @@ vi.mock('./native-tools.ts', () => ({
   resolveAllowedRoot: vi.fn<(cwd: string) => string>((cwd: string) => cwd),
 }))
 
-import { readBody, jsonResponse } from './http-helpers.ts'
+import { readBody, errorResponse } from './http-helpers.ts'
 import { collectNonStreamingResponse, pumpSession, createSSECtx } from './openai-stream.ts'
 import { handleChatCompletion } from './request-lifecycle.ts'
 import { commitTurn, persistConversation, resetConversation, resolveSession } from './session-state.ts'
@@ -415,14 +416,7 @@ describe('handleChatCompletion', () => {
 
       await handleChatCompletion(req, res, ctx)
 
-      expect(jsonResponse).toHaveBeenCalledWith(
-        res,
-        401,
-        expect.objectContaining({
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-          error: expect.objectContaining({ message: 'No access token configured' }),
-        }),
-      )
+      expect(errorResponse).toHaveBeenCalledWith(res, 401, 'No access token configured')
     })
   })
 })

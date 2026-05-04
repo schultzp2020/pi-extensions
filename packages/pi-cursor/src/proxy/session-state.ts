@@ -80,12 +80,15 @@ const conversationCache = new Map<string, StoredConversation>()
 
 // ── Internal helpers ──
 
-/**
- * Derive a single internal key from a raw Session ID.  This replaces
- * the previous deriveSessionKey + deriveConversationKey with one function.
- */
-function deriveKey(sessionId: string): string {
+/** Derive the bridge (session) map key from a raw Session ID. */
+export function deriveBridgeKey(sessionId: string): string {
   return createHash('sha256').update(`session:${sessionId}`).digest('hex').slice(0, 16)
+}
+
+/** Derive the conversation cache/disk key from a raw Session ID.
+ *  Uses `conv:` prefix for backward compatibility with existing disk files. */
+export function deriveConvKey(sessionId: string): string {
+  return createHash('sha256').update(`conv:${sessionId}`).digest('hex').slice(0, 16)
 }
 
 function diskPath(key: string, config: ConversationConfig): string {
@@ -190,6 +193,8 @@ export function resetConversation(stored: StoredConversation): void {
   stored.checkpointHistory.clear()
   stored.checkpointArchive.clear()
   stored.blobStore.clear()
+  stored.lineageTurnCount = 0
+  stored.lineageFingerprint = null
 }
 
 /**
@@ -218,7 +223,7 @@ export function pruneBlobs(blobStore: Map<string, Uint8Array>): number {
  */
 export function persistConversation(sessionId: string, stored: StoredConversation, config: ConversationConfig): void {
   mkdirSync(config.conversationDiskDir, { recursive: true, mode: 0o700 })
-  const key = deriveKey(sessionId)
+  const key = deriveConvKey(sessionId)
 
   const data: DiskFormat = {
     conversationId: stored.conversationId,
@@ -253,27 +258,28 @@ export function resolveSession(
   config: ConversationConfig,
   history?: Pick<ParsedConversationTurn, 'userText'>[],
 ): SessionResolution {
-  const key = deriveKey(sessionId)
+  const bKey = deriveBridgeKey(sessionId)
+  const cKey = deriveConvKey(sessionId)
 
   // ── Bridge ──
-  const bridgeEntry = bridges.get(key)
+  const bridgeEntry = bridges.get(bKey)
   if (bridgeEntry) {
     bridgeEntry.lastAccessMs = Date.now()
   }
   const bridge = bridgeEntry?.bridge
 
   // ── Conversation ──
-  let conversation = conversationCache.get(key)
+  let conversation = conversationCache.get(cKey)
   if (conversation) {
     conversation.lastAccessMs = Date.now()
   } else {
-    const fromDisk = loadFromDisk(key, config)
+    const fromDisk = loadFromDisk(cKey, config)
     if (fromDisk) {
-      conversationCache.set(key, fromDisk)
+      conversationCache.set(cKey, fromDisk)
       conversation = fromDisk
     } else {
       const fresh = createFreshConversation()
-      conversationCache.set(key, fresh)
+      conversationCache.set(cKey, fresh)
       conversation = fresh
     }
   }
@@ -298,7 +304,7 @@ export function resolveSession(
  * Register a Bridge (CursorSession) for a session.
  */
 export function registerBridge(sessionId: string, bridge: CursorSession): void {
-  const key = deriveKey(sessionId)
+  const key = deriveBridgeKey(sessionId)
   bridges.set(key, { bridge, lastAccessMs: Date.now() })
 }
 
@@ -307,7 +313,7 @@ export function registerBridge(sessionId: string, bridge: CursorSession): void {
  * Prunes blobs before persisting.
  */
 export function commitTurn(sessionId: string, lineage: LineageMetadata, config: ConversationConfig): void {
-  const key = deriveKey(sessionId)
+  const key = deriveConvKey(sessionId)
   const stored = conversationCache.get(key)
   if (!stored) {
     return
@@ -327,7 +333,7 @@ export function commitTurn(sessionId: string, lineage: LineageMetadata, config: 
  * are terminated immediately.
  */
 export function cleanup(sessionId: string): void {
-  const key = deriveKey(sessionId)
+  const key = deriveBridgeKey(sessionId)
   const entry = bridges.get(key)
   if (entry) {
     entry.bridge.cancel()
@@ -340,7 +346,7 @@ export function cleanup(sessionId: string): void {
  * completes normally and the Bridge is no longer needed.
  */
 export function closeBridge(sessionId: string): void {
-  const key = deriveKey(sessionId)
+  const key = deriveBridgeKey(sessionId)
   const entry = bridges.get(key)
   if (entry) {
     entry.bridge.close()
@@ -353,7 +359,7 @@ export function closeBridge(sessionId: string): void {
  * Returns undefined if not cached.  Does NOT load from disk.
  */
 export function getConversationState(sessionId: string): StoredConversation | undefined {
-  const key = deriveKey(sessionId)
+  const key = deriveConvKey(sessionId)
   const stored = conversationCache.get(key)
   if (stored) {
     stored.lastAccessMs = Date.now()
@@ -369,20 +375,14 @@ export function getConversationState(sessionId: string): StoredConversation | un
 export function evict(): void {
   const now = Date.now()
 
-  // First: evict stale conversations (and close their bridges)
+  // Evict stale conversations
   for (const [key, stored] of conversationCache) {
     if (now - stored.lastAccessMs > SESSION_TTL_MS) {
       conversationCache.delete(key)
-      // Asymmetric: evicting a conversation also closes its Bridge
-      const bridgeEntry = bridges.get(key)
-      if (bridgeEntry) {
-        bridgeEntry.bridge.close()
-        bridges.delete(key)
-      }
     }
   }
 
-  // Then: evict stale bridges that outlived their conversation
+  // Evict stale bridges
   for (const [key, entry] of bridges) {
     if (now - entry.lastAccessMs > SESSION_TTL_MS) {
       entry.bridge.close()
@@ -395,8 +395,10 @@ export function evict(): void {
  * Remove a session's conversation from the in-memory cache.
  */
 export function invalidateSession(sessionId: string): void {
-  const key = deriveKey(sessionId)
-  conversationCache.delete(key)
+  const bKey = deriveBridgeKey(sessionId)
+  const cKey = deriveConvKey(sessionId)
+  bridges.delete(bKey)
+  conversationCache.delete(cKey)
 }
 
 /**

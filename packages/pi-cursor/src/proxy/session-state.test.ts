@@ -254,20 +254,23 @@ describe('cleanup', () => {
 // ── evict (removes both stale Bridge and Conversation) ──
 
 describe('evict', () => {
-  it('evicts stale conversations and closes their bridges', () => {
-    const { bridge, closeFn } = mockBridge()
+  it('evicts stale conversations independently of bridges', () => {
+    const { bridge } = mockBridge()
     registerBridge('test-session', bridge)
     const { conversation } = resolveSession('test-session', config)
 
-    // Backdate lastAccessMs to make it stale
+    // Backdate conversation to make it stale
     conversation.lastAccessMs = Date.now() - 31 * 60 * 1000
 
     evict()
 
-    // Both conversation and bridge are gone
+    // Conversation is evicted
     const state = getConversationState('test-session')
     expect(state).toBeUndefined()
-    expect(closeFn).toHaveBeenCalledOnce()
+
+    // Bridge uses a different key — still alive until it goes stale independently
+    const resolved = resolveSession('test-session', config)
+    expect(resolved.bridge).toBeDefined()
   })
 
   it('evicts stale bridges without conversations', () => {

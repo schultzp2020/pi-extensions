@@ -18,16 +18,10 @@ import {
   type InteractionUpdate,
   KvClientMessageSchema,
   type KvServerMessage,
-  type McpToolDefinition,
   SetBlobResultSchema,
 } from '../proto/agent_pb.ts'
-import type { NativeToolsMode } from './config.ts'
 import { frameConnectMessage } from './connect-protocol.ts'
 import { type PendingExec, type ToolDispatchContext, handleToolMessage } from './tool-dispatch.ts'
-
-// Re-export types and functions that existing consumers depend on
-export type { PendingExec, ToolDispatchContext as ExecContext } from './tool-dispatch.ts'
-export { handleExecMessage } from './tool-dispatch.ts'
 
 export interface StreamState {
   toolCallIndex: number
@@ -151,32 +145,8 @@ export interface MessageProcessorContext {
   onText: (text: string, isThinking: boolean) => void
   onCheckpoint?: (checkpointBytes: Uint8Array) => void
   onNotify?: (text: string) => void
-  /** Tool dispatch context. When provided, used directly for tool routing. */
-  toolDispatch?: ToolDispatchContext
-  // ── Legacy flat fields (deprecated — use toolDispatch) ──
-  mcpTools?: McpToolDefinition[]
-  enabledToolNames?: Set<string>
-  cloudRule?: string
-  nativeToolsMode?: NativeToolsMode
-  allowedRoot?: string
-  onMcpExec?: (exec: PendingExec) => void
-}
-
-/** Build a ToolDispatchContext from the MessageProcessorContext, preferring toolDispatch if present. */
-function resolveToolDispatch(ctx: MessageProcessorContext): ToolDispatchContext {
-  if (ctx.toolDispatch) {
-    return ctx.toolDispatch
-  }
-  return {
-    sendFrame: ctx.sendFrame,
-    mcpTools: ctx.mcpTools ?? [],
-    enabledToolNames: ctx.enabledToolNames ?? new Set(),
-    cloudRule: ctx.cloudRule,
-    nativeToolsMode: ctx.nativeToolsMode ?? 'redirect',
-    allowedRoot: ctx.allowedRoot,
-    onMcpExec: ctx.onMcpExec ?? (() => {}),
-    state: ctx.state,
-  }
+  /** Tool dispatch context for tool routing. */
+  toolDispatch: ToolDispatchContext
 }
 
 /** Returns true if the message was a recognized type (real server activity, not keepalive). */
@@ -184,7 +154,7 @@ export function processServerMessage(msg: AgentServerMessage, ctx: MessageProces
   const msgCase = msg.message.case
 
   // Delegate tool-related messages (exec, interaction query, exec control)
-  if (handleToolMessage(msg, resolveToolDispatch(ctx))) {
+  if (handleToolMessage(msg, ctx.toolDispatch)) {
     return true
   }
 
