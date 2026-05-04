@@ -1,6 +1,6 @@
 # TP-011: Structured debug logging and timeline — Status
 
-**Current Step:** Step 1: Create debug logger module
+**Current Step:** Step 2: Wire logging into proxy and extension
 **Status:** 🟡 In Progress
 **Last Updated:** 2026-05-04
 **Review Level:** 0
@@ -26,17 +26,17 @@
 
 ### Step 1: Create debug logger module
 
-**Status:** 🟨 In Progress
+**Status:** ✅ Complete
 
-- [ ] Create `debug-logger.ts` with JSONL logging gated behind env var
-- [ ] Implement all event type log functions
-- [ ] Ensure zero overhead when disabled
+- [x] Create `debug-logger.ts` with JSONL logging gated behind env var
+- [x] Implement all event type log functions
+- [x] Ensure zero overhead when disabled (early return on !\_enabled)
 
 ---
 
 ### Step 2: Wire logging into proxy and extension
 
-**Status:** ⬜ Not Started
+**Status:** 🟨 In Progress
 
 - [ ] Wire debug logging into proxy request handling in `main.ts`
 - [ ] Add extension-level lifecycle event logging in `index.ts`
