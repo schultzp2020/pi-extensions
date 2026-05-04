@@ -29,7 +29,7 @@ The real Pi session ID, injected into every request via the `pi_session_id` fiel
 _Avoid_: session key, session token, X-Session-Id header
 
 **Model Discovery**:
-A gRPC call to Cursor's `AvailableModels` or `GetUsableModels` endpoint that returns all models the user's subscription can access. Performed once on Proxy startup, and again on demand via the Internal API or `/cursor` command.
+A gRPC call to Cursor's `AvailableModels` or `GetUsableModels` endpoint that returns all models the user's subscription can access. Performed once on Proxy startup, and again on demand via the Internal API or `/cursor` command. When `modelMappings=normalized`, discovered models pass through the Model Normalization pipeline (`processModels`) before being registered with Pi.
 _Avoid_: model fetch, model sync
 
 **Model Cache**:
@@ -37,7 +37,7 @@ A JSON file on disk containing the last successful Model Discovery result. Used 
 _Avoid_: model list, model registry
 
 **Fallback Models**:
-A static JSON file (`cursor-models-raw.json`) shipped with the extension containing a snapshot of known Cursor model IDs. Used to register models before login when no Model Cache exists.
+A static model list (`fallback-models.ts`) bundled with the extension containing a snapshot of known Cursor model IDs. Used to register models before login when no Model Cache exists. Also available as `cursor-models-raw.json` for reference.
 _Avoid_: default models, hardcoded models
 
 **Model Normalization**:

@@ -1,7 +1,7 @@
 # TP-006: Model normalization and effort mapping — Status
 
-**Current Step:** Step 3: Testing & Verification
-**Status:** 🟡 In Progress
+**Current Step:** Step 4: Documentation & Delivery (final)
+**Status:** ✅ Complete
 **Last Updated:** 2026-05-04
 **Review Level:** 1
 **Review Counter:** 0
@@ -58,11 +58,11 @@
 
 ### Step 4: Documentation & Delivery
 
-**Status:** ⬜ Not Started
+**Status:** ✅ Complete
 
-- [ ] "Must Update" docs modified
-- [ ] "Check If Affected" docs reviewed
-- [ ] Discoveries logged
+- [x] "Must Update" docs modified
+- [x] "Check If Affected" docs reviewed
+- [x] Discoveries logged
 
 ---
 
@@ -75,8 +75,11 @@
 
 ## Discoveries
 
-| Discovery | Disposition | Location |
-| --------- | ----------- | -------- |
+| Discovery                                                                                              | Disposition | Location                                    |
+| ------------------------------------------------------------------------------------------------------ | ----------- | ------------------------------------------- |
+| `cursor-models-raw.json` kept alongside `fallback-models.ts` for reference                             | Documented  | `packages/pi-cursor/src/`                   |
+| Import attributes (`with { type: 'json' }`) not supported by rolldown tsconfig; used TS module instead | Documented  | `packages/pi-cursor/src/fallback-models.ts` |
+| `invalidateNormalizedModels()` exported from main.ts for future use by internal-api refresh            | Tech debt   | `packages/pi-cursor/src/proxy/main.ts`      |
 
 ---
 

@@ -42,7 +42,9 @@ Select **Cursor** from the provider dropdown, then your browser opens to Cursor'
 /model
 ```
 
-Pick any Cursor model from the list. Models that support max mode appear as both `model-name` and `model-name-max` variants.
+Pick any Cursor model from the list. By default (`modelMappings=normalized`), effort-level variants are collapsed — e.g. `gpt-5.4-low`, `gpt-5.4-medium`, `gpt-5.4-high` become a single `gpt-5.4` entry, with Pi's reasoning-effort setting controlling the variant sent to Cursor.
+
+Set `modelMappings` to `raw` (or `PI_CURSOR_RAW_MODELS=1`) to see all raw Cursor model variants.
 
 ### 3. Chat
 
