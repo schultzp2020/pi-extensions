@@ -153,14 +153,15 @@ export function persistConversation(convKey: string, stored: StoredConversation,
 
 /**
  * Compute a SHA256 fingerprint from the completed conversation turns.
- * The fingerprint covers user and assistant text of each turn in order.
+ * The fingerprint covers only user text of each turn in order, so that
+ * it can be computed after turn completion without capturing the streamed
+ * assistant response text.  Same-depth forks with different user messages
+ * are detected; same-message re-rolls are exceedingly rare and tolerated.
  */
-export function computeLineageFingerprint(turns: ParsedConversationTurn[]): string {
+export function computeLineageFingerprint(turns: Pick<ParsedConversationTurn, 'userText'>[]): string {
   const hash = createHash('sha256')
   for (const turn of turns) {
     hash.update(turn.userText)
-    hash.update('\0')
-    hash.update(turn.assistantText)
     hash.update('\0')
   }
   return hash.digest('hex')

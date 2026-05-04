@@ -1,11 +1,11 @@
 # TP-007: Checkpoint lineage for fork and compaction safety — Status
 
-**Current Step:** Step 1: Add lineage metadata to StoredConversation
+**Current Step:** Step 3: Testing & Verification
 **Status:** 🟡 In Progress
 **Last Updated:** 2026-05-04
 **Review Level:** 1
 **Review Counter:** 0
-**Iteration:** 2
+**Iteration:** 3
 **Size:** M
 
 > **Hydration:** Checkboxes represent meaningful outcomes, not individual code
@@ -16,7 +16,7 @@
 
 ### Step 0: Preflight
 
-**Status:** ✅ Done
+**Status:** ✅ Complete
 
 - [x] Required files exist with expected exports
 - [x] TP-004 changes present (stable session identity)
@@ -26,7 +26,7 @@
 
 ### Step 1: Add lineage metadata to StoredConversation
 
-**Status:** ✅ Done
+**Status:** ✅ Complete
 
 - [x] Add lineage fields and types to `StoredConversation`
 - [x] Implement `computeLineageFingerprint()`, `validateLineage()`, `shouldDiscardCheckpoint()`
@@ -36,11 +36,11 @@
 
 ### Step 2: Validate lineage on every request
 
-**Status:** ⬜ Not Started
+**Status:** ✅ Complete
 
-- [ ] Compute incoming lineage from message history before using checkpoint
-- [ ] Discard stale checkpoint on lineage mismatch
-- [ ] Update lineage only after successful turn completion
+- [x] Compute incoming lineage from message history before using checkpoint
+- [x] Discard stale checkpoint on lineage mismatch
+- [x] Update lineage only after successful turn completion
 
 ---
 
@@ -88,6 +88,7 @@
 | 2026-05-04 06:40 | Step 0 started | Preflight                                       |
 | 2026-05-04 06:41 | Worker iter 1  | done in 10s, tools: 2                           |
 | 2026-05-04 06:41 | No progress    | Iteration 1: 0 new checkboxes (1/3 stall limit) |
+| 2026-05-04 06:45 | Worker iter 2  | done in 286s, tools: 40                         |
 
 ---
 

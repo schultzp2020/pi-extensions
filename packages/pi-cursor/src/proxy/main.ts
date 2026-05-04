@@ -37,10 +37,13 @@ import {
 } from '../proto/agent_pb.ts'
 import { resolveEffective } from './config.ts'
 import {
+  computeLineageFingerprint,
   getConversationState,
   persistConversation,
   resolveConversationState,
+  validateLineage,
   type ConversationConfig,
+  type LineageMetadata,
   evictStaleConversations,
 } from './conversation-state.ts'
 import { CursorSession, type SessionOptions } from './cursor-session.ts'
@@ -244,7 +247,7 @@ let cachedNormalizedSet: NormalizedModelSet | null = null
 
 /** Get or build the normalized model set from the current raw models */
 function getNormalizedModelSet(): NormalizedModelSet {
-  cachedNormalizedSet ??= processModels(getCachedModels());
+  cachedNormalizedSet ??= processModels(getCachedModels())
   return cachedNormalizedSet
 }
 
@@ -345,13 +348,15 @@ async function handleChatCompletion(
         }
       })
 
+      const toolLineageInfo: LineageInfo = { turns, userText }
+
       if (stream) {
         const completionId = `chatcmpl-${randomUUID().replaceAll('-', '').slice(0, 28)}`
         const created = Math.floor(Date.now() / 1000)
         const readableStream = new ReadableStream({
           start(controller) {
             const ctx = createSSECtx(controller, modelId, completionId, created)
-            void pumpAndFinalize(existingSession, ctx, sessionKey, convKey, convConfig, {
+            void pumpAndFinalize(existingSession, ctx, sessionKey, convKey, convConfig, toolLineageInfo, {
               sid: sessionId,
               rid: requestId,
               startTime: requestStartTime,
@@ -363,6 +368,14 @@ async function handleChatCompletion(
         void pipeReaderToResponse(reader, res)
       } else {
         const response = await collectNonStreamingResponse(existingSession, modelId)
+        // Update lineage after successful tool-result turn completion
+        const stored = getConversationState(convKey)
+        if (stored && response.ok) {
+          const completedTurns = [...turns, { userText }]
+          stored.lineageTurnCount = completedTurns.length
+          stored.lineageFingerprint = computeLineageFingerprint(completedTurns)
+          persistConversation(convKey, stored, convConfig)
+        }
         removeActiveSession(sessionKey)
         logRequestEnd(sessionId, requestId, { durationMs: Date.now() - requestStartTime })
         res.writeHead(response.status, Object.fromEntries(response.headers.entries()))
@@ -377,6 +390,21 @@ async function handleChatCompletion(
   // ── Fresh request ──
   logSessionCreate(sessionId, requestId, { sessionKey, conversationKey: convKey })
   const stored = resolveConversationState(convKey, convConfig)
+
+  // ── Lineage validation ──
+  // Compute incoming lineage from completed turns and validate against stored lineage.
+  // On mismatch (fork, compaction, branch switch), discard the stale checkpoint.
+  const incomingLineage: LineageMetadata = {
+    turnCount: turns.length,
+    fingerprint: computeLineageFingerprint(turns),
+  }
+  if (stored.checkpoint !== null && !validateLineage(stored, incomingLineage)) {
+    stored.checkpoint = null
+    stored.checkpointHistory.clear()
+    stored.checkpointArchive.clear()
+    stored.blobStore.clear()
+  }
+
   const effectiveUserText = userText || (toolResults.length > 0 ? toolResults.map((r) => r.content).join('\n') : '')
   const payload = buildCursorRequest(
     modelId,
@@ -417,13 +445,15 @@ async function handleChatCompletion(
     }
   })
 
+  const lineageInfo: LineageInfo = { turns, userText: effectiveUserText }
+
   if (stream) {
     const completionId = `chatcmpl-${randomUUID().replaceAll('-', '').slice(0, 28)}`
     const created = Math.floor(Date.now() / 1000)
     const readableStream = new ReadableStream({
       start(controller) {
         const ctx = createSSECtx(controller, modelId, completionId, created)
-        void pumpAndFinalize(session, ctx, sessionKey, convKey, convConfig, {
+        void pumpAndFinalize(session, ctx, sessionKey, convKey, convConfig, lineageInfo, {
           sid: sessionId,
           rid: requestId,
           startTime: requestStartTime,
@@ -435,11 +465,25 @@ async function handleChatCompletion(
     void pipeReaderToResponse(reader, res)
   } else {
     const response = await collectNonStreamingResponse(session, modelId)
+    // Update lineage after successful non-streaming turn completion
+    if (response.ok) {
+      const completedTurns = [...turns, { userText: effectiveUserText }]
+      stored.lineageTurnCount = completedTurns.length
+      stored.lineageFingerprint = computeLineageFingerprint(completedTurns)
+    }
     persistConversation(convKey, stored, convConfig)
     logRequestEnd(sessionId, requestId, { durationMs: Date.now() - requestStartTime })
     res.writeHead(response.status, Object.fromEntries(response.headers.entries()))
     res.end(await response.text())
   }
+}
+
+/**
+ * Lineage context for updating lineage after successful turn completion.
+ */
+interface LineageInfo {
+  turns: { userText: string }[]
+  userText: string
 }
 
 /**
@@ -452,6 +496,7 @@ async function pumpAndFinalize(
   sessionKey: string,
   convKey: string,
   convConfig: ConversationConfig,
+  lineageInfo?: LineageInfo,
   debugInfo?: { sid: string; rid: string; startTime: number },
 ): Promise<void> {
   try {
@@ -464,6 +509,13 @@ async function pumpAndFinalize(
       // Done or retry — persist conversation state and clean up
       const stored = getConversationState(convKey)
       if (stored) {
+        // Update lineage only after successful turn completion (outcome === 'done').
+        // On retry/error, preserve previous committed lineage.
+        if (result.outcome === 'done' && lineageInfo) {
+          const completedTurns = [...lineageInfo.turns, { userText: lineageInfo.userText }]
+          stored.lineageTurnCount = completedTurns.length
+          stored.lineageFingerprint = computeLineageFingerprint(completedTurns)
+        }
         persistConversation(convKey, stored, convConfig)
       }
       removeActiveSession(sessionKey)
