@@ -1,6 +1,6 @@
 # TP-011: Structured debug logging and timeline — Status
 
-**Current Step:** Step 3: Create timeline script
+**Current Step:** Step 4: Testing & Verification
 **Status:** 🟡 In Progress
 **Last Updated:** 2026-05-04
 **Review Level:** 0
@@ -45,17 +45,17 @@
 
 ### Step 3: Create timeline script
 
-**Status:** 🟨 In Progress
+**Status:** ✅ Complete
 
-- [ ] Create `debug-log-timeline.mjs` with JSONL parsing and timeline output
-- [ ] Support filtering by session and time range
-- [ ] Include summary statistics
+- [x] Create `debug-log-timeline.mjs` with JSONL parsing and timeline output
+- [x] Support filtering by session and time range
+- [x] Include summary statistics
 
 ---
 
 ### Step 4: Testing & Verification
 
-**Status:** ⬜ Not Started
+**Status:** 🟨 In Progress
 
 - [ ] FULL test suite passing
 - [ ] All failures fixed
