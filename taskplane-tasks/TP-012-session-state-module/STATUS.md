@@ -1,6 +1,6 @@
 # TP-012: Session State Module — Status
 
-**Current Step:** Step 0: Preflight
+**Current Step:** Step 1: Create session-state.ts
 **Status:** 🟡 In Progress
 **Last Updated:** 2026-05-04
 **Review Level:** 1
@@ -27,13 +27,13 @@
 
 ### Step 1: Create session-state.ts
 
-**Status:** ⬜ Not Started
+**Status:** ✅ Complete
 
-- [ ] Create `session-state.ts` with merged functionality and unified interface
-- [ ] Implement single internal key derivation
-- [ ] Implement asymmetric lifetime (cleanup vs evict)
-- [ ] Preserve all existing conversation-state internals
-- [ ] Run targeted tests
+- [x] Create `session-state.ts` with merged functionality and unified interface
+- [x] Implement single internal key derivation
+- [x] Implement asymmetric lifetime (cleanup vs evict)
+- [x] Preserve all existing conversation-state internals
+- [x] Run targeted tests
 
 ---
 
@@ -86,11 +86,11 @@
 
 ## Execution Log
 
-| Timestamp  | Action      | Outcome                         |
-| ---------- | ----------- | ------------------------------- |
-| 2026-05-04 | Task staged | PROMPT.md and STATUS.md created |
-| 2026-05-04 19:16 | Task started | Runtime V2 lane-runner execution |
-| 2026-05-04 19:16 | Step 0 started | Preflight |
+| Timestamp        | Action         | Outcome                          |
+| ---------------- | -------------- | -------------------------------- |
+| 2026-05-04       | Task staged    | PROMPT.md and STATUS.md created  |
+| 2026-05-04 19:16 | Task started   | Runtime V2 lane-runner execution |
+| 2026-05-04 19:16 | Step 0 started | Preflight                        |
 
 ---
 
