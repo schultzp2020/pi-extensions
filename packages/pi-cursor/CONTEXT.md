@@ -49,7 +49,7 @@ A key-value store of binary data (system prompts, conversation chunks) that Curs
 _Avoid_: cache, KV store
 
 **Native Tool Redirection**:
-Intercepting Cursor's built-in tool calls and translating them to Pi's equivalent tools where a clean mapping exists (readArgs→read, shellArgs→bash, grepArgs→grep, writeArgs→write, lsArgs→glob, deleteArgs→bash rm, fetchArgs→bash curl). Redirects are gated against the session's enabled tool set before execution, so disabled tools are rejected instead of bypassing Pi's requested `tools` array. The result flows back as native protobuf so the model never retries. Obscure tools with no Pi equivalent (diagnostics, computerUse, recordScreen, backgroundShellSpawn) are rejected with an explanatory error.
+Intercepting Cursor's built-in tool calls and translating them to Pi's equivalent tools where a clean mapping exists (readArgs→read, shellArgs→bash, grepArgs→grep, writeArgs→write, lsArgs→ls, deleteArgs→bash rm, fetchArgs→bash curl). Redirects are gated against the session's enabled tool set before execution, so disabled tools are rejected instead of bypassing Pi's requested `tools` array. The result flows back as native protobuf so the model never retries. Obscure tools with no Pi equivalent (diagnostics, computerUse, recordScreen, backgroundShellSpawn) are rejected with an explanatory error.
 _Avoid_: tool mapping, tool proxy, native tool rejection
 
 **Tool Gating**:

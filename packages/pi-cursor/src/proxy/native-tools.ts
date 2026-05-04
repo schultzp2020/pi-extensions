@@ -31,30 +31,32 @@ export function fixMcpArgNames(toolName: string, args: Record<string, unknown>):
   }
 }
 
+/**
+ * Exec cases that map to Pi tools via native redirection.
+ * Shared between classifyExecMessage and nativeToMcpRedirect to prevent list drift.
+ */
+export const REDIRECTABLE_EXEC_CASES = new Set([
+  'readArgs',
+  'writeArgs',
+  'deleteArgs',
+  'shellArgs',
+  'shellStreamArgs',
+  'lsArgs',
+  'grepArgs',
+  'fetchArgs',
+])
+
 export type ExecClassification = 'redirect' | 'passthrough' | 'internal' | 'reject'
 
 /** Classifies a Cursor exec message type for routing: redirect to Pi, pass through, handle internally, or reject. */
 export function classifyExecMessage(execCase: string): ExecClassification {
-  const redirectable = [
-    'readArgs',
-    'writeArgs',
-    'deleteArgs',
-    'shellArgs',
-    'shellStreamArgs',
-    'lsArgs',
-    'grepArgs',
-    'fetchArgs',
-  ]
-  const passthrough = ['mcpArgs']
-  const internal = ['requestContextArgs']
-
-  if (redirectable.includes(execCase)) {
+  if (REDIRECTABLE_EXEC_CASES.has(execCase)) {
     return 'redirect'
   }
-  if (passthrough.includes(execCase)) {
+  if (execCase === 'mcpArgs') {
     return 'passthrough'
   }
-  if (internal.includes(execCase)) {
+  if (execCase === 'requestContextArgs') {
     return 'internal'
   }
   return 'reject'

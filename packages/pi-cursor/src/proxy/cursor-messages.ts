@@ -407,15 +407,17 @@ function handleKvMessage(
   }
 }
 
-export function handleExecMessage(
-  execMsg: ExecServerMessage,
-  mcpTools: McpToolDefinition[],
-  enabledToolNames: Set<string>,
-  cloudRule: string | undefined,
-  sendFrame: (data: Buffer) => void,
-  onMcpExec: (exec: PendingExec) => void,
-  state?: StreamState,
-): void {
+export interface ExecContext {
+  mcpTools: McpToolDefinition[]
+  enabledToolNames: Set<string>
+  cloudRule: string | undefined
+  sendFrame: (data: Buffer) => void
+  onMcpExec: (exec: PendingExec) => void
+  state?: StreamState
+}
+
+export function handleExecMessage(execMsg: ExecServerMessage, ctx: ExecContext): void {
+  const { mcpTools, enabledToolNames, cloudRule, sendFrame, onMcpExec, state } = ctx
   const execCase = execMsg.message.case
 
   // MCP tool calls — decode args and pass through
@@ -543,6 +545,11 @@ export function handleExecMessage(
   sendUnknownExecResult(execMsg, sendFrame)
 }
 
+/**
+ * Interaction queries (web search, exa search/fetch, questions) are Cursor-internal
+ * features with no Pi tool equivalent. They are always rejected regardless of
+ * enabledToolNames — they were never in Pi's tool set to begin with.
+ */
 function handleInteractionQuery(query: any, sendFrame: (data: Buffer) => void): void {
   const queryId: number = (query.id as number) || 0
   const queryCase: string = (query.query?.case as string) || 'unknown'
@@ -551,6 +558,8 @@ function handleInteractionQuery(query: any, sendFrame: (data: Buffer) => void): 
   let responseResult: { case: string; value: unknown } | undefined
 
   if (queryCase === 'webSearchRequestQuery') {
+    const searchTerm: string = (query.query?.value?.args?.searchTerm as string) || ''
+    console.warn('[cursor-messages] rejected interaction query', { type: queryCase, searchTerm })
     responseResult = {
       case: 'webSearchRequestResponse',
       value: create(WebSearchRequestResponseSchema, {
@@ -561,6 +570,7 @@ function handleInteractionQuery(query: any, sendFrame: (data: Buffer) => void): 
       }),
     }
   } else if (queryCase === 'exaSearchRequestQuery') {
+    console.warn('[cursor-messages] rejected interaction query', { type: queryCase })
     responseResult = {
       case: 'exaSearchRequestResponse',
       value: create(ExaSearchRequestResponseSchema, {
@@ -571,6 +581,7 @@ function handleInteractionQuery(query: any, sendFrame: (data: Buffer) => void): 
       }),
     }
   } else if (queryCase === 'exaFetchRequestQuery') {
+    console.warn('[cursor-messages] rejected interaction query', { type: queryCase })
     responseResult = {
       case: 'exaFetchRequestResponse',
       value: create(ExaFetchRequestResponseSchema, {
@@ -645,15 +656,14 @@ export function processServerMessage(msg: AgentServerMessage, ctx: MessageProces
   }
 
   if (msgCase === 'execServerMessage') {
-    handleExecMessage(
-      msg.message.value,
-      ctx.mcpTools,
-      ctx.enabledToolNames,
-      ctx.cloudRule,
-      ctx.sendFrame,
-      ctx.onMcpExec,
-      ctx.state,
-    )
+    handleExecMessage(msg.message.value, {
+      mcpTools: ctx.mcpTools,
+      enabledToolNames: ctx.enabledToolNames,
+      cloudRule: ctx.cloudRule,
+      sendFrame: ctx.sendFrame,
+      onMcpExec: ctx.onMcpExec,
+      state: ctx.state,
+    })
     return true
   }
 

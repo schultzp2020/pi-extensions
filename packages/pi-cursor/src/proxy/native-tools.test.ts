@@ -5,6 +5,7 @@ import { McpToolDefinitionSchema } from '../proto/agent_pb.ts'
 import {
   buildEnabledToolSet,
   MCP_TOOL_PREFIX,
+  REDIRECTABLE_EXEC_CASES,
   classifyExecMessage,
   fixMcpArgNames,
   stripMcpToolPrefix,
@@ -66,13 +67,28 @@ describe('fixMcpArgNames', () => {
   })
 })
 
-describe('classifyExecMessage', () => {
-  it('classifies readArgs as redirect', () => {
-    expect(classifyExecMessage('readArgs')).toBe('redirect')
+describe('REDIRECTABLE_EXEC_CASES', () => {
+  it('contains all expected native redirect cases', () => {
+    const expected = [
+      'readArgs',
+      'writeArgs',
+      'deleteArgs',
+      'shellArgs',
+      'shellStreamArgs',
+      'lsArgs',
+      'grepArgs',
+      'fetchArgs',
+    ]
+    for (const c of expected) {
+      expect(REDIRECTABLE_EXEC_CASES.has(c)).toBeTruthy()
+    }
+    expect(REDIRECTABLE_EXEC_CASES.size).toBe(expected.length)
   })
+})
 
-  it('classifies shellArgs as redirect', () => {
-    expect(classifyExecMessage('shellArgs')).toBe('redirect')
+describe('classifyExecMessage', () => {
+  it.each([...REDIRECTABLE_EXEC_CASES])('classifies %s as redirect', (execCase) => {
+    expect(classifyExecMessage(execCase)).toBe('redirect')
   })
 
   it('classifies mcpArgs as passthrough', () => {

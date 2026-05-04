@@ -290,6 +290,11 @@ export class CursorSession {
   private readonly streamState: StreamState
   private readonly options: SessionOptions
   private readonly blobStore: Map<string, Uint8Array>
+  /**
+   * Tool set computed once at session construction from mcpTools.
+   * Invariant: mcpTools is immutable for the lifetime of a session.
+   * If Pi ever supports mid-session tool changes, this must be recomputed.
+   */
   private readonly enabledToolNames: Set<string>
 
   private batchState: 'streaming' | 'collecting' | 'flushed' = 'streaming'
