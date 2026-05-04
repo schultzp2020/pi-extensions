@@ -414,6 +414,72 @@ function handleKvMessage(
   }
 }
 
+const REJECT_OVERLAPPING_REASON = 'Tool not available in this environment. Use the MCP tools provided instead.'
+
+/** Reject an overlapping native tool exec with the appropriate result type. */
+function rejectOverlappingExec(execMsg: ExecServerMessage, sendFrame: (data: Buffer) => void): void {
+  const execCase = execMsg.message.case
+  if (execCase === 'shellArgs' || execCase === 'shellStreamArgs') {
+    const args = execMsg.message.value
+    const result = create(ShellResultSchema, {
+      result: {
+        case: 'rejected',
+        value: create(ShellRejectedSchema, {
+          command: args.command || '',
+          workingDirectory: args.workingDirectory || '',
+          reason: REJECT_OVERLAPPING_REASON,
+          isReadonly: false,
+        }),
+      },
+    })
+    sendExecResult(execMsg, 'shellResult', result, sendFrame)
+    return
+  }
+  sendMcpResult(execMsg, REJECT_OVERLAPPING_REASON, sendFrame, true)
+}
+
+/** Dispatch a redirected native tool call to MCP, checking tool enablement first. */
+function dispatchRedirect(
+  execMsg: ExecServerMessage,
+  redirect: NativeRedirectInfo,
+  enabledToolNames: Set<string>,
+  sendFrame: (data: Buffer) => void,
+  onMcpExec: (exec: PendingExec) => void,
+): void {
+  const execCase = execMsg.message.case
+  if (!enabledToolNames.has(redirect.toolName)) {
+    const rejectReason = toolNotEnabledMessage(redirect.toolName)
+    if (execCase === 'shellArgs' || execCase === 'shellStreamArgs') {
+      const args = execMsg.message.value
+      const result = create(ShellResultSchema, {
+        result: {
+          case: 'rejected',
+          value: create(ShellRejectedSchema, {
+            command: args.command || '',
+            workingDirectory: args.workingDirectory || '',
+            reason: rejectReason,
+            isReadonly: false,
+          }),
+        },
+      })
+      sendExecResult(execMsg, 'shellResult', result, sendFrame)
+      return
+    }
+    sendMcpResult(execMsg, rejectReason, sendFrame, true)
+    return
+  }
+
+  onMcpExec({
+    execId: execMsg.execId,
+    execMsgId: execMsg.id,
+    toolCallId: redirect.toolCallId,
+    toolName: redirect.toolName,
+    decodedArgs: redirect.decodedArgs,
+    nativeResultType: redirect.nativeResultType,
+    nativeArgs: redirect.nativeArgs,
+  })
+}
+
 export interface ExecContext {
   mcpTools: McpToolDefinition[]
   enabledToolNames: Set<string>
@@ -464,47 +530,35 @@ export function handleExecMessage(execMsg: ExecServerMessage, ctx: ExecContext):
     return
   }
 
-  // --- Redirect supported native tools through Pi MCP ---
+  // --- Route overlapping native tools based on nativeToolsMode ---
   const classification = classifyExecMessage(execCase ?? '')
 
   if (classification === 'redirect') {
     if (state) {
       state.totalExecCount++
     }
-    const nativeRedirect = nativeToMcpRedirect(execMsg)
-    if (nativeRedirect) {
-      if (!enabledToolNames.has(nativeRedirect.toolName)) {
-        const rejectReason = toolNotEnabledMessage(nativeRedirect.toolName)
-        if (execCase === 'shellArgs' || execCase === 'shellStreamArgs') {
-          const args = execMsg.message.value
-          const result = create(ShellResultSchema, {
-            result: {
-              case: 'rejected',
-              value: create(ShellRejectedSchema, {
-                command: args.command || '',
-                workingDirectory: args.workingDirectory || '',
-                reason: rejectReason,
-                isReadonly: false,
-              }),
-            },
-          })
-          sendExecResult(execMsg, 'shellResult', result, sendFrame)
-          return
-        }
 
-        sendMcpResult(execMsg, rejectReason, sendFrame, true)
+    // reject mode: reject all overlapping tools with explicit error
+    if (nativeToolsMode === 'reject') {
+      rejectOverlappingExec(execMsg, sendFrame)
+      return
+    }
+
+    // native mode: dispatch to proxy-local execution
+    if (nativeToolsMode === 'native') {
+      // Proxy-local execution is implemented in Step 3 via executeNativeLocally().
+      // For now, fall through to redirect as a safe default.
+      const nativeRedirect = nativeToMcpRedirect(execMsg)
+      if (nativeRedirect) {
+        dispatchRedirect(execMsg, nativeRedirect, enabledToolNames, sendFrame, onMcpExec)
         return
       }
+    }
 
-      onMcpExec({
-        execId: execMsg.execId,
-        execMsgId: execMsg.id,
-        toolCallId: nativeRedirect.toolCallId,
-        toolName: nativeRedirect.toolName,
-        decodedArgs: nativeRedirect.decodedArgs,
-        nativeResultType: nativeRedirect.nativeResultType,
-        nativeArgs: nativeRedirect.nativeArgs,
-      })
+    // redirect mode (default): redirect overlapping tools to MCP
+    const nativeRedirect = nativeToMcpRedirect(execMsg)
+    if (nativeRedirect) {
+      dispatchRedirect(execMsg, nativeRedirect, enabledToolNames, sendFrame, onMcpExec)
       return
     }
   }

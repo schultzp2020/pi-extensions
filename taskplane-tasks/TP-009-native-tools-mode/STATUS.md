@@ -1,6 +1,6 @@
 # TP-009: Native tools mode with proxy-local execution — Status
 
-**Current Step:** Step 1: Mode-dependent prompt guidance
+**Current Step:** Step 2: Mode-aware tool dispatch
 **Status:** 🟡 In Progress
 **Last Updated:** 2026-05-04
 **Review Level:** 1
@@ -34,10 +34,10 @@
 
 ### Step 2: Mode-aware tool dispatch
 
-**Status:** ⬜ Not Started
+**Status:** ✅ Done
 
-- [ ] Add `nativeToolsMode` to `MessageProcessorContext`
-- [ ] Modify tool dispatch to branch on mode (reject/redirect/native)
+- [x] Add `nativeToolsMode` to `MessageProcessorContext`
+- [x] Modify tool dispatch to branch on mode (reject/redirect/native)
 
 ---
 
