@@ -1,11 +1,11 @@
 # TP-003: Global Cursor config with env override — Status
 
-**Current Step:** Not Started
-**Status:** 🔵 Ready for Execution
+**Current Step:** Step 0: Preflight
+**Status:** 🟡 In Progress
 **Last Updated:** 2026-05-04
 **Review Level:** 0
 **Review Counter:** 0
-**Iteration:** 0
+**Iteration:** 2
 **Size:** S
 
 > **Hydration:** Checkboxes represent meaningful outcomes, not individual code
@@ -16,10 +16,10 @@
 
 ### Step 0: Preflight
 
-**Status:** ⬜ Not Started
+**Status:** ✅ Done
 
-- [ ] Proxy directory exists and no existing `config.ts`
-- [ ] Tests pass before changes
+- [x] Proxy directory exists and no existing `config.ts`
+- [x] Tests pass before changes (89 passed)
 
 ---
 
@@ -75,6 +75,10 @@
 | Timestamp  | Action      | Outcome                         |
 | ---------- | ----------- | ------------------------------- |
 | 2026-05-04 | Task staged | PROMPT.md and STATUS.md created |
+| 2026-05-04 05:55 | Task started | Runtime V2 lane-runner execution |
+| 2026-05-04 05:55 | Step 0 started | Preflight |
+| 2026-05-04 05:55 | Worker iter 1 | done in 28s, tools: 4 |
+| 2026-05-04 05:55 | No progress | Iteration 1: 0 new checkboxes (1/3 stall limit) |
 
 ---
 
