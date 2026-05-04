@@ -1,6 +1,6 @@
 # TP-007: Checkpoint lineage for fork and compaction safety — Status
 
-**Current Step:** Step 0: Preflight
+**Current Step:** Step 1: Add lineage metadata to StoredConversation
 **Status:** 🟡 In Progress
 **Last Updated:** 2026-05-04
 **Review Level:** 1
@@ -26,11 +26,11 @@
 
 ### Step 1: Add lineage metadata to StoredConversation
 
-**Status:** ⬜ Not Started
+**Status:** ✅ Done
 
-- [ ] Add lineage fields and types to `StoredConversation`
-- [ ] Implement `computeLineageFingerprint()`, `validateLineage()`, `shouldDiscardCheckpoint()`
-- [ ] Update persistence to store/load lineage metadata
+- [x] Add lineage fields and types to `StoredConversation`
+- [x] Implement `computeLineageFingerprint()`, `validateLineage()`, `shouldDiscardCheckpoint()`
+- [x] Update persistence to store/load lineage metadata
 
 ---
 
