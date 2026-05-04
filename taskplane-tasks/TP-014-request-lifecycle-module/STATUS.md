@@ -1,11 +1,11 @@
 # TP-014: Request Lifecycle Module — Status
 
-**Current Step:** Not Started
-**Status:** 🔵 Ready for Execution
+**Current Step:** Step 0: Preflight
+**Status:** 🟡 In Progress
 **Last Updated:** 2026-05-04
 **Review Level:** 1
 **Review Counter:** 0
-**Iteration:** 0
+**Iteration:** 1
 **Size:** L
 
 > **Hydration:** Checkboxes represent meaningful outcomes, not individual code
@@ -16,13 +16,13 @@
 
 ### Step 0: Preflight
 
-**Status:** ⬜ Not Started
+**Status:** ✅ Complete
 
-- [ ] Map the full `handleChatCompletion` path in `main.ts` — what moves vs. what stays
-- [ ] Read `session-state.ts` interface (from TP-012)
-- [ ] Read `openai-stream.ts` streaming/non-streaming delegation
-- [ ] Read `request-builder.test.ts` existing coverage
-- [ ] Identify module-level state for Proxy Context
+- [x] Map the full `handleChatCompletion` path in `main.ts` — what moves vs. what stays
+- [x] Read `session-state.ts` interface (from TP-012)
+- [x] Read `openai-stream.ts` streaming/non-streaming delegation
+- [x] Read `request-builder.test.ts` existing coverage
+- [x] Identify module-level state for Proxy Context
 
 ---
 
@@ -87,9 +87,12 @@
 
 ## Execution Log
 
-| Timestamp  | Action      | Outcome                         |
-| ---------- | ----------- | ------------------------------- |
-| 2026-05-04 | Task staged | PROMPT.md and STATUS.md created |
+| Timestamp        | Action          | Outcome                                                                                                                                                                                                                                                                                                                                                                        |
+| ---------------- | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 2026-05-04       | Task staged     | PROMPT.md and STATUS.md created                                                                                                                                                                                                                                                                                                                                                |
+| 2026-05-04 19:31 | Task started    | Runtime V2 lane-runner execution                                                                                                                                                                                                                                                                                                                                               |
+| 2026-05-04 19:31 | Step 0 started  | Preflight                                                                                                                                                                                                                                                                                                                                                                      |
+| 2026-05-04 19:32 | Step 0 complete | Preflight: main.ts mapped - lines 82-831 move to request-lifecycle.ts; lines 832-952 (main function, startup, model mgmt) stay. Module-level state: cachedNormalizedSet, getNormalizedModelSet, invalidateNormalizedModels stay in main.ts. ProxyContext needs: accessToken getter, getNormalizedSet, convConfig, cfg (nativeToolsMode, maxMode, maxRetries), debug logger fns |
 
 ---
 
