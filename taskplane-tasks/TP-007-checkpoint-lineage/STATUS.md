@@ -1,6 +1,6 @@
 # TP-007: Checkpoint lineage for fork and compaction safety — Status
 
-**Current Step:** Step 3: Testing & Verification
+**Current Step:** Step 4: Documentation & Delivery
 **Status:** 🟡 In Progress
 **Last Updated:** 2026-05-04
 **Review Level:** 1
@@ -46,12 +46,12 @@
 
 ### Step 3: Testing & Verification
 
-**Status:** ⬜ Not Started
+**Status:** ✅ Complete
 
-- [ ] Add lineage tests to `conversation-state.test.ts`
-- [ ] FULL test suite passing
-- [ ] All failures fixed
-- [ ] Build passes
+- [x] Add lineage tests to `conversation-state.test.ts`
+- [x] FULL test suite passing
+- [x] All failures fixed
+- [x] Build passes
 
 ---
 
