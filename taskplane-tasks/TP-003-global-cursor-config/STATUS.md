@@ -25,13 +25,13 @@
 
 ### Step 1: Create config module
 
-**Status:** ⬜ Not Started
+**Status:** ✅ Done
 
-- [ ] Create `config.ts` with `CursorConfig` type, `DEFAULT_CONFIG`, and `CONFIG_PATH`
-- [ ] Implement `loadConfig()` with per-field validation and graceful fallback
-- [ ] Implement `saveConfig()` with directory creation and field merging
-- [ ] Implement `resolveEffective()` with env var override precedence
-- [ ] Implement `getEnvOverrides()` helper
+- [x] Create `config.ts` with `CursorConfig` type, `DEFAULT_CONFIG`, and `CONFIG_PATH`
+- [x] Implement `loadConfig()` with per-field validation and graceful fallback
+- [x] Implement `saveConfig()` with directory creation and field merging
+- [x] Implement `resolveEffective()` with env var override precedence
+- [x] Implement `getEnvOverrides()` helper
 
 ---
 
