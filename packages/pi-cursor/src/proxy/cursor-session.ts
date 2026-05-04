@@ -71,6 +71,7 @@ export interface SessionOptions {
   mcpTools: McpToolDefinition[]
   cloudRule?: string
   nativeToolsMode: NativeToolsMode
+  allowedRoot?: string
   convKey: string
   onCheckpoint?: (bytes: Uint8Array, blobStore: Map<string, Uint8Array>) => void
 }
@@ -507,6 +508,7 @@ export class CursorSession {
         enabledToolNames: this.enabledToolNames,
         cloudRule: this.options.cloudRule,
         nativeToolsMode: this.options.nativeToolsMode,
+        allowedRoot: this.options.allowedRoot,
         sendFrame: (data) => this.write(data),
         state: this.streamState,
         onText: (text, isThinking) => {

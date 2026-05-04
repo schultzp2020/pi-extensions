@@ -205,11 +205,12 @@ export default async function (pi: ExtensionAPI): Promise<void> {
     logLifecycle(sessionId, '', { event: 'session_start' })
   })
 
-  // Inject pi_session_id into every provider request body
-  pi.on('before_provider_request', (event) => {
+  // Inject pi_session_id and pi_cwd into every provider request body
+  pi.on('before_provider_request', (event, ctx) => {
     const { payload } = event
     if (typeof payload === 'object' && payload !== null) {
       ;(payload as Record<string, unknown>).pi_session_id = sessionId
+      ;(payload as Record<string, unknown>).pi_cwd = ctx.cwd
     }
     return payload
   })

@@ -65,7 +65,7 @@ import {
 } from './internal-api.ts'
 import { processModels, resolveModelId, type NormalizedModelSet } from './model-normalization.ts'
 import { discoverCursorModels, type CursorModel } from './models.ts'
-import { MCP_TOOL_PREFIX } from './native-tools.ts'
+import { MCP_TOOL_PREFIX, resolveAllowedRoot } from './native-tools.ts'
 import { type OpenAIMessage, type OpenAIToolDef, parseMessages, selectToolsForChoice } from './openai-messages.ts'
 import {
   collectNonStreamingResponse,
@@ -338,6 +338,7 @@ async function handleChatCompletion(
     (typeof bodyRecord.pi_session_id === 'string' ? bodyRecord.pi_session_id : undefined) ??
     (req.headers['x-session-id'] as string | undefined) ??
     'default'
+  const piCwd = typeof bodyRecord.pi_cwd === 'string' ? bodyRecord.pi_cwd : undefined
   const sessionKey = deriveSessionKey(sessionId)
   const convKey = deriveConversationKey(sessionId)
   const requestId = debugRequestId()
@@ -442,6 +443,7 @@ async function handleChatCompletion(
     cfg.nativeToolsMode,
   )
 
+  const allowedRoot = cfg.nativeToolsMode === 'native' && piCwd ? resolveAllowedRoot(piCwd) : undefined
   const sessionOptions: SessionOptions = {
     accessToken,
     requestBytes: payload.requestBytes,
@@ -449,6 +451,7 @@ async function handleChatCompletion(
     mcpTools,
     cloudRule: systemPrompt || undefined,
     nativeToolsMode: cfg.nativeToolsMode,
+    allowedRoot,
     convKey,
     onCheckpoint: (checkpointBytes, blobStoreRef) => {
       stored.checkpoint = checkpointBytes

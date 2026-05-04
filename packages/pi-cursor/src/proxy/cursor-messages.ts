@@ -58,7 +58,7 @@ import {
 } from '../proto/agent_pb.ts'
 import type { NativeToolsMode } from './config.ts'
 import { frameConnectMessage } from './connect-protocol.ts'
-import { classifyExecMessage, fixMcpArgNames, stripMcpToolPrefix } from './native-tools.ts'
+import { classifyExecMessage, executeNativeLocally, fixMcpArgNames, stripMcpToolPrefix } from './native-tools.ts'
 import { buildRequestContext } from './request-context.ts'
 
 export interface StreamState {
@@ -485,6 +485,7 @@ export interface ExecContext {
   enabledToolNames: Set<string>
   cloudRule: string | undefined
   nativeToolsMode: NativeToolsMode
+  allowedRoot?: string
   sendFrame: (data: Buffer) => void
   onMcpExec: (exec: PendingExec) => void
   state?: StreamState
@@ -545,14 +546,21 @@ export function handleExecMessage(execMsg: ExecServerMessage, ctx: ExecContext):
     }
 
     // native mode: dispatch to proxy-local execution
-    if (nativeToolsMode === 'native') {
-      // Proxy-local execution is implemented in Step 3 via executeNativeLocally().
-      // For now, fall through to redirect as a safe default.
-      const nativeRedirect = nativeToMcpRedirect(execMsg)
-      if (nativeRedirect) {
-        dispatchRedirect(execMsg, nativeRedirect, enabledToolNames, sendFrame, onMcpExec)
-        return
-      }
+    if (nativeToolsMode === 'native' && ctx.allowedRoot) {
+      const {allowedRoot} = ctx
+      executeNativeLocally(execMsg, allowedRoot)
+        .then((nativeResult) => {
+          sendExecResult(execMsg, nativeResult.resultType, nativeResult.result, sendFrame)
+        })
+        .catch((error) => {
+          sendMcpResult(
+            execMsg,
+            `Native execution failed: ${error instanceof Error ? error.message : String(error)}`,
+            sendFrame,
+            true,
+          )
+        })
+      return
     }
 
     // redirect mode (default): redirect overlapping tools to MCP
@@ -696,6 +704,7 @@ export interface MessageProcessorContext {
   enabledToolNames: Set<string>
   cloudRule?: string
   nativeToolsMode: NativeToolsMode
+  allowedRoot?: string
   sendFrame: (data: Buffer) => void
   state: StreamState
   onText: (text: string, isThinking: boolean) => void
@@ -724,6 +733,7 @@ export function processServerMessage(msg: AgentServerMessage, ctx: MessageProces
       enabledToolNames: ctx.enabledToolNames,
       cloudRule: ctx.cloudRule,
       nativeToolsMode: ctx.nativeToolsMode,
+      allowedRoot: ctx.allowedRoot,
       sendFrame: ctx.sendFrame,
       onMcpExec: ctx.onMcpExec,
       state: ctx.state,

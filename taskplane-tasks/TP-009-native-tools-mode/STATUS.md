@@ -1,6 +1,6 @@
 # TP-009: Native tools mode with proxy-local execution — Status
 
-**Current Step:** Step 2: Mode-aware tool dispatch
+**Current Step:** Step 4: Testing & Verification
 **Status:** 🟡 In Progress
 **Last Updated:** 2026-05-04
 **Review Level:** 1
@@ -43,11 +43,11 @@
 
 ### Step 3: Proxy-local native tool execution
 
-**Status:** ⬜ Not Started
+**Status:** ✅ Done
 
-- [ ] Implement `resolveAllowedRoot()` and `validatePath()` for sandboxing
-- [ ] Implement proxy-local execution for each overlapping tool type
-- [ ] Pass `ctx.cwd` from extension to proxy for Allowed Root computation
+- [x] Implement `resolveAllowedRoot()` and `validatePath()` for sandboxing
+- [x] Implement proxy-local execution for each overlapping tool type
+- [x] Pass `ctx.cwd` from extension to proxy for Allowed Root computation
 
 ---
 
