@@ -16,7 +16,7 @@
 
 ### Step 0: Preflight
 
-**Status:** ✅ Done
+**Status:** ✅ Complete
 
 - [x] Required files exist (request-context.ts, native-tools.ts, config.ts)
 - [x] Tests pass before changes (187 passed, 0 failures)
@@ -25,7 +25,7 @@
 
 ### Step 1: Mode-dependent prompt guidance
 
-**Status:** ✅ Done
+**Status:** ✅ Complete
 
 - [x] Make prompt guidance conditional on native tools mode
 - [x] Pass mode through to `buildRequestContext()` in main.ts
@@ -34,7 +34,7 @@
 
 ### Step 2: Mode-aware tool dispatch
 
-**Status:** ✅ Done
+**Status:** ✅ Complete
 
 - [x] Add `nativeToolsMode` to `MessageProcessorContext`
 - [x] Modify tool dispatch to branch on mode (reject/redirect/native)
@@ -43,7 +43,7 @@
 
 ### Step 3: Proxy-local native tool execution
 
-**Status:** ✅ Done
+**Status:** ✅ Complete
 
 - [x] Implement `resolveAllowedRoot()` and `validatePath()` for sandboxing
 - [x] Implement proxy-local execution for each overlapping tool type
@@ -53,7 +53,7 @@
 
 ### Step 4: Testing & Verification
 
-**Status:** ✅ Done
+**Status:** ✅ Complete
 
 - [x] Add sandboxing and mode dispatch tests to `native-tools.test.ts`
 - [x] FULL test suite passing (202 tests, 0 failures)
@@ -64,7 +64,7 @@
 
 ### Step 5: Documentation & Delivery
 
-**Status:** ✅ Done
+**Status:** ✅ Complete
 
 - [x] "Must Update" docs modified (CONTEXT.md Allowed Root definition updated)
 - [x] "Check If Affected" docs reviewed (README.md updated with Native Tools Mode section)
@@ -94,6 +94,8 @@
 | 2026-05-04 07:12 | Task started   | Runtime V2 lane-runner execution |
 | 2026-05-04 07:12 | Step 0 started | Preflight                        |
 | 2026-05-04       | All steps done | 202 tests pass, build passes     |
+| 2026-05-04 07:28 | Worker iter 1  | done in 943s, tools: 204         |
+| 2026-05-04 07:28 | Task complete  | .DONE created                    |
 
 ---
 
