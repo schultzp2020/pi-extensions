@@ -41,9 +41,10 @@ import {
   frameConnectMessage,
   parseConnectEndStream,
 } from './connect-protocol.ts'
-import { type PendingExec, type StreamState, createStreamState, processServerMessage } from './cursor-messages.ts'
+import { type StreamState, createStreamState, processServerMessage } from './cursor-messages.ts'
 import { EventQueue } from './event-queue.ts'
 import { buildEnabledToolSet } from './native-tools.ts'
+import type { PendingExec } from './tool-dispatch.ts'
 
 const CURSOR_API_URL = 'https://api2.cursor.sh'
 const CURSOR_CLIENT_VERSION = 'cli-2026.01.09-231024f'
@@ -503,27 +504,16 @@ export class CursorSession {
   private handleMessage(messageBytes: Uint8Array): void {
     try {
       const msg = fromBinary(AgentServerMessageSchema, messageBytes)
+      const sendFrame = (data: Buffer) => this.write(data)
       const recognized = processServerMessage(msg, {
         blobStore: this.blobStore,
-        mcpTools: this.options.mcpTools,
-        enabledToolNames: this.enabledToolNames,
-        cloudRule: this.options.cloudRule,
-        nativeToolsMode: this.options.nativeToolsMode,
-        allowedRoot: this.options.allowedRoot,
-        sendFrame: (data) => this.write(data),
+        sendFrame,
         state: this.streamState,
         onText: (text, isThinking) => {
           if (this.timerPhase === 'thinking') {
             this.timerPhase = 'streaming'
           }
           this.queue.push({ type: 'text', text, isThinking })
-        },
-        onMcpExec: (exec) => {
-          this.pendingExecs.push(exec)
-          if (this.batchState === 'streaming') {
-            this.batchState = 'collecting'
-          }
-          this.queue.push({ type: 'toolCall', exec })
         },
         onCheckpoint: (checkpointBytes) => {
           this._checkpointChunkSeq = this._chunkSeq
@@ -532,6 +522,22 @@ export class CursorSession {
         },
         onNotify: (note) => {
           this.queue.push({ type: 'text', text: `\n${note}\n`, isThinking: false })
+        },
+        toolDispatch: {
+          sendFrame,
+          mcpTools: this.options.mcpTools,
+          enabledToolNames: this.enabledToolNames,
+          cloudRule: this.options.cloudRule,
+          nativeToolsMode: this.options.nativeToolsMode,
+          allowedRoot: this.options.allowedRoot,
+          onMcpExec: (exec) => {
+            this.pendingExecs.push(exec)
+            if (this.batchState === 'streaming') {
+              this.batchState = 'collecting'
+            }
+            this.queue.push({ type: 'toolCall', exec })
+          },
+          state: this.streamState,
         },
       })
 

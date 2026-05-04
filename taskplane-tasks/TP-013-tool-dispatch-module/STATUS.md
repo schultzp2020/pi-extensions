@@ -1,6 +1,6 @@
 # TP-013: Tool Dispatch Module — Status
 
-**Current Step:** Step 1: Create tool-dispatch.ts
+**Current Step:** Step 2: Update cursor-messages.ts and create tests
 **Status:** 🟡 In Progress
 **Last Updated:** 2026-05-04
 **Review Level:** 1
@@ -37,13 +37,13 @@
 
 ### Step 2: Update cursor-messages.ts and create tests
 
-**Status:** ⬜ Not Started
+**Status:** ✅ Complete
 
-- [ ] Remove moved functions from `cursor-messages.ts` and shrink `MessageProcessorContext` to 6 fields
-- [ ] Update `processServerMessage` to delegate tool cases to `handleToolMessage`
-- [ ] Update `cursor-session.ts` context assembly
-- [ ] Create `tool-dispatch.test.ts` with dispatch routing and rejection tests
-- [ ] Run targeted tests
+- [x] Remove moved functions from `cursor-messages.ts` and shrink `MessageProcessorContext` to 6 fields
+- [x] Update `processServerMessage` to delegate tool cases to `handleToolMessage`
+- [x] Update `cursor-session.ts` context assembly
+- [x] Create `tool-dispatch.test.ts` with dispatch routing and rejection tests (22 tests)
+- [x] Run targeted tests (tool-dispatch + tool-gating: 47 passed)
 
 ---
 

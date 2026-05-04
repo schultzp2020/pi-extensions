@@ -391,7 +391,7 @@ function dispatchRedirect(
   })
 }
 
-function handleExecMessage(execMsg: ExecServerMessage, ctx: ToolDispatchContext): void {
+export function handleExecMessage(execMsg: ExecServerMessage, ctx: ToolDispatchContext): void {
   const { mcpTools, enabledToolNames, cloudRule, nativeToolsMode, sendFrame, onMcpExec, state } = ctx
   const execCase = execMsg.message.case
 
