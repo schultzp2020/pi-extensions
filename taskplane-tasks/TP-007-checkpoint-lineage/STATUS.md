@@ -1,7 +1,7 @@
 # TP-007: Checkpoint lineage for fork and compaction safety — Status
 
 **Current Step:** Step 4: Documentation & Delivery
-**Status:** 🟡 In Progress
+**Status:** ✅ Complete
 **Last Updated:** 2026-05-04
 **Review Level:** 1
 **Review Counter:** 0
@@ -57,11 +57,11 @@
 
 ### Step 4: Documentation & Delivery
 
-**Status:** ⬜ Not Started
+**Status:** ✅ Complete
 
-- [ ] "Must Update" docs modified
-- [ ] "Check If Affected" docs reviewed
-- [ ] Discoveries logged
+- [x] "Must Update" docs modified
+- [x] "Check If Affected" docs reviewed
+- [x] Discoveries logged
 
 ---
 
@@ -74,8 +74,11 @@
 
 ## Discoveries
 
-| Discovery | Disposition | Location |
-| --------- | ----------- | -------- |
+| Discovery                                                                                                                              | Disposition                                                                                | Location                        |
+| -------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ | ------------------------------- |
+| Lineage fingerprint hashes only userText (not assistantText) to enable post-completion computation without capturing streamed response | Design decision — same-message same-depth re-rolls not detected (extremely rare edge case) | `conversation-state.ts`         |
+| CONTEXT.md already had Checkpoint Lineage definitions and relationships from prior iteration                                           | Verified accurate, no changes needed                                                       | `packages/pi-cursor/CONTEXT.md` |
+| README.md mentions checkpoints briefly but not lineage specifics — appropriate level of detail for README                              | No change needed                                                                           | `packages/pi-cursor/README.md`  |
 
 ---
 
