@@ -22,6 +22,7 @@ vi.mock('./cursor-session.ts', () => {
 
 // Mock session-state
 vi.mock('./session-state.ts', async (importOriginal) => {
+  // eslint-disable-next-line typescript-eslint/no-unnecessary-type-assertion -- needed for spread
   const actual = (await importOriginal()) as Record<string, unknown>
   return {
     ...actual,

@@ -77,23 +77,23 @@
 
 ## Discoveries
 
-| Discovery | Disposition | Location |
-| --------- | ----------- | -------- |
-| `MessageProcessorContext` keeps legacy flat fields for backward compat (tool-gating.test.ts uses old shape) | Accepted — re-exports + `resolveToolDispatch()` adapter keeps tests passing unmodified | `cursor-messages.ts` |
-| `PendingExec`/`NativeResultType` moved to `tool-dispatch.ts`, re-exported from `cursor-messages.ts` | Accepted — avoids circular deps while preserving import paths | `cursor-messages.ts`, `tool-dispatch.ts` |
-| `ToolDispatchState` minimal interface avoids importing `StreamState` from cursor-messages (prevents circular dep) | Accepted — `StreamState` structurally satisfies `ToolDispatchState` | `tool-dispatch.ts` |
+| Discovery                                                                                                         | Disposition                                                                            | Location                                 |
+| ----------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- | ---------------------------------------- |
+| `MessageProcessorContext` keeps legacy flat fields for backward compat (tool-gating.test.ts uses old shape)       | Accepted — re-exports + `resolveToolDispatch()` adapter keeps tests passing unmodified | `cursor-messages.ts`                     |
+| `PendingExec`/`NativeResultType` moved to `tool-dispatch.ts`, re-exported from `cursor-messages.ts`               | Accepted — avoids circular deps while preserving import paths                          | `cursor-messages.ts`, `tool-dispatch.ts` |
+| `ToolDispatchState` minimal interface avoids importing `StreamState` from cursor-messages (prevents circular dep) | Accepted — `StreamState` structurally satisfies `ToolDispatchState`                    | `tool-dispatch.ts`                       |
 
 ---
 
 ## Execution Log
 
-| Timestamp  | Action      | Outcome                         |
-| ---------- | ----------- | ------------------------------- |
-| 2026-05-04 | Task staged | PROMPT.md and STATUS.md created |
-| 2026-05-04 19:16 | Task started | Runtime V2 lane-runner execution |
-| 2026-05-04 19:16 | Step 0 started | Preflight |
-| 2026-05-04 19:30 | Worker iter 1 | done in 796s, tools: 110 |
-| 2026-05-04 19:30 | Task complete | .DONE created |
+| Timestamp        | Action         | Outcome                          |
+| ---------------- | -------------- | -------------------------------- |
+| 2026-05-04       | Task staged    | PROMPT.md and STATUS.md created  |
+| 2026-05-04 19:16 | Task started   | Runtime V2 lane-runner execution |
+| 2026-05-04 19:16 | Step 0 started | Preflight                        |
+| 2026-05-04 19:30 | Worker iter 1  | done in 796s, tools: 110         |
+| 2026-05-04 19:30 | Task complete  | .DONE created                    |
 
 ---
 

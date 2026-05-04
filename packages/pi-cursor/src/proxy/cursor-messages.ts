@@ -26,7 +26,7 @@ import { frameConnectMessage } from './connect-protocol.ts'
 import { type PendingExec, type ToolDispatchContext, handleToolMessage } from './tool-dispatch.ts'
 
 // Re-export types and functions that existing consumers depend on
-export type { NativeResultType, PendingExec, ToolDispatchContext as ExecContext } from './tool-dispatch.ts'
+export type { PendingExec, ToolDispatchContext as ExecContext } from './tool-dispatch.ts'
 export { handleExecMessage } from './tool-dispatch.ts'
 
 export interface StreamState {

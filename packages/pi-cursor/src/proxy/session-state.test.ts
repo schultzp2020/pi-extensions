@@ -454,7 +454,9 @@ describe('backward compatibility', () => {
     // We need the internal key — find the file in the test dir
     const files = readdirSync(TEST_DIR)
     const jsonFile = files.find((f: string) => f.endsWith('.json'))
-    if (!jsonFile) {throw new Error('Expected JSON file on disk')}
+    if (!jsonFile) {
+      throw new Error('Expected JSON file on disk')
+    }
     const filePath = join(TEST_DIR, jsonFile)
     const raw = readFileSync(filePath, 'utf-8')
     const data = JSON.parse(raw) as Record<string, unknown>

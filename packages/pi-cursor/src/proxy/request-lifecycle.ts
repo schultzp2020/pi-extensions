@@ -279,7 +279,7 @@ export function foldTurnsIntoSystemPrompt(
 
 // ── Request builder (exported for testing) ──
 
-export function buildRunRequest(
+function buildRunRequest(
   modelId: string,
   systemPrompt: string,
   userText: string,
