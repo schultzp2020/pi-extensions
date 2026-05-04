@@ -16,7 +16,7 @@
 
 ### Step 0: Preflight
 
-**Status:** ✅ Done
+**Status:** ✅ Complete
 
 - [x] Proxy directory exists and no existing `config.ts`
 - [x] Tests pass before changes (89 passed)
@@ -25,7 +25,7 @@
 
 ### Step 1: Create config module
 
-**Status:** ✅ Done
+**Status:** ✅ Complete
 
 - [x] Create `config.ts` with `CursorConfig` type, `DEFAULT_CONFIG`, and `CONFIG_PATH`
 - [x] Implement `loadConfig()` with per-field validation and graceful fallback
@@ -37,7 +37,7 @@
 
 ### Step 2: Testing & Verification
 
-**Status:** ✅ Done
+**Status:** ✅ Complete
 
 - [x] Create `config.test.ts` with load/save/resolve/override tests
 - [x] FULL test suite passing (110 passed, 0 failed)
@@ -48,7 +48,7 @@
 
 ### Step 3: Documentation & Delivery
 
-**Status:** ✅ Done
+**Status:** ✅ Complete
 
 - [x] "Must Update" docs modified (CONTEXT.md already has Cursor Config term — verified correct)
 - [x] "Check If Affected" docs reviewed (README.md has no config references — no update needed)
@@ -80,6 +80,8 @@
 | 2026-05-04 05:55 | Step 0 started | Preflight |
 | 2026-05-04 05:55 | Worker iter 1 | done in 28s, tools: 4 |
 | 2026-05-04 05:55 | No progress | Iteration 1: 0 new checkboxes (1/3 stall limit) |
+| 2026-05-04 05:59 | Worker iter 2 | done in 244s, tools: 36 |
+| 2026-05-04 05:59 | Task complete | .DONE created |
 
 ---
 
