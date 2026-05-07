@@ -27,7 +27,7 @@ export interface CursorModel {
   name: string
   reasoning: boolean
   contextWindow: number
-  /** Context window when max mode is active. Falls back to contextWindow if not set. */
+  /** Larger context tier from the API (`contextTokenLimitForMaxMode`). Used to register long-context model variants. */
   contextWindowMaxMode?: number
   maxTokens: number
   supportsImages: boolean

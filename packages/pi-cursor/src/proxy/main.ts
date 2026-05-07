@@ -52,7 +52,7 @@ function invalidateNormalizedModels(): void {
   cachedNormalizedSet = null
 }
 
-function handleModelsRequest(res: ServerResponse, _models: CursorModel[]): void {
+function handleModelsRequest(res: ServerResponse): void {
   const effectiveModels = getNormalizedModelSet().models
 
   const data = effectiveModels.map((m) => ({
@@ -148,7 +148,7 @@ async function main(): Promise<void> {
     }
 
     if (req.method === 'GET' && url.pathname === '/v1/models') {
-      handleModelsRequest(res, getCachedModels())
+      handleModelsRequest(res)
       return
     }
 

@@ -125,6 +125,12 @@ describe('loadConfig', () => {
     expect('unknownField' in cfg).toBeFalsy()
     expect('modelMappings' in cfg).toBeFalsy()
   })
+
+  it('returns defaults when file contains a JSON array', () => {
+    const path = tmpConfigPath(tmpDir)
+    writeFileSync(path, '[1,2,3]')
+    expect(loadConfig(path)).toEqual(DEFAULT_CONFIG)
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -139,6 +145,21 @@ describe('saveConfig', () => {
     expect(cfg.maxMode).toBeTruthy()
     expect(cfg.fast).toBeTruthy()
     expect(cfg.thinking).toBeFalsy()
+    expect(cfg.version).toBe(1)
+  })
+
+  it('creates directory if needed', () => {
+    const nested = join(tmpDir, 'deep', 'nested')
+    const path = join(nested, 'cursor-config.json')
+    saveConfig({ maxMode: true }, path)
+    const cfg = loadConfig(path)
+    expect(cfg.maxMode).toBeTruthy()
+  })
+
+  it('always writes version 1', () => {
+    const path = tmpConfigPath(tmpDir)
+    saveConfig({ version: 99 } as Partial<CursorConfig>, path)
+    const cfg = loadConfig(path)
     expect(cfg.version).toBe(1)
   })
 
@@ -186,10 +207,41 @@ describe('resolveEffective', () => {
     expect(cfg.maxRetries).toBe(7)
   })
 
+  it('env vars override defaults when no file exists', () => {
+    process.env.PI_CURSOR_MAX_MODE = 'yes'
+    const cfg = resolveEffective(tmpConfigPath(tmpDir))
+    expect(cfg.maxMode).toBeTruthy()
+    expect(cfg.nativeToolsMode).toBe('reject') // other fields remain default
+  })
+
+  it('PI_CURSOR_MAX_MODE=0 is falsy', () => {
+    process.env.PI_CURSOR_MAX_MODE = '0'
+    const cfg = resolveEffective(tmpConfigPath(tmpDir))
+    expect(cfg.maxMode).toBeFalsy()
+  })
+
+  it('PI_CURSOR_MAX_MODE=false is falsy', () => {
+    process.env.PI_CURSOR_MAX_MODE = 'false'
+    const cfg = resolveEffective(tmpConfigPath(tmpDir))
+    expect(cfg.maxMode).toBeFalsy()
+  })
+
   it('PI_CURSOR_FAST=0 is falsy', () => {
     process.env.PI_CURSOR_FAST = '0'
     const cfg = resolveEffective(tmpConfigPath(tmpDir))
     expect(cfg.fast).toBeFalsy()
+  })
+
+  it('ignores invalid PI_CURSOR_NATIVE_TOOLS_MODE', () => {
+    process.env.PI_CURSOR_NATIVE_TOOLS_MODE = 'INVALID'
+    const cfg = resolveEffective(tmpConfigPath(tmpDir))
+    expect(cfg.nativeToolsMode).toBe('reject')
+  })
+
+  it('ignores invalid PI_CURSOR_MAX_RETRIES', () => {
+    process.env.PI_CURSOR_MAX_RETRIES = 'abc'
+    const cfg = resolveEffective(tmpConfigPath(tmpDir))
+    expect(cfg.maxRetries).toBe(2)
   })
 })
 
@@ -209,6 +261,22 @@ describe('getEnvOverrides', () => {
     expect(overrides).toEqual({
       maxMode: 'PI_CURSOR_MAX_MODE',
       fast: 'PI_CURSOR_FAST',
+    })
+  })
+
+  it('includes all env vars when all are set', () => {
+    process.env.PI_CURSOR_NATIVE_TOOLS_MODE = 'native'
+    process.env.PI_CURSOR_MAX_MODE = '1'
+    process.env.PI_CURSOR_FAST = '1'
+    process.env.PI_CURSOR_THINKING = '1'
+    process.env.PI_CURSOR_MAX_RETRIES = '5'
+    const overrides = getEnvOverrides()
+    expect(overrides).toEqual({
+      nativeToolsMode: 'PI_CURSOR_NATIVE_TOOLS_MODE',
+      maxMode: 'PI_CURSOR_MAX_MODE',
+      fast: 'PI_CURSOR_FAST',
+      thinking: 'PI_CURSOR_THINKING',
+      maxRetries: 'PI_CURSOR_MAX_RETRIES',
     })
   })
 })

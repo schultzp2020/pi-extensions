@@ -94,6 +94,24 @@ export interface ProxyContext {
   config: Pick<CursorConfig, 'nativeToolsMode' | 'maxMode' | 'fast' | 'thinking' | 'maxRetries'>
 }
 
+// ── Context tier suffix parsing ──
+
+/**
+ * Parse a context-tier suffix from a model ID.
+ * Models with larger context tiers are registered with a ~{tokens} suffix
+ * (e.g. "gpt-5.4~1000000" for 1M context).
+ */
+export function parseContextTierSuffix(modelId: string): { baseModelId: string; longContext: boolean } {
+  const tildeIdx = modelId.lastIndexOf('~')
+  if (tildeIdx > 0) {
+    const contextTokens = Number(modelId.slice(tildeIdx + 1))
+    if (Number.isFinite(contextTokens) && contextTokens > 0) {
+      return { baseModelId: modelId.slice(0, tildeIdx), longContext: true }
+    }
+  }
+  return { baseModelId: modelId, longContext: false }
+}
+
 // ── Request types ──
 
 interface ChatCompletionRequest {
@@ -606,20 +624,7 @@ export async function handleChatCompletion(
 
   const { model: requestedModelId, messages, stream = true, tools = [], tool_choice } = body
 
-  // Detect long-context model variant.
-  // Models with larger context tiers are registered with a ~{tokens} suffix
-  // (e.g. "gpt-5.4~1000000" for 1M context). Strip the suffix to resolve
-  // the base model and send the long_context parameter to Cursor.
-  const tildeIdx = requestedModelId.lastIndexOf('~')
-  let baseModelId = requestedModelId
-  let longContext = false
-  if (tildeIdx > 0) {
-    const contextTokens = Number(requestedModelId.slice(tildeIdx + 1))
-    if (Number.isFinite(contextTokens) && contextTokens > 0) {
-      baseModelId = requestedModelId.slice(0, tildeIdx)
-      longContext = true
-    }
-  }
+  const { baseModelId, longContext } = parseContextTierSuffix(requestedModelId)
 
   // Resolve the final Cursor model ID
   const cfg = ctx.config

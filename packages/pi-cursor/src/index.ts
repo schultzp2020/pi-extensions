@@ -45,7 +45,7 @@ function saveModelCache(models: CursorModel[]): void {
 }
 
 /** Format a token count as a human-readable string (e.g. 200000 → "200K", 1000000 → "1M") */
-function formatTokenCount(tokens: number): string {
+export function formatTokenCount(tokens: number): string {
   if (tokens >= 1_000_000 && tokens % 1_000_000 === 0) {
     return `${String(tokens / 1_000_000)}M`
   }
