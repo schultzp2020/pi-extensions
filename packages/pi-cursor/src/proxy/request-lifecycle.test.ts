@@ -83,7 +83,7 @@ vi.mock('./native-tools.ts', () => ({
 
 import { readBody, errorResponse } from './http-helpers.ts'
 import { collectNonStreamingResponse, pumpSession, createSSECtx } from './openai-stream.ts'
-import { handleChatCompletion } from './request-lifecycle.ts'
+import { handleChatCompletion, parseContextTierSuffix } from './request-lifecycle.ts'
 import { commitTurn, persistConversation, resetConversation, resolveSession } from './session-state.ts'
 
 // ── Helpers ──
@@ -96,9 +96,10 @@ function makeProxyContext(overrides: Partial<ProxyContext> = {}): ProxyContext {
     getNormalizedSet: () => ({ models: [], byId: new Map(), effortMap: new Map() }) as unknown as NormalizedModelSet,
     convConfig: TEST_CONV_CONFIG,
     config: {
-      modelMappings: 'raw',
       nativeToolsMode: 'reject',
       maxMode: false,
+      fast: false,
+      thinking: true,
       maxRetries: 2,
     },
     ...overrides,
@@ -191,7 +192,13 @@ describe('handleChatCompletion', () => {
       const req = makeRequest()
       const res = makeResponse()
       const ctx = makeProxyContext({
-        config: { modelMappings: 'raw', nativeToolsMode: 'reject', maxMode: false, maxRetries: 1 },
+        config: {
+          nativeToolsMode: 'reject',
+          maxMode: false,
+          fast: false,
+          thinking: true,
+          maxRetries: 1,
+        },
       })
 
       vi.mocked(readBody).mockResolvedValue(VALID_BODY)
@@ -313,7 +320,13 @@ describe('handleChatCompletion', () => {
       const req = makeRequest()
       const res = makeResponse()
       const ctx = makeProxyContext({
-        config: { modelMappings: 'raw', nativeToolsMode: 'reject', maxMode: false, maxRetries: 0 },
+        config: {
+          nativeToolsMode: 'reject',
+          maxMode: false,
+          fast: false,
+          thinking: true,
+          maxRetries: 0,
+        },
       })
 
       vi.mocked(readBody).mockResolvedValue(VALID_BODY)
@@ -418,5 +431,46 @@ describe('handleChatCompletion', () => {
 
       expect(errorResponse).toHaveBeenCalledWith(res, 401, 'No access token configured')
     })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// parseContextTierSuffix
+// ---------------------------------------------------------------------------
+
+describe('parseContextTierSuffix', () => {
+  it('parses model with ~tokens suffix', () => {
+    const result = parseContextTierSuffix('gpt-5.4~1000000')
+    expect(result).toEqual({ baseModelId: 'gpt-5.4', longContext: true })
+  })
+
+  it('returns base model unchanged when no suffix', () => {
+    const result = parseContextTierSuffix('gpt-5.4')
+    expect(result).toEqual({ baseModelId: 'gpt-5.4', longContext: false })
+  })
+
+  it('ignores ~0 (not > 0)', () => {
+    const result = parseContextTierSuffix('gpt-5.4~0')
+    expect(result).toEqual({ baseModelId: 'gpt-5.4~0', longContext: false })
+  })
+
+  it('ignores ~abc (not a number)', () => {
+    const result = parseContextTierSuffix('gpt-5.4~abc')
+    expect(result).toEqual({ baseModelId: 'gpt-5.4~abc', longContext: false })
+  })
+
+  it('ignores tilde at start (~1000000)', () => {
+    const result = parseContextTierSuffix('~1000000')
+    expect(result).toEqual({ baseModelId: '~1000000', longContext: false })
+  })
+
+  it('ignores negative numbers', () => {
+    const result = parseContextTierSuffix('gpt-5.4~-1')
+    expect(result).toEqual({ baseModelId: 'gpt-5.4~-1', longContext: false })
+  })
+
+  it('handles multiple tildes (uses last)', () => {
+    const result = parseContextTierSuffix('model~v2~500000')
+    expect(result).toEqual({ baseModelId: 'model~v2', longContext: true })
   })
 })

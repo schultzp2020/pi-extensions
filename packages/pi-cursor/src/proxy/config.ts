@@ -7,13 +7,13 @@ import { dirname, join } from 'node:path'
 // ---------------------------------------------------------------------------
 
 export type NativeToolsMode = 'reject' | 'redirect' | 'native'
-export type ModelMappingsMode = 'normalized' | 'raw'
 
 export interface CursorConfig {
   version: number
   nativeToolsMode: NativeToolsMode
   maxMode: boolean
-  modelMappings: ModelMappingsMode
+  fast: boolean
+  thinking: boolean
   maxRetries: number
 }
 
@@ -25,7 +25,8 @@ export const DEFAULT_CONFIG: Readonly<CursorConfig> = {
   version: 1,
   nativeToolsMode: 'reject',
   maxMode: false,
-  modelMappings: 'normalized',
+  fast: false,
+  thinking: true,
   maxRetries: 2,
 }
 
@@ -42,7 +43,8 @@ const MAX_RETRIES_CAP = 10
 const ENV_MAP: Record<string, keyof CursorConfig> = {
   PI_CURSOR_NATIVE_TOOLS_MODE: 'nativeToolsMode',
   PI_CURSOR_MAX_MODE: 'maxMode',
-  PI_CURSOR_RAW_MODELS: 'modelMappings',
+  PI_CURSOR_FAST: 'fast',
+  PI_CURSOR_THINKING: 'thinking',
   PI_CURSOR_MAX_RETRIES: 'maxRetries',
 }
 
@@ -51,14 +53,9 @@ const ENV_MAP: Record<string, keyof CursorConfig> = {
 // ---------------------------------------------------------------------------
 
 const VALID_NATIVE_TOOLS_MODES: ReadonlySet<string> = new Set(['reject', 'redirect', 'native'])
-const VALID_MODEL_MAPPINGS: ReadonlySet<string> = new Set(['normalized', 'raw'])
 
 function isNativeToolsMode(v: unknown): v is NativeToolsMode {
   return typeof v === 'string' && VALID_NATIVE_TOOLS_MODES.has(v)
-}
-
-function isModelMappingsMode(v: unknown): v is ModelMappingsMode {
-  return typeof v === 'string' && VALID_MODEL_MAPPINGS.has(v)
 }
 
 function isTruthy(v: string): boolean {
@@ -72,8 +69,7 @@ function isTruthy(v: string): boolean {
 /**
  * Read and parse `cursor-config.json`. On missing file, invalid JSON, or
  * malformed values, return defaults. Unknown fields are ignored. Each field
- * is validated independently — a bad `nativeToolsMode` doesn't invalidate
- * `maxRetries`.
+ * is validated independently.
  */
 export function loadConfig(configPath: string = CONFIG_PATH): CursorConfig {
   let raw: Record<string, unknown>
@@ -89,10 +85,11 @@ export function loadConfig(configPath: string = CONFIG_PATH): CursorConfig {
   }
 
   return {
-    version: 1, // always v1 regardless of file content
+    version: 1,
     nativeToolsMode: isNativeToolsMode(raw.nativeToolsMode) ? raw.nativeToolsMode : DEFAULT_CONFIG.nativeToolsMode,
     maxMode: typeof raw.maxMode === 'boolean' ? raw.maxMode : DEFAULT_CONFIG.maxMode,
-    modelMappings: isModelMappingsMode(raw.modelMappings) ? raw.modelMappings : DEFAULT_CONFIG.modelMappings,
+    fast: typeof raw.fast === 'boolean' ? raw.fast : DEFAULT_CONFIG.fast,
+    thinking: typeof raw.thinking === 'boolean' ? raw.thinking : DEFAULT_CONFIG.thinking,
     maxRetries:
       typeof raw.maxRetries === 'number' && Number.isFinite(raw.maxRetries) && raw.maxRetries >= 0
         ? Math.min(Math.floor(raw.maxRetries), MAX_RETRIES_CAP)
@@ -114,23 +111,18 @@ export function saveConfig(config: Partial<CursorConfig>, configPath: string = C
   const merged: CursorConfig = {
     ...current,
     ...config,
-    version: 1, // always v1
+    version: 1,
   }
 
   const dir = dirname(configPath)
   mkdirSync(dir, { recursive: true })
   writeFileSync(configPath, `${JSON.stringify(merged, null, 2)}\n`, 'utf-8')
 
-  // Invalidate cache so next resolveEffective() picks up the change
   _cachedEffective = null
 }
 
 // ---------------------------------------------------------------------------
 // resolveEffective
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// Config cache — avoids re-reading from disk on every request
 // ---------------------------------------------------------------------------
 
 let _cachedEffective: CursorConfig | null = null
@@ -144,11 +136,10 @@ export function invalidateConfigCache(): void {
 /**
  * Load config, then apply environment variable overrides:
  * - `PI_CURSOR_NATIVE_TOOLS_MODE`
- * - `PI_CURSOR_MAX_MODE` (truthy string → true)
- * - `PI_CURSOR_RAW_MODELS` (truthy → modelMappings: 'raw')
+ * - `PI_CURSOR_MAX_MODE` (truthy → true)
+ * - `PI_CURSOR_FAST` (truthy → true)
+ * - `PI_CURSOR_THINKING` (truthy → true)
  * - `PI_CURSOR_MAX_RETRIES` (parse int)
- *
- * Results are cached for 5 seconds to avoid re-reading from disk on every request.
  */
 export function resolveEffective(configPath: string = CONFIG_PATH): CursorConfig {
   if (_cachedEffective && configPath === CONFIG_PATH) {
@@ -167,9 +158,14 @@ export function resolveEffective(configPath: string = CONFIG_PATH): CursorConfig
     cfg.maxMode = isTruthy(mm)
   }
 
-  const rm = process.env.PI_CURSOR_RAW_MODELS
-  if (rm !== undefined) {
-    cfg.modelMappings = isTruthy(rm) ? 'raw' : 'normalized'
+  const fast = process.env.PI_CURSOR_FAST
+  if (fast !== undefined) {
+    cfg.fast = isTruthy(fast)
+  }
+
+  const thinking = process.env.PI_CURSOR_THINKING
+  if (thinking !== undefined) {
+    cfg.thinking = isTruthy(thinking)
   }
 
   const mr = process.env.PI_CURSOR_MAX_RETRIES
@@ -193,8 +189,7 @@ export function resolveEffective(configPath: string = CONFIG_PATH): CursorConfig
 
 /**
  * Return a map of which config fields are currently overridden by environment
- * variables and their env var names. Used by the `/cursor` command to show
- * override indicators.
+ * variables and their env var names.
  */
 export function getEnvOverrides(): Partial<Record<keyof CursorConfig, string>> {
   const overrides: Partial<Record<keyof CursorConfig, string>> = {}

@@ -31,10 +31,12 @@ import {
   McpToolDefinitionSchema,
   type McpToolDefinition,
   ModelDetailsSchema,
+  RequestedModelSchema,
+  RequestedModel_ModelParameterbytesSchema,
   UserMessageActionSchema,
   UserMessageSchema,
 } from '../proto/agent_pb.ts'
-import type { NativeToolsMode } from './config.ts'
+import type { NativeToolsMode, CursorConfig } from './config.ts'
 import { CursorSession, type RetryHint, type SessionOptions } from './cursor-session.ts'
 import {
   debugRequestId,
@@ -89,12 +91,25 @@ export interface ProxyContext {
   /** Conversation persistence configuration. */
   convConfig: ConversationConfig
   /** Resolved Cursor configuration snapshot. */
-  config: {
-    modelMappings: 'normalized' | 'raw'
-    nativeToolsMode: NativeToolsMode
-    maxMode: boolean
-    maxRetries: number
+  config: Pick<CursorConfig, 'nativeToolsMode' | 'maxMode' | 'fast' | 'thinking' | 'maxRetries'>
+}
+
+// ── Context tier suffix parsing ──
+
+/**
+ * Parse a context-tier suffix from a model ID.
+ * Models with larger context tiers are registered with a ~{tokens} suffix
+ * (e.g. "gpt-5.4~1000000" for 1M context).
+ */
+export function parseContextTierSuffix(modelId: string): { baseModelId: string; longContext: boolean } {
+  const tildeIdx = modelId.lastIndexOf('~')
+  if (tildeIdx > 0) {
+    const contextTokens = Number(modelId.slice(tildeIdx + 1))
+    if (Number.isFinite(contextTokens) && contextTokens > 0) {
+      return { baseModelId: modelId.slice(0, tildeIdx), longContext: true }
+    }
   }
+  return { baseModelId: modelId, longContext: false }
 }
 
 // ── Request types ──
@@ -280,6 +295,27 @@ export function foldTurnsIntoSystemPrompt(
 
 // ── Request builder (exported for testing) ──
 
+// ---------------------------------------------------------------------------
+// RequestedModel parameter builder
+// ---------------------------------------------------------------------------
+
+// TODO(context-modes): The parameter name 'long_context' is a guess based on
+// Cursor's UI showing per-model context tiers (e.g. 200K / 1M). Verify via
+// Cursor DevTools (Network tab → AgentRun request → RequestedModel.parameters)
+// and update if the actual key differs.
+function buildModelParameters(longContext: boolean) {
+  const params = []
+  if (longContext) {
+    params.push(
+      create(RequestedModel_ModelParameterbytesSchema, {
+        id: 'long_context',
+        value: 'true',
+      }),
+    )
+  }
+  return params
+}
+
 function buildRunRequest(
   modelId: string,
   systemPrompt: string,
@@ -290,6 +326,8 @@ function buildRunRequest(
   blobStore: Map<string, Uint8Array>,
   mcpTools: McpToolDefinition[],
   nativeToolsMode: NativeToolsMode = 'reject',
+  longContext = false,
+  maxMode = false,
 ): { requestBytes: Uint8Array; blobStore: Map<string, Uint8Array>; mcpTools: McpToolDefinition[] } {
   // Try decoding a persisted checkpoint
   const decodedCheckpoint = checkpoint ? decodeCheckpointState(checkpoint) : null
@@ -324,11 +362,21 @@ function buildRunRequest(
     },
   })
 
-  // Max mode is determined by the model ID: -max suffix models get maxMode=true.
-  // The actual model ID sent to Cursor strips the -max suffix.
-  const isMaxMode = modelId.endsWith('-max')
-  const cursorModelId = isMaxMode ? modelId.slice(0, -4) : modelId
+  // Max mode: enabled via config toggle OR by -max suffix on the model ID.
+  // The -max suffix is stripped before sending to Cursor.
+  const hasMaxSuffix = modelId.endsWith('-max')
+  const isMaxMode = maxMode || hasMaxSuffix
+  const cursorModelId = hasMaxSuffix ? modelId.slice(0, -4) : modelId
 
+  // Build RequestedModel with parameters (new API path)
+  const parameters = buildModelParameters(longContext)
+  const requestedModel = create(RequestedModelSchema, {
+    modelId: cursorModelId,
+    maxMode: isMaxMode,
+    parameters,
+  })
+
+  // Also send ModelDetails for backward compat (deprecated but still accepted)
   const modelDetails = create(ModelDetailsSchema, {
     modelId: cursorModelId,
     displayModelId: cursorModelId,
@@ -341,6 +389,7 @@ function buildRunRequest(
     conversationState,
     action,
     modelDetails,
+    requestedModel,
     conversationId,
   })
 
@@ -575,17 +624,16 @@ export async function handleChatCompletion(
 
   const { model: requestedModelId, messages, stream = true, tools = [], tool_choice } = body
 
-  // Resolve the final Cursor model ID when normalization is active
+  const { baseModelId, longContext } = parseContextTierSuffix(requestedModelId)
+
+  // Resolve the final Cursor model ID
   const cfg = ctx.config
   const bodyRecord = body as unknown as Record<string, unknown>
   let modelId: string
-  if (cfg.modelMappings === 'normalized') {
+  {
     const modelSet = ctx.getNormalizedSet()
-    // Extract Pi's reasoning-effort from the request body (injected by Pi)
     const effort = typeof bodyRecord.reasoning_effort === 'string' ? bodyRecord.reasoning_effort : null
-    modelId = resolveModelId(requestedModelId, effort, cfg.maxMode, modelSet)
-  } else {
-    modelId = requestedModelId
+    modelId = resolveModelId(baseModelId, effort, cfg.fast, cfg.thinking, modelSet)
   }
 
   // Prefer pi_session_id from body (injected by before_provider_request), fall back to header
@@ -694,6 +742,8 @@ export async function handleChatCompletion(
     stored.blobStore,
     mcpTools,
     cfg.nativeToolsMode,
+    longContext,
+    cfg.maxMode,
   )
 
   const allowedRoot = cfg.nativeToolsMode === 'native' && piCwd ? resolveAllowedRoot(piCwd) : undefined
@@ -761,6 +811,8 @@ export async function handleChatCompletion(
                 s.blobStore,
                 mcpTools,
                 cfg.nativeToolsMode,
+                longContext,
+                cfg.maxMode,
               ).requestBytes,
           },
         )
@@ -801,6 +853,8 @@ export async function handleChatCompletion(
             stored.blobStore,
             mcpTools,
             cfg.nativeToolsMode,
+            longContext,
+            cfg.maxMode,
           ).requestBytes,
         }
         persistConversation(sessionId, stored, convConfig)
