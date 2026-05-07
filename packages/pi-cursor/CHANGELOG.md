@@ -1,5 +1,11 @@
 # @schultzp2020/pi-cursor
 
+## 0.5.0
+
+### Minor Changes
+
+- [#27](https://github.com/schultzp2020/pi-extensions/pull/27) [`b9d58e1`](https://github.com/schultzp2020/pi-extensions/commit/b9d58e1556385c2e5cb945bb0f417f982d5ac201) Thanks [@schultzp2020](https://github.com/schultzp2020)! - Migrate to the `@earendil-works/pi-ai` and `@earendil-works/pi-coding-agent` packages (renamed from `@mariozechner/*`). Adopt Pi core's `thinkingLevelMap` contract for reasoning-level controls, replacing the previous `compat.reasoningEffortMap` approach. Unsupported thinking levels are now explicitly marked as `null` so Pi's selector hides them instead of silently falling through.
+
 ## 0.4.0
 
 ### Minor Changes
