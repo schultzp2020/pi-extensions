@@ -426,6 +426,12 @@ describe('resolveModelId', () => {
     expect(result).toBe('gpt-5.4-high')
   })
 
+  it('accepts provider-specific suffixes from thinkingLevelMap', () => {
+    const modelSet = buildTestModelSet()
+    const result = resolveModelId('claude-4.6-opus-thinking', 'max', true, modelSet)
+    expect(result).toBe('claude-4.6-opus-max-thinking-max')
+  })
+
   it('uses empty suffix for medium when default is available', () => {
     // Build a model set where default (no effort) is available
     const raw = [makeModel('gpt-5.4'), makeModel('gpt-5.4-high')]

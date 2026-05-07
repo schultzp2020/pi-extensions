@@ -49,7 +49,7 @@ The process of collapsing raw Cursor model variants into deduplicated Pi-visible
 _Avoid_: model dedup, model collapse
 
 **Effort Map**:
-A per-model mapping from Pi's reasoning-effort levels (`minimal`, `low`, `medium`, `high`, `xhigh`) to the best available Cursor effort suffix for that family. Built dynamically from the family's actual effort set using `buildEffortMap`. In current Cursor data, `xhigh` and `max` are mutually exclusive per family — GPT-style models use `xhigh`, Claude-style models use `max`. Registered via the provider's `reasoningEffortMap` compat field when a model `supportsReasoningEffort`.
+A per-model mapping from Pi's reasoning-effort levels (`minimal`, `low`, `medium`, `high`, `xhigh`) to the best available Cursor effort suffix for that family. Built dynamically from the family's actual effort set using `buildEffortMap`. `xhigh` and `max` can coexist in the same family; when both exist, `max` is treated as the higher Cursor effort and maps to Pi's `xhigh`. Registered via the provider's model-level `thinkingLevelMap` with `compat.supportsReasoningEffort` enabled when a model supports reasoning control.
 _Avoid_: effort table, reasoning map
 
 **Effort Resolution**:

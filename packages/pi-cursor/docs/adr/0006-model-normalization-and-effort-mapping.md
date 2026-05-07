@@ -21,7 +21,7 @@ Critical: `-max` has **three** meanings in Cursor model IDs:
 
 Models like `claude-4.6-opus-max-thinking-fast-max` have both effort `max` AND maxMode flag.
 
-Models sharing the same `(base, variant)` with multiple effort levels or a single non-empty effort suffix are collapsed into one entry with `supportsReasoningEffort: true` and a `reasoningEffortMap`.
+Models sharing the same `(base, variant)` with multiple effort levels or a single non-empty effort suffix are collapsed into one entry with `compat.supportsReasoningEffort: true` and a model-level `thinkingLevelMap` built from the family's effort map.
 
 Pi's effort levels map to Cursor suffixes via `buildEffortMap`, which picks the best available match from the family's actual effort set:
 

@@ -2,8 +2,8 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
-import type { OAuthCredentials, OAuthLoginCallbacks } from '@mariozechner/pi-ai'
-import type { ExtensionAPI, ProviderModelConfig } from '@mariozechner/pi-coding-agent'
+import type { OAuthCredentials, OAuthLoginCallbacks } from '@earendil-works/pi-ai'
+import type { ExtensionAPI, ProviderModelConfig } from '@earendil-works/pi-coding-agent'
 
 import { generateCursorAuthParams, getTokenExpiry, pollCursorAuth, refreshCursorToken } from './auth.ts'
 import { FALLBACK_MODELS } from './fallback-models.ts'
@@ -57,32 +57,28 @@ function toProviderModels(models: CursorModel[], modelSet?: NormalizedModelSet):
       maxTokens: m.maxTokens,
     }
 
-    // When normalized, set reasoning effort compat and thinkingLevelMap for
-    // models with effort maps.  Pi-core requires thinkingLevelMap.xhigh to be
-    // explicitly defined for xhigh to appear in the thinking-level selector.
-    // The map values pass through as-is to the proxy, which maps them via
-    // buildEffortMap to the actual Cursor effort suffixes.
+    // When normalized, expose per-model thinking controls for families with
+    // effort maps. Pi core migrated provider-specific reasoning mappings from
+    // compat.reasoningEffortMap to model-level thinkingLevelMap.
     if (modelSet) {
       const parsed = parseModelId(m.id)
       const fKey = familyKey(parsed.base, parsed.thinking, parsed.fast)
       const effortMap = modelSet.effortMaps.get(fKey)
       if (effortMap) {
-        // reasoningEffortMap is a pi-cursor extension to the SDK compat type
         base.compat = {
           supportsReasoningEffort: true,
-          reasoningEffortMap: effortMap,
         } as ProviderModelConfig['compat']
 
-        // Explicitly define all effort levels in thinkingLevelMap so pi-core's
-        // getSupportedThinkingLevels includes them.  Currently only xhigh is
-        // opt-in (requires explicit definition), but defining all levels
-        // future-proofs against new opt-in levels.  The values pass through
-        // as reasoning_effort to the proxy, which maps them via effortMap.
-        // 'off' is excluded — it's always available and sending it as
-        // reasoning_effort would be a no-op the proxy doesn't expect.
-        const thinkingLevelMap: Record<string, string> = {}
-        for (const key of Object.keys(effortMap)) {
-          thinkingLevelMap[key] = key
+        // Explicitly define each reasoning level so the selector and level
+        // cycling only expose variants Cursor actually supports. The map values
+        // use provider-specific semantics required by Pi core: actual Cursor
+        // effort suffixes, with null hiding unsupported levels. "off" is
+        // intentionally omitted because Pi handles it natively and the proxy
+        // only expects active reasoning values.
+        const thinkingLevels = ['minimal', 'low', 'medium', 'high', 'xhigh'] as const
+        const thinkingLevelMap: Partial<Record<(typeof thinkingLevels)[number], string | null>> = {}
+        for (const key of thinkingLevels) {
+          thinkingLevelMap[key] = effortMap[key] ?? null
         }
         base.thinkingLevelMap = thinkingLevelMap
       }

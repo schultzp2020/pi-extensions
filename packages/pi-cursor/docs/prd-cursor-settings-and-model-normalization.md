@@ -94,7 +94,7 @@ After this change:
 
 - Pi levels map to Cursor suffixes via `buildEffortMap` using the family's available effort set
 - `minimal` → `none` or `low`; `low` → `low`; `medium` → `medium` or no suffix; `high` → `high`; `xhigh` → `max` or `xhigh` or `high`
-- Registered via provider `compat.supportsReasoningEffort` and `compat.reasoningEffortMap`
+- Registered via provider `compat.supportsReasoningEffort` and model-level `thinkingLevelMap`
 
 ### Native tools modes
 

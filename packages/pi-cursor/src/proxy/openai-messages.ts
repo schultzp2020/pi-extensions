@@ -56,7 +56,7 @@ export interface ParsedMessages {
  * Prefix strings used by pi-core to wrap compaction and branch summaries.
  * These are used to detect non-user turns in `parseMessages`.
  *
- * Source: `@mariozechner/pi-coding-agent` — COMPACTION_SUMMARY_PREFIX and
+ * Source: `@earendil-works/pi-coding-agent` — COMPACTION_SUMMARY_PREFIX and
  * BRANCH_SUMMARY_PREFIX from `dist/core/messages.js`.  Not imported directly
  * to avoid a heavy/circular dependency; kept in sync manually.
  */
