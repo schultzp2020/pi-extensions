@@ -11,11 +11,11 @@ A monorepo for [Pi](https://github.com/badlogic/pi) coding agent extensions.
 ## Development
 
 ```bash
-npm install           # Install all workspace dependencies
-npm run build         # Build all packages
-npm test              # Test all packages
-npm run lint          # Lint all packages
-npm run format        # Format all packages
+pnpm install          # Install all workspace dependencies
+pnpm run build        # Build all packages
+pnpm test             # Test all packages
+pnpm run lint         # Lint all packages
+pnpm run format       # Format all packages
 ```
 
 ## License

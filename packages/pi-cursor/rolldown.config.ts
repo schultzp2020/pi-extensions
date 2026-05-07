@@ -13,5 +13,5 @@ export default defineConfig({
   },
   platform: 'node',
   treeshake: true,
-  external: [/^node:/, '@mariozechner/pi-coding-agent', '@mariozechner/pi-ai'],
+  external: [/^node:/, '@earendil-works/pi-coding-agent', '@earendil-works/pi-ai'],
 })

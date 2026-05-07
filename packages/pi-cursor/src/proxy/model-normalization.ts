@@ -345,12 +345,17 @@ export function resolveModelId(
   if (effort) {
     const effortMap = modelSet.effortMaps.get(fKey)
     if (effortMap) {
-      // effort is a Pi effort level (minimal/low/medium/high/xhigh)
-      const cursorSuffix = effortMap[effort]
-      if (cursorSuffix) {
-        result += `-${cursorSuffix}`
+      // Accept both Pi thinking levels and the provider-specific values Pi core
+      // now sends from model.thinkingLevelMap.
+      if (Object.hasOwn(effortMap, effort)) {
+        const cursorSuffix = effortMap[effort]
+        if (cursorSuffix) {
+          result += `-${cursorSuffix}`
+        }
+        // empty string means no suffix (default effort)
+      } else if (EFFORT_SUFFIXES.has(effort)) {
+        result += `-${effort}`
       }
-      // empty string means no suffix (default effort)
     } else if (EFFORT_SUFFIXES.has(effort)) {
       // No effort map — if a raw effort string was passed, append it directly
       result += `-${effort}`

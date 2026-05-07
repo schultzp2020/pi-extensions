@@ -264,7 +264,7 @@ describe('selectToolsForChoice', () => {
 })
 
 describe('COMPACTION_MARKERS sync check', () => {
-  // These are the full prefixes from @mariozechner/pi-coding-agent dist/core/messages.js.
+  // These are the full prefixes from @earendil-works/pi-coding-agent dist/core/messages.js.
   // If pi-core changes them, update COMPACTION_MARKERS and these expected values.
   const PI_CORE_COMPACTION_PREFIX =
     'The conversation history before this point was compacted into the following summary:\n\n<summary>\n'

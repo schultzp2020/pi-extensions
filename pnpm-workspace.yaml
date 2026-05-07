@@ -1,2 +1,7 @@
 packages:
   - packages/*
+allowBuilds:
+  '@bufbuild/buf': true
+  '@google/genai': true
+  koffi: true
+  protobufjs: true
