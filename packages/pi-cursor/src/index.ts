@@ -13,11 +13,10 @@ import {
   resolveEffective,
   saveConfig,
   type CursorConfig,
-  type ModelMappingsMode,
   type NativeToolsMode,
 } from './proxy/config.ts'
 import { initDebugLogger, logLifecycle } from './proxy/debug-logger.ts'
-import { familyKey, parseModelId, processModels, type NormalizedModelSet } from './proxy/model-normalization.ts'
+import { processModels, type NormalizedModelSet } from './proxy/model-normalization.ts'
 import type { CursorModel } from './proxy/models.ts'
 
 const PROVIDER_ID = 'cursor'
@@ -45,8 +44,19 @@ function saveModelCache(models: CursorModel[]): void {
   }
 }
 
+/** Format a token count as a human-readable string (e.g. 200000 → "200K", 1000000 → "1M") */
+function formatTokenCount(tokens: number): string {
+  if (tokens >= 1_000_000 && tokens % 1_000_000 === 0) {
+    return `${String(tokens / 1_000_000)}M`
+  }
+  if (tokens >= 1_000 && tokens % 1_000 === 0) {
+    return `${String(tokens / 1_000)}K`
+  }
+  return String(tokens)
+}
+
 function toProviderModels(models: CursorModel[], modelSet?: NormalizedModelSet): ProviderModelConfig[] {
-  return models.map((m) => {
+  return models.flatMap((m) => {
     const base: ProviderModelConfig = {
       id: m.id,
       name: m.name,
@@ -57,24 +67,15 @@ function toProviderModels(models: CursorModel[], modelSet?: NormalizedModelSet):
       maxTokens: m.maxTokens,
     }
 
-    // When normalized, expose per-model thinking controls for families with
-    // effort maps. Pi core migrated provider-specific reasoning mappings from
-    // compat.reasoningEffortMap to model-level thinkingLevelMap.
+    // Expose per-model thinking controls for models with effort maps.
+    // Pi core reads thinkingLevelMap to populate the reasoning-effort selector.
     if (modelSet) {
-      const parsed = parseModelId(m.id)
-      const fKey = familyKey(parsed.base, parsed.thinking, parsed.fast)
-      const effortMap = modelSet.effortMaps.get(fKey)
+      const effortMap = modelSet.effortMaps.get(m.id)
       if (effortMap) {
         base.compat = {
           supportsReasoningEffort: true,
         } as ProviderModelConfig['compat']
 
-        // Explicitly define each reasoning level so the selector and level
-        // cycling only expose variants Cursor actually supports. The map values
-        // use provider-specific semantics required by Pi core: actual Cursor
-        // effort suffixes, with null hiding unsupported levels. "off" is
-        // intentionally omitted because Pi handles it natively and the proxy
-        // only expects active reasoning values.
         const thinkingLevels = ['minimal', 'low', 'medium', 'high', 'xhigh'] as const
         const thinkingLevelMap: Partial<Record<(typeof thinkingLevels)[number], string | null>> = {}
         for (const key of thinkingLevels) {
@@ -84,7 +85,22 @@ function toProviderModels(models: CursorModel[], modelSet?: NormalizedModelSet):
       }
     }
 
-    return base
+    const results: ProviderModelConfig[] = [base]
+
+    // Register additional models for larger context tiers.
+    // Each model's tiers come from the API (contextTokenLimit / contextTokenLimitForMaxMode).
+    // The base model uses the default tier; larger tiers get a [size] suffix in the name
+    // and ~{tokens} in the ID so the proxy can detect and send the appropriate parameter.
+    if (m.contextWindowMaxMode && m.contextWindowMaxMode > m.contextWindow) {
+      results.push({
+        ...base,
+        id: `${m.id}~${String(m.contextWindowMaxMode)}`,
+        name: `${m.name} [${formatTokenCount(m.contextWindowMaxMode)}]`,
+        contextWindow: m.contextWindowMaxMode,
+      })
+    }
+
+    return results
   })
 }
 
@@ -163,9 +179,8 @@ export default async function (pi: ExtensionAPI): Promise<void> {
 
   function register(): void {
     registeredPort = currentPort
-    const cfg = resolveEffective()
     let providerModels: ProviderModelConfig[]
-    if (cfg.modelMappings === 'normalized' && models.length > 0) {
+    if (models.length > 0) {
       const modelSet = processModels(models)
       providerModels = toProviderModels(modelSet.models, modelSet)
     } else {
@@ -224,7 +239,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
       const envOverrides = getEnvOverrides()
 
       // Build menu rows
-      type SettingKey = 'nativeToolsMode' | 'maxMode' | 'modelMappings' | 'maxRetries'
+      type SettingKey = 'nativeToolsMode' | 'maxMode' | 'fast' | 'thinking' | 'maxRetries'
       interface SettingRow {
         key: SettingKey
         label: string
@@ -233,15 +248,35 @@ export default async function (pi: ExtensionAPI): Promise<void> {
       }
 
       function formatValue(key: SettingKey, cfg: CursorConfig): string {
-        if (key === 'maxMode') {
-          return cfg.maxMode ? 'on' : 'off'
+        if (key === 'maxMode' || key === 'fast' || key === 'thinking') {
+          return cfg[key] ? 'on' : 'off'
         }
         return String(cfg[key])
       }
 
       const rows: SettingRow[] = []
 
-      // Native Tools Mode
+      rows.push({
+        key: 'maxMode',
+        label: 'Max Mode',
+        display: formatValue('maxMode', cfg),
+        envLocked: 'maxMode' in envOverrides,
+      })
+
+      rows.push({
+        key: 'fast',
+        label: 'Fast',
+        display: formatValue('fast', cfg),
+        envLocked: 'fast' in envOverrides,
+      })
+
+      rows.push({
+        key: 'thinking',
+        label: 'Thinking',
+        display: formatValue('thinking', cfg),
+        envLocked: 'thinking' in envOverrides,
+      })
+
       rows.push({
         key: 'nativeToolsMode',
         label: 'Native Tools Mode',
@@ -249,25 +284,6 @@ export default async function (pi: ExtensionAPI): Promise<void> {
         envLocked: 'nativeToolsMode' in envOverrides,
       })
 
-      // Max Mode — hidden when modelMappings=raw
-      if (cfg.modelMappings !== 'raw') {
-        rows.push({
-          key: 'maxMode',
-          label: 'Max Mode',
-          display: formatValue('maxMode', cfg),
-          envLocked: 'maxMode' in envOverrides,
-        })
-      }
-
-      // Model Mappings
-      rows.push({
-        key: 'modelMappings',
-        label: 'Model Mappings',
-        display: formatValue('modelMappings', cfg),
-        envLocked: 'modelMappings' in envOverrides,
-      })
-
-      // Max Retries
       rows.push({
         key: 'maxRetries',
         label: 'Max Retries',
@@ -292,7 +308,6 @@ export default async function (pi: ExtensionAPI): Promise<void> {
       }
       const row = rows[selectedIndex]
 
-      // Env-overridden settings are read-only
       if (row.envLocked) {
         const envVar = envOverrides[row.key]
         ctx.ui.notify(`${row.label} is overridden by ${envVar ?? 'environment variable'}`, 'warning')
@@ -303,7 +318,8 @@ export default async function (pi: ExtensionAPI): Promise<void> {
       const valueOptions: Record<SettingKey, string[]> = {
         nativeToolsMode: ['reject', 'redirect', 'native'],
         maxMode: ['on', 'off'],
-        modelMappings: ['normalized', 'raw'],
+        fast: ['on', 'off'],
+        thinking: ['on', 'off'],
         maxRetries: ['0', '1', '2', '3', '5'],
       }
 
@@ -324,8 +340,12 @@ export default async function (pi: ExtensionAPI): Promise<void> {
           update.maxMode = selectedValue === 'on'
           break
         }
-        case 'modelMappings': {
-          update.modelMappings = selectedValue as ModelMappingsMode
+        case 'fast': {
+          update.fast = selectedValue === 'on'
+          break
+        }
+        case 'thinking': {
+          update.thinking = selectedValue === 'on'
           break
         }
         case 'maxRetries': {
@@ -334,14 +354,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
         }
       }
 
-      // Persist
       saveConfig(update)
-
-      // If modelMappings changed, re-register provider with new model processing
-      if (row.key === 'modelMappings') {
-        register()
-      }
-
       ctx.ui.notify(`${row.label} set to ${selectedValue}`, 'info')
     },
   })

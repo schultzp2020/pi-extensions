@@ -52,9 +52,8 @@ function invalidateNormalizedModels(): void {
   cachedNormalizedSet = null
 }
 
-function handleModelsRequest(res: ServerResponse, models: CursorModel[]): void {
-  const cfg = resolveEffective()
-  const effectiveModels = cfg.modelMappings === 'normalized' ? getNormalizedModelSet().models : models
+function handleModelsRequest(res: ServerResponse, _models: CursorModel[]): void {
+  const effectiveModels = getNormalizedModelSet().models
 
   const data = effectiveModels.map((m) => ({
     id: m.id,
@@ -130,9 +129,10 @@ async function main(): Promise<void> {
     get config() {
       const cfg = resolveEffective()
       return {
-        modelMappings: cfg.modelMappings,
         nativeToolsMode: cfg.nativeToolsMode,
         maxMode: cfg.maxMode,
+        fast: cfg.fast,
+        thinking: cfg.thinking,
         maxRetries: cfg.maxRetries,
       }
     },

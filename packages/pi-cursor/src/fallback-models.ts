@@ -2,49 +2,43 @@ import type { CursorModel } from './proxy/models.ts'
 
 /**
  * Static fallback model list for pre-login / cold-start availability.
- * Used when no model cache exists and model discovery hasn't run yet.
- *
- * Only includes the latest generation of each model family.
  * Once the proxy connects, this is replaced by live discovery data.
  *
- * Last synced with ~/.pi/agent/cursor-model-cache.json on 2026-05-04.
+ * Last synced with Cursor AvailableModels API on 2026-05-07.
  */
 export const FALLBACK_MODELS: CursorModel[] = [
-  // ── Claude (latest per tier) ──
   {
-    id: 'claude-4.6-sonnet',
+    id: 'claude-sonnet-4-6',
     name: 'Sonnet 4.6',
-    reasoning: false,
-    contextWindow: 1_000_000,
-    maxTokens: 64_000,
-    supportsImages: true,
-    supportsMaxMode: true,
-  },
-  {
-    id: 'claude-4.6-opus',
-    name: 'Opus 4.6',
-    reasoning: false,
-    contextWindow: 1_000_000,
-    maxTokens: 64_000,
-    supportsImages: true,
-    supportsMaxMode: true,
-  },
-  {
-    id: 'claude-4.5-haiku',
-    name: 'Haiku 4.5',
-    reasoning: false,
+    reasoning: true,
     contextWindow: 200_000,
     maxTokens: 64_000,
     supportsImages: true,
     supportsMaxMode: true,
   },
-
-  // ── GPT (latest per tier) ──
+  {
+    id: 'claude-opus-4-6',
+    name: 'Opus 4.6',
+    reasoning: true,
+    contextWindow: 200_000,
+    maxTokens: 64_000,
+    supportsImages: true,
+    supportsMaxMode: true,
+  },
+  {
+    id: 'claude-haiku-4-5',
+    name: 'Haiku 4.5',
+    reasoning: true,
+    contextWindow: 200_000,
+    maxTokens: 64_000,
+    supportsImages: true,
+    supportsMaxMode: true,
+  },
   {
     id: 'gpt-5.4',
     name: 'GPT-5.4',
     reasoning: true,
-    contextWindow: 922_000,
+    contextWindow: 200_000,
     maxTokens: 64_000,
     supportsImages: true,
     supportsMaxMode: true,
@@ -53,16 +47,7 @@ export const FALLBACK_MODELS: CursorModel[] = [
     id: 'gpt-5.4-mini',
     name: 'GPT-5.4 Mini',
     reasoning: true,
-    contextWindow: 272_000,
-    maxTokens: 64_000,
-    supportsImages: true,
-    supportsMaxMode: true,
-  },
-  {
-    id: 'gpt-5.4-nano',
-    name: 'GPT-5.4 Nano',
-    reasoning: true,
-    contextWindow: 272_000,
+    contextWindow: 200_000,
     maxTokens: 64_000,
     supportsImages: true,
     supportsMaxMode: true,
@@ -71,18 +56,16 @@ export const FALLBACK_MODELS: CursorModel[] = [
     id: 'gpt-5.3-codex',
     name: 'Codex 5.3',
     reasoning: true,
-    contextWindow: 272_000,
+    contextWindow: 200_000,
     maxTokens: 64_000,
     supportsImages: true,
     supportsMaxMode: true,
   },
-
-  // ── Gemini (latest per tier) ──
   {
     id: 'gemini-3.1-pro',
     name: 'Gemini 3.1 Pro',
     reasoning: true,
-    contextWindow: 1_000_000,
+    contextWindow: 200_000,
     maxTokens: 64_000,
     supportsImages: true,
     supportsMaxMode: true,
@@ -91,24 +74,11 @@ export const FALLBACK_MODELS: CursorModel[] = [
     id: 'gemini-3-flash',
     name: 'Gemini 3 Flash',
     reasoning: true,
-    contextWindow: 1_000_000,
-    maxTokens: 64_000,
-    supportsImages: true,
-    supportsMaxMode: true,
-  },
-
-  // ── Grok ──
-  {
-    id: 'grok-4-20',
-    name: 'Grok 4.20',
-    reasoning: false,
     contextWindow: 200_000,
     maxTokens: 64_000,
     supportsImages: true,
     supportsMaxMode: true,
   },
-
-  // ── Composer (latest) ──
   {
     id: 'composer-2',
     name: 'Composer 2',

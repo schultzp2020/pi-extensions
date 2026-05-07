@@ -96,9 +96,10 @@ function makeProxyContext(overrides: Partial<ProxyContext> = {}): ProxyContext {
     getNormalizedSet: () => ({ models: [], byId: new Map(), effortMap: new Map() }) as unknown as NormalizedModelSet,
     convConfig: TEST_CONV_CONFIG,
     config: {
-      modelMappings: 'raw',
       nativeToolsMode: 'reject',
       maxMode: false,
+      fast: false,
+      thinking: true,
       maxRetries: 2,
     },
     ...overrides,
@@ -191,7 +192,13 @@ describe('handleChatCompletion', () => {
       const req = makeRequest()
       const res = makeResponse()
       const ctx = makeProxyContext({
-        config: { modelMappings: 'raw', nativeToolsMode: 'reject', maxMode: false, maxRetries: 1 },
+        config: {
+          nativeToolsMode: 'reject',
+          maxMode: false,
+          fast: false,
+          thinking: true,
+          maxRetries: 1,
+        },
       })
 
       vi.mocked(readBody).mockResolvedValue(VALID_BODY)
@@ -313,7 +320,13 @@ describe('handleChatCompletion', () => {
       const req = makeRequest()
       const res = makeResponse()
       const ctx = makeProxyContext({
-        config: { modelMappings: 'raw', nativeToolsMode: 'reject', maxMode: false, maxRetries: 0 },
+        config: {
+          nativeToolsMode: 'reject',
+          maxMode: false,
+          fast: false,
+          thinking: true,
+          maxRetries: 0,
+        },
       })
 
       vi.mocked(readBody).mockResolvedValue(VALID_BODY)
