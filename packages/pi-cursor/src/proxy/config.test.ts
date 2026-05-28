@@ -25,11 +25,11 @@ function tmpConfigPath(dir: string): string {
   return join(dir, 'cursor-config.json')
 }
 
-// Save & restore env vars touched by tests
 const ENV_KEYS = [
   'PI_CURSOR_NATIVE_TOOLS_MODE',
   'PI_CURSOR_MAX_MODE',
-  'PI_CURSOR_RAW_MODELS',
+  'PI_CURSOR_FAST',
+  'PI_CURSOR_THINKING',
   'PI_CURSOR_MAX_RETRIES',
 ] as const
 
@@ -76,7 +76,8 @@ describe('loadConfig', () => {
       version: 1,
       nativeToolsMode: 'native',
       maxMode: true,
-      modelMappings: 'raw',
+      fast: true,
+      thinking: false,
       maxRetries: 5,
     }
     writeFileSync(path, JSON.stringify(data))
@@ -97,19 +98,15 @@ describe('loadConfig', () => {
         version: 1,
         nativeToolsMode: 'INVALID',
         maxMode: true,
-        modelMappings: 'raw',
+        fast: 'not-a-bool',
         maxRetries: -1,
       }),
     )
     const cfg = loadConfig(path)
-    // nativeToolsMode invalid → default 'reject'
-    expect(cfg.nativeToolsMode).toBe('reject')
-    // maxMode valid → true
+    expect(cfg.nativeToolsMode).toBe('reject') // invalid → default
     expect(cfg.maxMode).toBeTruthy()
-    // modelMappings valid → 'raw'
-    expect(cfg.modelMappings).toBe('raw')
-    // maxRetries negative → default 2
-    expect(cfg.maxRetries).toBe(2)
+    expect(cfg.fast).toBeFalsy() // not a boolean → default false
+    expect(cfg.maxRetries).toBe(2) // negative → default 2
   })
 
   it('ignores unknown fields', () => {
@@ -120,13 +117,13 @@ describe('loadConfig', () => {
         version: 1,
         nativeToolsMode: 'redirect',
         unknownField: 'hello',
-        anotherField: 42,
+        modelMappings: 'raw', // old field, should be ignored
       }),
     )
     const cfg = loadConfig(path)
     expect(cfg.nativeToolsMode).toBe('redirect')
     expect('unknownField' in cfg).toBeFalsy()
-    expect('anotherField' in cfg).toBeFalsy()
+    expect('modelMappings' in cfg).toBeFalsy()
   })
 
   it('returns defaults when file contains a JSON array', () => {
@@ -141,30 +138,14 @@ describe('loadConfig', () => {
 // ---------------------------------------------------------------------------
 
 describe('saveConfig', () => {
-  it('writes valid JSON', () => {
+  it('writes and reads back', () => {
     const path = tmpConfigPath(tmpDir)
-    saveConfig({ maxMode: true }, path)
-    const raw: CursorConfig = loadConfig(path)
-    expect(raw.maxMode).toBeTruthy()
-    expect(raw.version).toBe(1)
-  })
-
-  it('merges with existing config', () => {
-    const path = tmpConfigPath(tmpDir)
-    writeFileSync(
-      path,
-      JSON.stringify({
-        version: 1,
-        nativeToolsMode: 'native',
-        maxMode: false,
-        modelMappings: 'normalized',
-        maxRetries: 3,
-      }),
-    )
-    saveConfig({ maxRetries: 10 }, path)
+    saveConfig({ maxMode: true, fast: true, thinking: false }, path)
     const cfg = loadConfig(path)
-    expect(cfg.nativeToolsMode).toBe('native') // preserved
-    expect(cfg.maxRetries).toBe(10) // updated
+    expect(cfg.maxMode).toBeTruthy()
+    expect(cfg.fast).toBeTruthy()
+    expect(cfg.thinking).toBeFalsy()
+    expect(cfg.version).toBe(1)
   })
 
   it('creates directory if needed', () => {
@@ -178,8 +159,28 @@ describe('saveConfig', () => {
   it('always writes version 1', () => {
     const path = tmpConfigPath(tmpDir)
     saveConfig({ version: 99 } as Partial<CursorConfig>, path)
-    const raw: CursorConfig = loadConfig(path)
-    expect(raw.version).toBe(1)
+    const cfg = loadConfig(path)
+    expect(cfg.version).toBe(1)
+  })
+
+  it('merges with existing config', () => {
+    const path = tmpConfigPath(tmpDir)
+    writeFileSync(
+      path,
+      JSON.stringify({
+        version: 1,
+        nativeToolsMode: 'native',
+        maxMode: false,
+        fast: false,
+        contextWindow: 0,
+        maxRetries: 3,
+      }),
+    )
+    saveConfig({ maxRetries: 10, fast: true }, path)
+    const cfg = loadConfig(path)
+    expect(cfg.nativeToolsMode).toBe('native') // preserved
+    expect(cfg.fast).toBeTruthy() // updated
+    expect(cfg.maxRetries).toBe(10) // updated
   })
 })
 
@@ -190,26 +191,19 @@ describe('saveConfig', () => {
 describe('resolveEffective', () => {
   it('env vars override file values', () => {
     const path = tmpConfigPath(tmpDir)
-    writeFileSync(
-      path,
-      JSON.stringify({
-        version: 1,
-        nativeToolsMode: 'reject',
-        maxMode: false,
-        modelMappings: 'normalized',
-        maxRetries: 2,
-      }),
-    )
+    writeFileSync(path, JSON.stringify(DEFAULT_CONFIG))
 
     process.env.PI_CURSOR_NATIVE_TOOLS_MODE = 'native'
     process.env.PI_CURSOR_MAX_MODE = '1'
-    process.env.PI_CURSOR_RAW_MODELS = 'true'
+    process.env.PI_CURSOR_FAST = 'true'
+    process.env.PI_CURSOR_THINKING = '0'
     process.env.PI_CURSOR_MAX_RETRIES = '7'
 
     const cfg = resolveEffective(path)
     expect(cfg.nativeToolsMode).toBe('native')
     expect(cfg.maxMode).toBeTruthy()
-    expect(cfg.modelMappings).toBe('raw')
+    expect(cfg.fast).toBeTruthy()
+    expect(cfg.thinking).toBeFalsy()
     expect(cfg.maxRetries).toBe(7)
   })
 
@@ -217,17 +211,7 @@ describe('resolveEffective', () => {
     process.env.PI_CURSOR_MAX_MODE = 'yes'
     const cfg = resolveEffective(tmpConfigPath(tmpDir))
     expect(cfg.maxMode).toBeTruthy()
-    // other fields remain default
-    expect(cfg.nativeToolsMode).toBe('reject')
-  })
-
-  it('multiple env vars compose correctly', () => {
-    process.env.PI_CURSOR_MAX_MODE = '1'
-    process.env.PI_CURSOR_MAX_RETRIES = '0'
-    const cfg = resolveEffective(tmpConfigPath(tmpDir))
-    expect(cfg.maxMode).toBeTruthy()
-    expect(cfg.maxRetries).toBe(0)
-    expect(cfg.modelMappings).toBe('normalized') // not overridden
+    expect(cfg.nativeToolsMode).toBe('reject') // other fields remain default
   })
 
   it('PI_CURSOR_MAX_MODE=0 is falsy', () => {
@@ -242,22 +226,22 @@ describe('resolveEffective', () => {
     expect(cfg.maxMode).toBeFalsy()
   })
 
-  it('PI_CURSOR_RAW_MODELS=0 sets normalized', () => {
-    process.env.PI_CURSOR_RAW_MODELS = '0'
+  it('PI_CURSOR_FAST=0 is falsy', () => {
+    process.env.PI_CURSOR_FAST = '0'
     const cfg = resolveEffective(tmpConfigPath(tmpDir))
-    expect(cfg.modelMappings).toBe('normalized')
+    expect(cfg.fast).toBeFalsy()
   })
 
   it('ignores invalid PI_CURSOR_NATIVE_TOOLS_MODE', () => {
     process.env.PI_CURSOR_NATIVE_TOOLS_MODE = 'INVALID'
     const cfg = resolveEffective(tmpConfigPath(tmpDir))
-    expect(cfg.nativeToolsMode).toBe('reject') // default
+    expect(cfg.nativeToolsMode).toBe('reject')
   })
 
   it('ignores invalid PI_CURSOR_MAX_RETRIES', () => {
     process.env.PI_CURSOR_MAX_RETRIES = 'abc'
     const cfg = resolveEffective(tmpConfigPath(tmpDir))
-    expect(cfg.maxRetries).toBe(2) // default
+    expect(cfg.maxRetries).toBe(2)
   })
 })
 
@@ -270,26 +254,28 @@ describe('getEnvOverrides', () => {
     expect(getEnvOverrides()).toEqual({})
   })
 
-  it('returns correct override map when env vars are set', () => {
+  it('returns correct override map', () => {
     process.env.PI_CURSOR_MAX_MODE = '1'
-    process.env.PI_CURSOR_RAW_MODELS = 'yes'
+    process.env.PI_CURSOR_FAST = '1'
     const overrides = getEnvOverrides()
     expect(overrides).toEqual({
       maxMode: 'PI_CURSOR_MAX_MODE',
-      modelMappings: 'PI_CURSOR_RAW_MODELS',
+      fast: 'PI_CURSOR_FAST',
     })
   })
 
-  it('includes all four env vars when all are set', () => {
+  it('includes all env vars when all are set', () => {
     process.env.PI_CURSOR_NATIVE_TOOLS_MODE = 'native'
     process.env.PI_CURSOR_MAX_MODE = '1'
-    process.env.PI_CURSOR_RAW_MODELS = '1'
+    process.env.PI_CURSOR_FAST = '1'
+    process.env.PI_CURSOR_THINKING = '1'
     process.env.PI_CURSOR_MAX_RETRIES = '5'
     const overrides = getEnvOverrides()
     expect(overrides).toEqual({
       nativeToolsMode: 'PI_CURSOR_NATIVE_TOOLS_MODE',
       maxMode: 'PI_CURSOR_MAX_MODE',
-      modelMappings: 'PI_CURSOR_RAW_MODELS',
+      fast: 'PI_CURSOR_FAST',
+      thinking: 'PI_CURSOR_THINKING',
       maxRetries: 'PI_CURSOR_MAX_RETRIES',
     })
   })

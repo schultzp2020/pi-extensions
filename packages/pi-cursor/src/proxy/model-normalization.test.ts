@@ -2,10 +2,9 @@ import { describe, it, expect } from 'vitest'
 
 import {
   buildEffortMap,
-  parseModelId,
+  parseSlug,
   processModels,
   resolveModelId,
-  supportsReasoningModelId,
   type CursorEffort,
   type NormalizedModelSet,
 } from './model-normalization.ts'
@@ -21,225 +20,105 @@ function makeModel(id: string, overrides?: Partial<CursorModel>): CursorModel {
     name: id,
     reasoning: true,
     contextWindow: 200_000,
-    maxTokens: 16384,
+    maxTokens: 64_000,
     supportsImages: true,
-    supportsMaxMode: false,
+    supportsMaxMode: true,
     ...overrides,
   }
 }
 
 // ---------------------------------------------------------------------------
-// parseModelId
+// parseSlug
 // ---------------------------------------------------------------------------
 
-describe('parseModelId', () => {
-  it('parses a simple model ID with no suffixes', () => {
-    const result = parseModelId('claude-4.5-sonnet')
-    expect(result).toEqual({
-      base: 'claude-4.5-sonnet',
+describe('parseSlug', () => {
+  it('parses a simple slug with no suffixes', () => {
+    expect(parseSlug('claude-4.6-opus')).toEqual({
+      base: 'claude-4.6-opus',
       effort: null,
       thinking: false,
       fast: false,
-      maxMode: false,
     })
   })
 
   it('parses an effort suffix', () => {
-    const result = parseModelId('gpt-5.4-high')
-    expect(result).toEqual({
+    expect(parseSlug('gpt-5.4-high')).toEqual({
       base: 'gpt-5.4',
       effort: 'high',
       thinking: false,
       fast: false,
-      maxMode: false,
     })
   })
 
-  it('parses the -fast suffix', () => {
-    const result = parseModelId('gpt-5.4-fast')
-    expect(result).toEqual({
+  it('parses -fast suffix', () => {
+    expect(parseSlug('gpt-5.4-fast')).toEqual({
       base: 'gpt-5.4',
       effort: null,
       thinking: false,
       fast: true,
-      maxMode: false,
     })
   })
 
-  it('parses the -thinking suffix', () => {
-    const result = parseModelId('claude-4.6-opus-thinking')
-    expect(result).toEqual({
+  it('parses -thinking suffix', () => {
+    expect(parseSlug('claude-4.6-opus-thinking')).toEqual({
       base: 'claude-4.6-opus',
       effort: null,
       thinking: true,
       fast: false,
-      maxMode: false,
     })
   })
 
-  it('strips trailing -max as maxMode flag', () => {
-    const result = parseModelId('claude-4.5-sonnet-max')
-    expect(result).toEqual({
-      base: 'claude-4.5-sonnet',
-      effort: null,
-      thinking: false,
-      fast: false,
-      maxMode: true,
-    })
-  })
-
-  it('parses effort suffix with -fast', () => {
-    const result = parseModelId('gpt-5.4-high-fast')
-    expect(result).toEqual({
+  it('parses effort + fast', () => {
+    expect(parseSlug('gpt-5.4-high-fast')).toEqual({
       base: 'gpt-5.4',
       effort: 'high',
       thinking: false,
       fast: true,
-      maxMode: false,
     })
   })
 
-  it('parses effort suffix with -thinking', () => {
-    const result = parseModelId('claude-4.6-opus-max-thinking')
-    expect(result).toEqual({
+  it('parses effort + thinking', () => {
+    expect(parseSlug('claude-4.6-opus-max-thinking')).toEqual({
       base: 'claude-4.6-opus',
       effort: 'max',
       thinking: true,
       fast: false,
-      maxMode: false,
     })
   })
 
-  it('handles triple-max: effort max + thinking + fast + maxMode', () => {
-    const result = parseModelId('claude-4.6-opus-max-thinking-fast-max')
-    expect(result).toEqual({
+  it('parses effort + thinking + fast', () => {
+    expect(parseSlug('claude-4.6-opus-high-thinking-fast')).toEqual({
       base: 'claude-4.6-opus',
-      effort: 'max',
+      effort: 'high',
       thinking: true,
       fast: true,
-      maxMode: true,
     })
   })
 
-  it('handles base name max (gpt-5.1-codex-max) — no effort', () => {
-    const result = parseModelId('gpt-5.1-codex-max')
-    expect(result).toEqual({
-      base: 'gpt-5.1-codex-max',
-      effort: null,
-      thinking: false,
-      fast: false,
-      maxMode: false,
-    })
-  })
-
-  it('handles base name max with maxMode trailing -max', () => {
-    // gpt-5.1-codex-max-max → base gpt-5.1-codex-max, maxMode true
-    const result = parseModelId('gpt-5.1-codex-max-max')
-    expect(result).toEqual({
-      base: 'gpt-5.1-codex-max',
-      effort: null,
-      thinking: false,
-      fast: false,
-      maxMode: true,
-    })
-  })
-
-  it('parses -none effort suffix', () => {
-    const result = parseModelId('gpt-5.4-none')
-    expect(result).toEqual({
+  it('parses -none effort', () => {
+    expect(parseSlug('gpt-5.4-none')).toEqual({
       base: 'gpt-5.4',
       effort: 'none',
       thinking: false,
       fast: false,
-      maxMode: false,
     })
   })
 
-  it('parses -low effort suffix', () => {
-    const result = parseModelId('gpt-5.4-low')
-    expect(result).toEqual({
+  it('parses -none effort + fast', () => {
+    expect(parseSlug('gpt-5.4-none-fast')).toEqual({
       base: 'gpt-5.4',
-      effort: 'low',
-      thinking: false,
-      fast: false,
-      maxMode: false,
-    })
-  })
-
-  it('parses -medium effort suffix', () => {
-    const result = parseModelId('gpt-5.4-medium')
-    expect(result).toEqual({
-      base: 'gpt-5.4',
-      effort: 'medium',
-      thinking: false,
-      fast: false,
-      maxMode: false,
-    })
-  })
-
-  it('parses -xhigh effort suffix', () => {
-    const result = parseModelId('gpt-5.2-xhigh')
-    expect(result).toEqual({
-      base: 'gpt-5.2',
-      effort: 'xhigh',
-      thinking: false,
-      fast: false,
-      maxMode: false,
-    })
-  })
-
-  it('parses effort + thinking + maxMode', () => {
-    const result = parseModelId('claude-4.6-sonnet-high-thinking-max')
-    expect(result).toEqual({
-      base: 'claude-4.6-sonnet',
-      effort: 'high',
-      thinking: true,
-      fast: false,
-      maxMode: true,
-    })
-  })
-
-  it('parses -fast only (no effort, no thinking)', () => {
-    const result = parseModelId('gemini-3-flash-fast')
-    expect(result).toEqual({
-      base: 'gemini-3-flash',
-      effort: null,
+      effort: 'none',
       thinking: false,
       fast: true,
-      maxMode: false,
     })
   })
 
-  it('parses -thinking only', () => {
-    const result = parseModelId('gemini-3-flash-thinking')
-    expect(result).toEqual({
-      base: 'gemini-3-flash',
-      effort: null,
-      thinking: true,
-      fast: false,
-      maxMode: false,
-    })
-  })
-
-  it('handles single-segment model name', () => {
-    const result = parseModelId('composer')
-    expect(result).toEqual({
+  it('handles single-segment slug', () => {
+    expect(parseSlug('composer')).toEqual({
       base: 'composer',
       effort: null,
       thinking: false,
       fast: false,
-      maxMode: false,
-    })
-  })
-
-  it('handles base name max with -fast suffix', () => {
-    const result = parseModelId('gpt-5.1-codex-max-fast')
-    expect(result).toEqual({
-      base: 'gpt-5.1-codex-max',
-      effort: null,
-      thinking: false,
-      fast: true,
-      maxMode: false,
     })
   })
 })
@@ -259,7 +138,7 @@ describe('buildEffortMap', () => {
     expect(map.xhigh).toBe('max')
   })
 
-  it('handles xhigh and max coexistence — max wins for xhigh', () => {
+  it('maps xhigh to max when both exist', () => {
     const efforts = new Set<CursorEffort | 'default'>(['low', 'high', 'xhigh', 'max'])
     const map = buildEffortMap(efforts)
     expect(map.xhigh).toBe('max')
@@ -277,114 +156,92 @@ describe('buildEffortMap', () => {
     expect(map.xhigh).toBe('high')
   })
 
-  it('maps minimal to none if available', () => {
-    const efforts = new Set<CursorEffort | 'default'>(['none', 'low', 'high'])
-    const map = buildEffortMap(efforts)
-    expect(map.minimal).toBe('none')
-  })
-
-  it('maps minimal to low if no none available', () => {
-    const efforts = new Set<CursorEffort | 'default'>(['low', 'high'])
-    const map = buildEffortMap(efforts)
-    expect(map.minimal).toBe('low')
-  })
-
-  it('maps medium to empty string (default/no suffix) when only default', () => {
+  it('maps medium to empty string for default-only', () => {
     const efforts = new Set<CursorEffort | 'default'>(['default', 'high'])
     const map = buildEffortMap(efforts)
     expect(map.medium).toBe('')
   })
 
-  it('handles single-effort set', () => {
-    const efforts = new Set<CursorEffort | 'default'>(['high'])
-    const map = buildEffortMap(efforts)
-    expect(map.minimal).toBe('high')
-    expect(map.low).toBe('high')
-    expect(map.medium).toBe('high')
-    expect(map.high).toBe('high')
-    expect(map.xhigh).toBe('high')
-  })
-
-  it('handles empty effort set — all map to empty string', () => {
+  it('handles empty effort set', () => {
     const efforts = new Set<CursorEffort | 'default'>()
     const map = buildEffortMap(efforts)
     expect(map.minimal).toBe('')
-    expect(map.low).toBe('')
-    expect(map.medium).toBe('')
-    expect(map.high).toBe('')
     expect(map.xhigh).toBe('')
-  })
-
-  it('handles default-only set (no suffix models)', () => {
-    const efforts = new Set<CursorEffort | 'default'>(['default'])
-    const map = buildEffortMap(efforts)
-    expect(map.medium).toBe('')
   })
 })
 
 // ---------------------------------------------------------------------------
-// processModels
+// processModels — builds metadata from legacySlugs
 // ---------------------------------------------------------------------------
 
 describe('processModels', () => {
-  it('collapses multi-effort family into single entry', () => {
-    const raw = [makeModel('gpt-5.4'), makeModel('gpt-5.4-low'), makeModel('gpt-5.4-medium'), makeModel('gpt-5.4-high')]
-    const result = processModels(raw)
+  it('extracts effort levels from legacy slugs', () => {
+    const models = [
+      makeModel('gpt-5.4', {
+        legacySlugs: ['gpt-5.4-low', 'gpt-5.4-medium', 'gpt-5.4-high', 'gpt-5.4-xhigh'],
+      }),
+    ]
+    const result = processModels(models)
 
-    // Should collapse to a single gpt-5.4 entry
-    const gpt54 = result.models.filter((m) => m.id === 'gpt-5.4')
-    expect(gpt54).toHaveLength(1)
+    const meta = result.modelMeta.get('gpt-5.4')
+    expect(meta).toBeDefined()
+    expect(meta?.efforts.has('low')).toBeTruthy()
+    expect(meta?.efforts.has('medium')).toBeTruthy()
+    expect(meta?.efforts.has('high')).toBeTruthy()
+    expect(meta?.efforts.has('xhigh')).toBeTruthy()
+    expect(meta?.efforts.has('default')).toBeTruthy()
 
-    // Should have effort map
-    const fKey = 'gpt-5.4|false|false'
-    expect(result.effortMaps.has(fKey)).toBeTruthy()
+    expect(result.effortMaps.has('gpt-5.4')).toBeTruthy()
   })
 
-  it('keeps variant-different models separate', () => {
-    const raw = [makeModel('gpt-5.4'), makeModel('gpt-5.4-fast'), makeModel('gpt-5.4-thinking')]
-    const result = processModels(raw)
+  it('detects fast support from legacy slugs', () => {
+    const models = [
+      makeModel('gpt-5.4', {
+        legacySlugs: ['gpt-5.4-low', 'gpt-5.4-low-fast', 'gpt-5.4-high', 'gpt-5.4-high-fast'],
+      }),
+    ]
+    const result = processModels(models)
 
-    // Should have 3 entries (base, fast, thinking are different variants)
-    expect(result.models).toHaveLength(3)
-    const ids = result.models.map((m) => m.id)
-    expect(ids).toContain('gpt-5.4')
-    expect(ids).toContain('gpt-5.4-fast')
-    expect(ids).toContain('gpt-5.4-thinking')
+    const meta = result.modelMeta.get('gpt-5.4')
+    expect(meta?.supportsFast).toBeTruthy()
   })
 
-  it('collapses effort variants within the same variant group', () => {
-    const raw = [makeModel('gpt-5.4-fast'), makeModel('gpt-5.4-low-fast'), makeModel('gpt-5.4-high-fast')]
-    const result = processModels(raw)
+  it('detects thinking support from legacy slugs', () => {
+    const models = [
+      makeModel('claude-opus-4-6', {
+        legacySlugs: ['claude-4.6-opus-high', 'claude-4.6-opus-high-thinking', 'claude-4.6-opus-high-thinking-fast'],
+      }),
+    ]
+    const result = processModels(models)
 
-    // Should collapse to one gpt-5.4-fast entry
-    expect(result.models).toHaveLength(1)
-    expect(result.models[0]?.id).toBe('gpt-5.4-fast')
+    const meta = result.modelMeta.get('claude-opus-4-6')
+    expect(meta?.supportsThinking).toBeTruthy()
+    expect(meta?.supportsFast).toBeTruthy()
   })
 
-  it('tracks maxMode availability from raw models', () => {
-    const raw = [makeModel('claude-4.6-opus'), makeModel('claude-4.6-opus-max', { supportsMaxMode: true })]
-    const result = processModels(raw)
+  it('model with no legacy slugs gets default-only metadata', () => {
+    const models = [makeModel('gemini-3.1-pro')]
+    const result = processModels(models)
 
-    const fKey = 'claude-4.6-opus|false|false'
-    expect(result.families.get(fKey)?.hasMaxMode).toBeTruthy()
-    expect(result.models[0]?.supportsMaxMode).toBeTruthy()
+    const meta = result.modelMeta.get('gemini-3.1-pro')
+    expect(meta?.efforts.size).toBe(1)
+    expect(meta?.efforts.has('default')).toBeTruthy()
+    expect(meta?.supportsFast).toBeFalsy()
+    expect(meta?.supportsThinking).toBeFalsy()
+
+    expect(result.effortMaps.has('gemini-3.1-pro')).toBeFalsy()
   })
 
-  it('produces no effort map for single-default-effort family', () => {
-    const raw = [makeModel('composer-2')]
-    const result = processModels(raw)
+  it('builds slug lookup table', () => {
+    const models = [
+      makeModel('gpt-5.4', {
+        legacySlugs: ['gpt-5.4-high', 'gpt-5.4-high-fast'],
+      }),
+    ]
+    const result = processModels(models)
 
-    expect(result.models).toHaveLength(1)
-    const fKey = 'composer-2|false|false'
-    expect(result.effortMaps.has(fKey)).toBeFalsy()
-  })
-
-  it('produces effort map for single non-default effort family', () => {
-    const raw = [makeModel('gpt-5.4-high')]
-    const result = processModels(raw)
-
-    const fKey = 'gpt-5.4|false|false'
-    expect(result.effortMaps.has(fKey)).toBeTruthy()
+    expect(result.slugLookup.get('gpt-5.4|high|false|false')).toBe('gpt-5.4-high')
+    expect(result.slugLookup.get('gpt-5.4|high|true|false')).toBe('gpt-5.4-high-fast')
   })
 })
 
@@ -393,113 +250,98 @@ describe('processModels', () => {
 // ---------------------------------------------------------------------------
 
 describe('resolveModelId', () => {
-  function buildTestModelSet(): NormalizedModelSet {
-    const raw = [
-      makeModel('gpt-5.4'),
-      makeModel('gpt-5.4-low'),
-      makeModel('gpt-5.4-medium'),
-      makeModel('gpt-5.4-high'),
-      makeModel('gpt-5.4-fast'),
-      makeModel('gpt-5.4-low-fast'),
-      makeModel('gpt-5.4-high-fast'),
-      makeModel('claude-4.6-opus'),
-      makeModel('claude-4.6-opus-max'),
-      makeModel('claude-4.6-opus-thinking'),
-      makeModel('claude-4.6-opus-max-thinking'),
-      makeModel('claude-4.6-opus-max-thinking-max'),
-      makeModel('claude-4.6-opus-max', { supportsMaxMode: true }),
-      makeModel('claude-4.6-opus-max-max', { supportsMaxMode: true }),
-      makeModel('composer-2'),
-    ]
-    return processModels(raw)
+  function buildGptModelSet(): NormalizedModelSet {
+    return processModels([
+      makeModel('gpt-5.4', {
+        legacySlugs: [
+          'gpt-5.4-none',
+          'gpt-5.4-none-fast',
+          'gpt-5.4-low',
+          'gpt-5.4-low-fast',
+          'gpt-5.4-medium',
+          'gpt-5.4-medium-fast',
+          'gpt-5.4-high',
+          'gpt-5.4-high-fast',
+          'gpt-5.4-xhigh',
+          'gpt-5.4-xhigh-fast',
+        ],
+      }),
+    ])
   }
 
-  it('reconstructs correct raw ID for medium effort', () => {
-    const modelSet = buildTestModelSet()
-    const result = resolveModelId('gpt-5.4', 'medium', false, modelSet)
-    expect(result).toBe('gpt-5.4-medium')
+  function buildClaudeModelSet(): NormalizedModelSet {
+    return processModels([
+      makeModel('claude-opus-4-6', {
+        legacySlugs: [
+          'claude-4.6-opus-low',
+          'claude-4.6-opus-low-fast',
+          'claude-4.6-opus-high',
+          'claude-4.6-opus-high-fast',
+          'claude-4.6-opus-max',
+          'claude-4.6-opus-max-fast',
+          'claude-4.6-opus-low-thinking',
+          'claude-4.6-opus-low-thinking-fast',
+          'claude-4.6-opus-high-thinking',
+          'claude-4.6-opus-high-thinking-fast',
+          'claude-4.6-opus-max-thinking',
+          'claude-4.6-opus-max-thinking-fast',
+        ],
+      }),
+    ])
+  }
+
+  it('resolves GPT with high effort', () => {
+    const modelSet = buildGptModelSet()
+    expect(resolveModelId('gpt-5.4', 'high', false, false, modelSet)).toBe('gpt-5.4-high')
   })
 
-  it('reconstructs correct raw ID for high effort', () => {
-    const modelSet = buildTestModelSet()
-    const result = resolveModelId('gpt-5.4', 'high', false, modelSet)
-    expect(result).toBe('gpt-5.4-high')
+  it('resolves GPT with high effort + fast', () => {
+    const modelSet = buildGptModelSet()
+    expect(resolveModelId('gpt-5.4', 'high', true, false, modelSet)).toBe('gpt-5.4-high-fast')
   })
 
-  it('accepts provider-specific suffixes from thinkingLevelMap', () => {
-    const modelSet = buildTestModelSet()
-    const result = resolveModelId('claude-4.6-opus-thinking', 'max', true, modelSet)
-    expect(result).toBe('claude-4.6-opus-max-thinking-max')
+  it('resolves GPT with xhigh → maps to xhigh', () => {
+    const modelSet = buildGptModelSet()
+    expect(resolveModelId('gpt-5.4', 'xhigh', false, false, modelSet)).toBe('gpt-5.4-xhigh')
   })
 
-  it('uses empty suffix for medium when default is available', () => {
-    // Build a model set where default (no effort) is available
-    const raw = [makeModel('gpt-5.4'), makeModel('gpt-5.4-high')]
-    const modelSet = processModels(raw)
-    const result = resolveModelId('gpt-5.4', 'medium', false, modelSet)
-    // medium maps to 'default' (empty), so just base name
-    expect(result).toBe('gpt-5.4')
+  it('resolves GPT with no effort → returns model ID as-is', () => {
+    const modelSet = buildGptModelSet()
+    expect(resolveModelId('gpt-5.4', null, false, false, modelSet)).toBe('gpt-5.4')
   })
 
-  it('appends maxMode when supported', () => {
-    const modelSet = buildTestModelSet()
-    const result = resolveModelId('claude-4.6-opus', null, true, modelSet)
-    expect(result).toBe('claude-4.6-opus-max')
+  it('silently ignores fast for models without fast support', () => {
+    const modelSet = processModels([makeModel('gemini-3.1-pro')])
+    expect(resolveModelId('gemini-3.1-pro', null, true, false, modelSet)).toBe('gemini-3.1-pro')
   })
 
-  it('silently ignores maxMode when unsupported', () => {
-    const modelSet = buildTestModelSet()
-    const result = resolveModelId('composer-2', null, true, modelSet)
-    expect(result).toBe('composer-2')
+  it('silently ignores thinking for models without thinking support', () => {
+    const modelSet = buildGptModelSet()
+    expect(resolveModelId('gpt-5.4', 'high', false, true, modelSet)).toBe('gpt-5.4-high')
   })
 
-  it('resolves with no effort and no maxMode', () => {
-    const modelSet = buildTestModelSet()
-    const result = resolveModelId('gpt-5.4', null, false, modelSet)
-    expect(result).toBe('gpt-5.4')
+  it('resolves Claude with thinking on', () => {
+    const modelSet = buildClaudeModelSet()
+    expect(resolveModelId('claude-opus-4-6', 'high', false, true, modelSet)).toBe('claude-4.6-opus-high-thinking')
   })
 
-  it('resolves fast variant with effort', () => {
-    const modelSet = buildTestModelSet()
-    const result = resolveModelId('gpt-5.4-fast', 'high', false, modelSet)
-    expect(result).toBe('gpt-5.4-high-fast')
+  it('resolves Claude with thinking off', () => {
+    const modelSet = buildClaudeModelSet()
+    expect(resolveModelId('claude-opus-4-6', 'high', false, false, modelSet)).toBe('claude-4.6-opus-high')
   })
 
-  it('resolves thinking variant with effort and maxMode', () => {
-    const modelSet = buildTestModelSet()
-    const result = resolveModelId('claude-4.6-opus-thinking', 'xhigh', true, modelSet)
-    // xhigh maps to max for claude family, plus maxMode
-    expect(result).toBe('claude-4.6-opus-max-thinking-max')
-  })
-})
-
-// ---------------------------------------------------------------------------
-// supportsReasoningModelId
-// ---------------------------------------------------------------------------
-
-describe('supportsReasoningModelId', () => {
-  it('returns true for multi-effort family', () => {
-    const raw = [makeModel('gpt-5.4'), makeModel('gpt-5.4-low'), makeModel('gpt-5.4-high')]
-    const modelSet = processModels(raw)
-    expect(supportsReasoningModelId('gpt-5.4', modelSet)).toBeTruthy()
+  it('resolves Claude with thinking + fast', () => {
+    const modelSet = buildClaudeModelSet()
+    expect(resolveModelId('claude-opus-4-6', 'high', true, true, modelSet)).toBe('claude-4.6-opus-high-thinking-fast')
   })
 
-  it('returns false for single-default-effort family', () => {
-    const raw = [makeModel('composer-2')]
-    const modelSet = processModels(raw)
-    expect(supportsReasoningModelId('composer-2', modelSet)).toBeFalsy()
+  it('resolves Claude with xhigh thinking → maps to max thinking', () => {
+    const modelSet = buildClaudeModelSet()
+    expect(resolveModelId('claude-opus-4-6', 'xhigh', false, true, modelSet)).toBe('claude-4.6-opus-max-thinking')
   })
 
-  it('returns true for single non-default effort', () => {
-    const raw = [makeModel('gpt-5.4-high')]
-    const modelSet = processModels(raw)
-    expect(supportsReasoningModelId('gpt-5.4-high', modelSet)).toBeTruthy()
-  })
-
-  it('returns true when using normalized ID', () => {
-    const raw = [makeModel('gpt-5.4'), makeModel('gpt-5.4-low'), makeModel('gpt-5.4-high')]
-    const modelSet = processModels(raw)
-    // Normalized ID is just 'gpt-5.4'
-    expect(supportsReasoningModelId('gpt-5.4', modelSet)).toBeTruthy()
+  it('resolves unknown model ID → returns as-is', () => {
+    const modelSet = buildGptModelSet()
+    expect(resolveModelId('unknown-model', 'high', true, false, modelSet)).toBe('unknown-model')
   })
 })

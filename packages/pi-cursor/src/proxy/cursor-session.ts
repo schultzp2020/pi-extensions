@@ -722,7 +722,7 @@ export interface CursorUnaryRpcOptions {
 
 /**
  * Make a unary (non-streaming) H2 RPC to Cursor.
- * Used for model discovery (`AvailableModels`, `GetUsableModels`).
+ * Used for model discovery (`AvailableModels`).
  */
 export async function callCursorUnaryRpc(options: CursorUnaryRpcOptions): Promise<Uint8Array> {
   const requestId = randomUUID()

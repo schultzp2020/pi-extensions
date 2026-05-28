@@ -42,9 +42,7 @@ Select **Cursor** from the provider dropdown, then your browser opens to Cursor'
 /model
 ```
 
-Pick any Cursor model from the list. By default (`modelMappings=normalized`), effort-level variants are collapsed — e.g. `gpt-5.4-low`, `gpt-5.4-medium`, `gpt-5.4-high` become a single `gpt-5.4` entry, with Pi's reasoning-effort setting controlling the variant sent to Cursor.
-
-Set `modelMappings` to `raw` (or `PI_CURSOR_RAW_MODELS=1`) to see all raw Cursor model variants.
+Pick any Cursor model from the list. Effort-level variants are collapsed — e.g. `gpt-5.4-low`, `gpt-5.4-medium`, `gpt-5.4-high` become a single `gpt-5.4` entry, with Pi's reasoning-effort selector controlling the variant sent to Cursor. Models with larger context windows appear as separate entries (e.g. `GPT-5.4 [1M]`).
 
 ### 3. Chat
 
@@ -60,14 +58,28 @@ Tool calls, multi-turn conversations, and reasoning all work.
 
 Run `/cursor` in Pi to open the settings menu. Each setting shows its current value and an `[ENV]` tag when overridden by an environment variable (read-only in that case).
 
-| Setting           | Values                         | Default      | Env Override                  |
-| ----------------- | ------------------------------ | ------------ | ----------------------------- |
-| Native Tools Mode | `reject`, `redirect`, `native` | `reject`     | `PI_CURSOR_NATIVE_TOOLS_MODE` |
-| Max Mode          | `on`, `off`                    | `off`        | `PI_CURSOR_MAX_MODE`          |
-| Model Mappings    | `normalized`, `raw`            | `normalized` | `PI_CURSOR_RAW_MODELS`        |
-| Max Retries       | `0`, `1`, `2`, `3`, `5`        | `2`          | `PI_CURSOR_MAX_RETRIES`       |
+| Setting           | Values                         | Default  | Env Override                  |
+| ----------------- | ------------------------------ | -------- | ----------------------------- |
+| Max Mode          | `on`, `off`                    | `off`    | `PI_CURSOR_MAX_MODE`          |
+| Fast              | `on`, `off`                    | `off`    | `PI_CURSOR_FAST`              |
+| Thinking          | `on`, `off`                    | `on`     | `PI_CURSOR_THINKING`          |
+| Native Tools Mode | `reject`, `redirect`, `native` | `reject` | `PI_CURSOR_NATIVE_TOOLS_MODE` |
+| Max Retries       | `0`, `1`, `2`, `3`, `5`        | `2`      | `PI_CURSOR_MAX_RETRIES`       |
 
-Settings persist to `~/.pi/agent/cursor-config.json`. Changing **Model Mappings** triggers provider re-registration to update the model picker. **Max Mode** is hidden when Model Mappings is set to `raw`.
+Settings persist to `~/.pi/agent/cursor-config.json`.
+
+### Context window tiers
+
+Models that support multiple context windows are registered as separate entries in the model picker. The default tier has no suffix; larger tiers show the size:
+
+```
+GPT-5.4              ← 272K (default)
+GPT-5.4 [1M]         ← 1M context
+Opus 4.6             ← 200K (default)
+Opus 4.6 [1M]        ← 1M context
+```
+
+Context tiers are discovered dynamically from Cursor's API — the values shown are always the model's actual limits, not hardcoded.
 
 ## Native Tools Mode
 
@@ -112,13 +124,23 @@ export PI_CURSOR_PROVIDER_EXTENSION_DEBUG_FILE=/path/to/debug.jsonl
 View a human-readable timeline:
 
 ```bash
-node packages/pi-cursor/scripts/debug-log-timeline.mjs ~/.pi/agent/cursor-debug.jsonl
+node scripts/debug-log-timeline.mjs ~/.pi/agent/cursor-debug.jsonl
 
 # Filter by session or time range
-node packages/pi-cursor/scripts/debug-log-timeline.mjs --session <id> --since 2026-05-04T00:00:00Z
+node scripts/debug-log-timeline.mjs --session <id> --since 2026-05-04T00:00:00Z
 ```
 
 When disabled (default), all debug functions are zero-cost no-ops.
+
+### Capturing model parameters
+
+To dump raw Cursor API responses during model discovery (useful for investigating new API fields or context tiers):
+
+```bash
+PI_CURSOR_CAPTURE_PARAMS=1 pi
+```
+
+On the first model discovery, the proxy captures three response variants (`old`, `with-params`, `exploded`) as JSON files in `~/.pi/agent/cursor-captures/`. Each model includes `contextTokenLimit` and `contextTokenLimitForMaxMode` showing the available context tiers (e.g. 200K / 1M). See [`scripts/README.md`](scripts/README.md) for a standalone script that does the same without launching Pi.
 
 ## Architecture
 
@@ -136,22 +158,26 @@ See [`docs/adr/`](docs/adr/) for Architecture Decision Records.
 ## Development
 
 ```bash
-npm run build         # Build with Rolldown (~22ms)
-npm test              # Run unit tests
-npm run test:watch    # Watch mode
-npm run lint          # Lint with oxlint (type-aware, strict)
-npm run lint:fix      # Auto-fix lint issues
-npm run format        # Format with oxfmt
-npm run format:check  # Check formatting
-npm run generate      # Regenerate proto types from proto/aiserver.proto
+pnpm build            # Build with Rolldown (~22ms)
+pnpm test             # Run unit tests
+pnpm test:watch       # Watch mode
+pnpm lint             # Lint with oxlint (type-aware, strict)
+pnpm lint:fix         # Auto-fix lint issues
+pnpm format           # Format with oxfmt
+pnpm format:check     # Check formatting
+pnpm generate         # Regenerate proto types from proto/aiserver.proto
 ```
+
+### Developer scripts
+
+See [`scripts/README.md`](scripts/README.md) for tools to capture raw Cursor API responses and visualize debug log timelines.
 
 ### Proto files
 
 The `proto/aiserver.proto` file and `src/proto/agent_pb.ts` are vendored from the [Hardcode84/opencode-cursor](https://github.com/Hardcode84/opencode-cursor) fork (`cursor-persists` branch). To regenerate `aiserver_pb.ts`:
 
 ```bash
-npm run generate
+pnpm generate
 ```
 
 The `agent_pb.ts` is vendored directly (the `.proto` source is not publicly available) and should not be regenerated.
@@ -160,7 +186,7 @@ The `agent_pb.ts` is vendored directly (the `.proto` source is not publicly avai
 
 1. **Login** — PKCE OAuth flow opens `cursor.com/loginDeepControl` in the browser, polls `api2.cursor.sh/auth/poll` until the user completes login.
 2. **Proxy startup** — Extension spawns a child process running the built proxy. The proxy opens an HTTP server on a random port and writes `{"type":"ready","port":N,"models":[...]}` to stdout.
-3. **Model discovery** — Proxy calls `AvailableModels` (or `GetUsableModels` as fallback) via gRPC to fetch the user's available models. Results are cached to disk for fast subsequent starts.
+3. **Model discovery** — Proxy calls `AvailableModels` via gRPC to fetch the user's available models. Legacy slugs are parsed to determine effort levels, fast/thinking support per model. Results are cached to disk for fast subsequent starts.
 4. **Provider registration** — Extension registers a `cursor` provider with Pi using `api: 'openai-completions'`, pointing `baseUrl` at the local proxy.
 5. **Chat completion** — Pi sends standard OpenAI requests to the proxy. The proxy builds an `AgentRunRequest` protobuf, opens an H2 stream to `api2.cursor.sh`, and translates the response back into SSE chunks.
 6. **Tool calls** — Cursor's native tools (read, write, shell) are intercepted and emitted as OpenAI `tool_calls` only if the mapped Pi tool is enabled for the session. MCP tool calls are gated against the same registered tool set, and Cursor-only web/exa queries are rejected so the model falls back to available tools. Results flow back as protobuf frames.
