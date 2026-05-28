@@ -119,7 +119,9 @@ export function buildEffortMap(availableEfforts: Set<CursorEffort | 'default'>):
 
   function pick(preferred: (CursorEffort | 'default')[], fallback: CursorEffort | 'default'): string {
     for (const p of preferred) {
-      if (availableEfforts.has(p)) {return effortToSuffix(p)}
+      if (availableEfforts.has(p)) {
+        return effortToSuffix(p)
+      }
     }
     return effortToSuffix(fallback)
   }
@@ -166,9 +168,15 @@ export function processModels(rawModels: CursorModel[]): NormalizedModelSet {
       for (const slug of model.legacySlugs) {
         const parsed = parseSlug(slug)
 
-        if (parsed.effort) {meta.efforts.add(parsed.effort)}
-        if (parsed.fast) {meta.supportsFast = true}
-        if (parsed.thinking) {meta.supportsThinking = true}
+        if (parsed.effort) {
+          meta.efforts.add(parsed.effort)
+        }
+        if (parsed.fast) {
+          meta.supportsFast = true
+        }
+        if (parsed.thinking) {
+          meta.supportsThinking = true
+        }
 
         // Build slug lookup key: "modelId|effort|fast|thinking"
         const effort = parsed.effort ?? 'default'
@@ -208,7 +216,9 @@ export function resolveModelId(
   modelSet: NormalizedModelSet,
 ): string {
   const meta = modelSet.modelMeta.get(modelId)
-  if (!meta) {return modelId}
+  if (!meta) {
+    return modelId
+  }
 
   // Resolve effort suffix from effort map
   let resolvedEffort = 'default'
@@ -229,27 +239,35 @@ export function resolveModelId(
   // Look up the legacy slug
   const key = `${modelId}|${resolvedEffort}|${String(effectiveFast)}|${String(effectiveThinking)}`
   const slug = modelSet.slugLookup.get(key)
-  if (slug) {return slug}
+  if (slug) {
+    return slug
+  }
 
   // Fallback: try without thinking
   if (effectiveThinking) {
     const keyNoThinking = `${modelId}|${resolvedEffort}|${String(effectiveFast)}|false`
     const slugNoThinking = modelSet.slugLookup.get(keyNoThinking)
-    if (slugNoThinking) {return slugNoThinking}
+    if (slugNoThinking) {
+      return slugNoThinking
+    }
   }
 
   // Fallback: try without fast
   if (effectiveFast) {
     const keyNoFast = `${modelId}|${resolvedEffort}|false|${String(effectiveThinking)}`
     const slugNoFast = modelSet.slugLookup.get(keyNoFast)
-    if (slugNoFast) {return slugNoFast}
+    if (slugNoFast) {
+      return slugNoFast
+    }
   }
 
   // Fallback: try bare effort only
   if (resolvedEffort !== 'default') {
     const keyBare = `${modelId}|${resolvedEffort}|false|false`
     const slugBare = modelSet.slugLookup.get(keyBare)
-    if (slugBare) {return slugBare}
+    if (slugBare) {
+      return slugBare
+    }
   }
 
   // No slug found — return model ID as-is (e.g. gemini models with no legacy slugs)

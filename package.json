@@ -16,10 +16,10 @@
     "@changesets/changelog-github": "^0.7.0",
     "@changesets/cli": "^2.31.0",
     "husky": "^9.1.7",
-    "lint-staged": "^17.0.2",
-    "oxfmt": "^0.48.0",
-    "oxlint": "^1.63.0",
-    "oxlint-tsgolint": "^0.22.1"
+    "lint-staged": "^17.0.5",
+    "oxfmt": "^0.52.0",
+    "oxlint": "^1.67.0",
+    "oxlint-tsgolint": "^0.23.0"
   },
   "lint-staged": {
     "*.ts": [
