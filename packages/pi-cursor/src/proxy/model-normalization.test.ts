@@ -122,6 +122,24 @@ describe('parseSlug', () => {
     })
   })
 
+  it('parses -minimal effort', () => {
+    expect(parseSlug('gemini-3.6-flash-minimal')).toEqual({
+      base: 'gemini-3.6-flash',
+      effort: 'minimal',
+      thinking: false,
+      fast: false,
+    })
+  })
+
+  it('parses -extra-high effort', () => {
+    expect(parseSlug('gpt-5.5-extra-high-fast')).toEqual({
+      base: 'gpt-5.5',
+      effort: 'extra-high',
+      thinking: false,
+      fast: true,
+    })
+  })
+
   it('parses -none effort', () => {
     expect(parseSlug('gpt-5.4-none')).toEqual({
       base: 'gpt-5.4',
@@ -177,10 +195,18 @@ describe('buildEffortMap', () => {
     expect(map.xhigh).toBe('xhigh')
   })
 
-  it('maps xhigh to high when neither max nor xhigh available', () => {
+  it('maps xhigh to high when no elevated effort is available', () => {
     const efforts = new Set<CursorEffort | 'default'>(['low', 'medium', 'high'])
     const map = buildEffortMap(efforts)
     expect(map.xhigh).toBe('high')
+  })
+
+  it('maps Cursor minimal and extra-high efforts', () => {
+    const efforts = new Set<CursorEffort | 'default'>(['minimal', 'low', 'medium', 'high', 'extra-high'])
+    const map = buildEffortMap(efforts)
+    expect(map.minimal).toBe('minimal')
+    expect(map.low).toBe('low')
+    expect(map.xhigh).toBe('extra-high')
   })
 
   it('maps medium to empty string for default-only', () => {
