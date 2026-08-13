@@ -74,7 +74,7 @@ Options:
   --session <id>   Filter by session ID
   --since <iso>    Show events after this ISO 8601 timestamp
   --until <iso>    Show events before this ISO 8601 timestamp
-  --help           Show this help message`,
+  --help           Show this help message`
     )
     process.exit(0)
   } else if (!arg.startsWith('-')) {
@@ -128,10 +128,12 @@ for await (const line of rl) {
     continue
   }
 
-  if (!byRequest.has(rid)) {
-    byRequest.set(rid, [])
+  let requestEntries = byRequest.get(rid)
+  if (!requestEntries) {
+    requestEntries = []
+    byRequest.set(rid, requestEntries)
   }
-  /** @type {DebugEntry[]} */ (byRequest.get(rid)).push(entry)
+  requestEntries.push(entry)
 }
 
 // ── Formatting helpers ──

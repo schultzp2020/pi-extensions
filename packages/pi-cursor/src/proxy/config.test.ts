@@ -158,7 +158,7 @@ describe('saveConfig', () => {
 
   it('always writes version 1', () => {
     const path = tmpConfigPath(tmpDir)
-    saveConfig({ version: 99 } as Partial<CursorConfig>, path)
+    saveConfig({ version: 99 }, path)
     const cfg = loadConfig(path)
     expect(cfg.version).toBe(1)
   })

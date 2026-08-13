@@ -1,4 +1,5 @@
 import { generatePKCE } from './pkce.ts'
+import { getOwnNumber } from './unknown.ts'
 
 const CURSOR_LOGIN_URL = 'https://cursor.com/loginDeepControl'
 const CURSOR_POLL_URL = 'https://api2.cursor.sh/auth/poll'
@@ -16,6 +17,36 @@ export interface CursorAuthParams {
   loginUrl: string
 }
 
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === 'AbortError'
+}
+
+/** Abort-aware delay used by auth polling. */
+export function delay(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(
+        signal.reason instanceof Error ? signal.reason : new DOMException('This operation was aborted', 'AbortError'),
+      )
+      return
+    }
+
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort)
+      resolve()
+    }, ms)
+
+    const onAbort = (): void => {
+      clearTimeout(timer)
+      reject(
+        signal?.reason instanceof Error ? signal.reason : new DOMException('This operation was aborted', 'AbortError'),
+      )
+    }
+
+    signal?.addEventListener('abort', onAbort, { once: true })
+  })
+}
+
 /** Generates PKCE params and builds the Cursor OAuth login URL. */
 export async function generateCursorAuthParams(): Promise<CursorAuthParams> {
   const { verifier, challenge } = await generatePKCE()
@@ -27,23 +58,23 @@ export async function generateCursorAuthParams(): Promise<CursorAuthParams> {
 /**
  * Polls Cursor's auth endpoint until the user completes the browser login.
  * Uses exponential backoff. Throws after {@link POLL_MAX_ATTEMPTS} or 3 consecutive errors.
+ * Honors {@link AbortSignal} for cancelled `/login` flows.
  */
 export async function pollCursorAuth(
   uuid: string,
   verifier: string,
+  signal?: AbortSignal,
 ): Promise<{ accessToken: string; refreshToken: string }> {
-  let delay = POLL_BASE_DELAY
+  let pollDelay = POLL_BASE_DELAY
   let consecutiveErrors = 0
 
   for (let attempt = 0; attempt < POLL_MAX_ATTEMPTS; attempt++) {
-    await new Promise<void>((r) => {
-      setTimeout(r, delay)
-    })
+    await delay(pollDelay, signal)
     try {
-      const response = await fetch(`${CURSOR_POLL_URL}?uuid=${uuid}&verifier=${verifier}`)
+      const response = await fetch(`${CURSOR_POLL_URL}?uuid=${uuid}&verifier=${verifier}`, { signal })
       if (response.status === 404) {
         consecutiveErrors = 0
-        delay = Math.min(delay * POLL_BACKOFF_MULTIPLIER, POLL_MAX_DELAY)
+        pollDelay = Math.min(pollDelay * POLL_BACKOFF_MULTIPLIER, POLL_MAX_DELAY)
         continue
       }
       if (response.ok) {
@@ -51,7 +82,14 @@ export async function pollCursorAuth(
         return data
       }
       throw new Error(`Poll failed: ${response.status}`)
-    } catch {
+    } catch (error) {
+      if (isAbortError(error) || signal?.aborted) {
+        throw isAbortError(error)
+          ? error
+          : signal?.reason instanceof Error
+            ? signal.reason
+            : new DOMException('This operation was aborted', 'AbortError')
+      }
       consecutiveErrors++
       if (consecutiveErrors >= 3) {
         throw new Error('Too many consecutive errors during Cursor auth polling')
@@ -64,11 +102,13 @@ export async function pollCursorAuth(
 /** Exchanges a refresh token for a fresh access token. */
 export async function refreshCursorToken(
   refreshToken: string,
+  signal?: AbortSignal,
 ): Promise<{ access: string; refresh: string; expires: number }> {
   const response = await fetch(CURSOR_REFRESH_URL, {
     method: 'POST',
     headers: { Authorization: `Bearer ${refreshToken}`, 'Content-Type': 'application/json' },
     body: '{}',
+    signal,
   })
   if (!response.ok) {
     throw new Error(`Cursor token refresh failed: ${await response.text()}`)
@@ -89,13 +129,9 @@ export function getTokenExpiry(token: string): number {
       return Date.now() + 3600 * 1000
     }
     const decoded: unknown = JSON.parse(atob(parts[1].replaceAll('-', '+').replaceAll('_', '/')))
-    if (
-      typeof decoded === 'object' &&
-      decoded !== null &&
-      'exp' in decoded &&
-      typeof (decoded as { exp: unknown }).exp === 'number'
-    ) {
-      return (decoded as { exp: number }).exp * 1000 - 5 * 60 * 1000
+    const exp = getOwnNumber(decoded, 'exp')
+    if (exp !== undefined) {
+      return exp * 1000 - 5 * 60 * 1000
     }
   } catch {}
   return Date.now() + 3600 * 1000
