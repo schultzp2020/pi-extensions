@@ -258,7 +258,7 @@ describe('handleChatCompletion', () => {
       expect(resetConversation).toHaveBeenCalledWith(stored)
     })
 
-    it('resets and retries a streaming request once after a GetBlob miss maps a generic error', async () => {
+    it('resets and retries a streaming request once after a blob_not_found hint', async () => {
       const req = makeRequest()
       const res = makeResponse()
       const ctx = makeProxyContext({

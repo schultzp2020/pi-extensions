@@ -569,7 +569,7 @@ export class CursorSession {
     this.streamState.endStreamSeen = true
     const err = parseConnectEndStream(endStreamBytes)
     if (err) {
-      const hint = this.terminalRetryHint(err.message)
+      const hint = this.connectEndStreamRetryHint(err.message)
       this.pushDone({ type: 'done', error: err.message, retryHint: hint })
       this.finish(CLOSE_ERR)
       return
@@ -664,11 +664,10 @@ export class CursorSession {
       this.closeTransport()
     }
     if (!this.doneEventSent) {
-      const retryHint = this.terminalRetryHint()
       if (this.pendingExecs.length > 0) {
-        this.pushDone({ type: 'done', error: 'session closed with pending tool calls', retryHint })
+        this.pushDone({ type: 'done', error: 'session closed with pending tool calls' })
       } else if (code !== CLOSE_OK || !sawEndStream) {
-        this.pushDone({ type: 'done', error: 'bridge connection lost', retryHint })
+        this.pushDone({ type: 'done', error: 'bridge connection lost' })
       } else {
         this.pushDone({ type: 'done' })
       }
@@ -683,8 +682,8 @@ export class CursorSession {
     this.queue.pushForce(event)
   }
 
-  private terminalRetryHint(errorMessage?: string): RetryHint | undefined {
-    const classified = errorMessage ? classifyConnectError(errorMessage) : undefined
+  private connectEndStreamRetryHint(errorMessage: string): RetryHint | undefined {
+    const classified = classifyConnectError(errorMessage)
     return classified ?? (this.blobMissDetected ? 'blob_not_found' : undefined)
   }
 

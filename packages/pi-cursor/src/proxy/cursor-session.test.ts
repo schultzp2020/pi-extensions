@@ -1,7 +1,14 @@
 import { create, toBinary } from '@bufbuild/protobuf'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { AgentServerMessageSchema, GetBlobArgsSchema, KvServerMessageSchema } from '../proto/agent_pb.ts'
+import {
+  AgentServerMessageSchema,
+  ExecServerMessageSchema,
+  GetBlobArgsSchema,
+  KvServerMessageSchema,
+  McpArgsSchema,
+  McpToolDefinitionSchema,
+} from '../proto/agent_pb.ts'
 import { CONNECT_END_STREAM_FLAG, frameConnectMessage } from './connect-protocol.ts'
 
 interface MockStream {
@@ -84,6 +91,25 @@ function genericErrorFrame(): Buffer {
   return frameConnectMessage(payload, CONNECT_END_STREAM_FLAG)
 }
 
+function pendingToolCallFrame(): Buffer {
+  const execMessage = create(ExecServerMessageSchema, {
+    id: 1,
+    execId: 'exec-1',
+    message: {
+      case: 'mcpArgs',
+      value: create(McpArgsSchema, {
+        toolName: 'mcp_pi_test',
+        toolCallId: 'tool-1',
+        args: {},
+      }),
+    },
+  })
+  const serverMessage = create(AgentServerMessageSchema, {
+    message: { case: 'execServerMessage', value: execMessage },
+  })
+  return frameConnectMessage(toBinary(AgentServerMessageSchema, serverMessage))
+}
+
 function latestStream(): MockStream {
   const stream = h2Mock.streams.at(-1)
   if (!stream) {
@@ -113,6 +139,36 @@ describe('CursorSession blob miss recovery', () => {
       type: 'done',
       error: 'Connect error internal: Error',
       retryHint: 'blob_not_found',
+    })
+  })
+
+  it('does not add a blob_not_found hint to a bridge connection loss after a GetBlob miss', async () => {
+    const session = new CursorSession(makeSessionOptions())
+    const stream = latestStream()
+
+    stream.emit('data', missingBlobFrame())
+    stream.emit('error', new Error('socket reset'))
+
+    await expect(session.next()).resolves.toEqual({
+      type: 'done',
+      error: 'bridge connection lost',
+    })
+  })
+
+  it('does not add a blob_not_found hint when a session with pending tool calls closes after a GetBlob miss', async () => {
+    const options = makeSessionOptions()
+    options.mcpTools = [create(McpToolDefinitionSchema, { toolName: 'mcp_pi_test' })]
+    const session = new CursorSession(options)
+    const stream = latestStream()
+
+    stream.emit('data', missingBlobFrame())
+    stream.emit('data', pendingToolCallFrame())
+    stream.emit('error', new Error('socket reset'))
+
+    await expect(session.next()).resolves.toMatchObject({ type: 'toolCall' })
+    await expect(session.next()).resolves.toEqual({
+      type: 'done',
+      error: 'session closed with pending tool calls',
     })
   })
 
