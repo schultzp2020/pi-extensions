@@ -36,6 +36,7 @@ import {
   UserMessageActionSchema,
   UserMessageSchema,
 } from '../proto/agent_pb.ts'
+import { asJsonValue, isRecord } from '../unknown.ts'
 import type { NativeToolsMode, CursorConfig } from './config.ts'
 import { CursorSession, type RetryHint, type SessionOptions } from './cursor-session.ts'
 import {
@@ -159,16 +160,14 @@ const encoder = new TextEncoder()
 // ── Validation ──
 
 function isChatCompletionRequest(value: unknown): value is ChatCompletionRequest {
-  if (!value || typeof value !== 'object') {
+  if (!isRecord(value)) {
     return false
   }
-  const req = value as { model?: unknown; messages?: unknown }
+  const { model, messages } = value
   return (
-    typeof req.model === 'string' &&
-    Array.isArray(req.messages) &&
-    req.messages.every(
-      (m: unknown) => m !== null && typeof m === 'object' && typeof (m as { role?: unknown }).role === 'string',
-    )
+    typeof model === 'string' &&
+    Array.isArray(messages) &&
+    messages.every((m: unknown) => isRecord(m) && typeof m.role === 'string')
   )
 }
 
@@ -177,10 +176,7 @@ function isChatCompletionRequest(value: unknown): value is ChatCompletionRequest
 function buildMcpToolDefinitions(tools: OpenAIToolDef[]): McpToolDefinition[] {
   return tools.map((t) => {
     const { function: fn } = t
-    const jsonSchema: JsonValue =
-      fn.parameters && typeof fn.parameters === 'object'
-        ? (fn.parameters as JsonValue)
-        : ({ type: 'object', properties: {}, required: [] } as JsonValue)
+    const jsonSchema: JsonValue = asJsonValue(fn.parameters) ?? { type: 'object', properties: {}, required: [] }
     const inputSchema = toBinary(ValueSchema, fromJson(ValueSchema, jsonSchema))
     return create(McpToolDefinitionSchema, {
       name: `${MCP_TOOL_PREFIX}${fn.name}`,

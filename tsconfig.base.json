@@ -9,6 +9,7 @@
     "declaration": true,
     "sourceMap": true,
     "allowImportingTsExtensions": true,
-    "noEmit": true
+    "noEmit": true,
+    "types": ["node"]
   }
 }

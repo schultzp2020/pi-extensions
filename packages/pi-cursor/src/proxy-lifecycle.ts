@@ -102,13 +102,17 @@ async function sendHeartbeat(port: number, sessionId: string): Promise<void> {
   }
 }
 
-export async function pushToken(port: number, accessToken: string): Promise<void> {
+export async function pushToken(port: number, accessToken: string, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) {
+    return
+  }
   try {
+    const timeout = AbortSignal.timeout(TOKEN_PUSH_TIMEOUT_MS)
     await fetch(`http://localhost:${String(port)}/internal/token`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ access: accessToken }),
-      signal: AbortSignal.timeout(TOKEN_PUSH_TIMEOUT_MS),
+      signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
     })
   } catch {
     // Token push failures are non-fatal — will retry on next request
