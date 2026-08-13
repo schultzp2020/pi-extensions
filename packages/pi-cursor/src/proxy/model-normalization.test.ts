@@ -95,6 +95,33 @@ describe('parseSlug', () => {
     })
   })
 
+  it('parses thinking before effort', () => {
+    expect(parseSlug('claude-opus-4-7-thinking-medium')).toEqual({
+      base: 'claude-opus-4-7',
+      effort: 'medium',
+      thinking: true,
+      fast: false,
+    })
+  })
+
+  it('parses fast before effort', () => {
+    expect(parseSlug('grok-4.5-fast-medium')).toEqual({
+      base: 'grok-4.5',
+      effort: 'medium',
+      thinking: false,
+      fast: true,
+    })
+  })
+
+  it('parses thinking and fast before effort', () => {
+    expect(parseSlug('claude-opus-4-7-thinking-low-fast')).toEqual({
+      base: 'claude-opus-4-7',
+      effort: 'low',
+      thinking: true,
+      fast: true,
+    })
+  })
+
   it('parses -none effort', () => {
     expect(parseSlug('gpt-5.4-none')).toEqual({
       base: 'gpt-5.4',
