@@ -15,6 +15,7 @@ import { join, resolve } from 'node:path'
 import { createInterface } from 'node:readline'
 
 import type { CursorModel } from './proxy/models.ts'
+import type { ProxyReadySignal } from './proxy/proxy-ready.ts'
 
 const PORT_FILE = join(homedir(), '.pi', 'agent', 'cursor-proxy.json')
 const PROXY_ENTRY = resolve(import.meta.dirname, 'proxy', 'main.js')
@@ -182,7 +183,7 @@ async function spawnProxy(sessionId: string, accessToken: string): Promise<{ por
   })
   rl.close()
 
-  const ready = JSON.parse(readyLine) as { type: string; port: number; models?: CursorModel[] }
+  const ready = JSON.parse(readyLine) as Partial<ProxyReadySignal>
   if (ready.type !== 'ready' || !ready.port || !childPid) {
     throw new Error(`Unexpected proxy output: ${readyLine}`)
   }
