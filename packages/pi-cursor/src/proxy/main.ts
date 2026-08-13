@@ -16,6 +16,7 @@ import { join } from 'node:path'
 import { createInterface } from 'node:readline'
 
 import { resolveEffective } from './config.ts'
+import { initDebugLogger } from './debug-logger.ts'
 import { errorResponse, jsonResponse } from './http-helpers.ts'
 import {
   configureInternalApi,
@@ -67,6 +68,8 @@ function handleModelsRequest(res: ServerResponse): void {
 // ── Startup ──
 
 async function main(): Promise<void> {
+  initDebugLogger()
+
   // 1. Read config from stdin
   const rl = createInterface({ input: process.stdin })
   const configLine = await new Promise<string>((resolve) => {

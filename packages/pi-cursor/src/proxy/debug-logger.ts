@@ -296,4 +296,4 @@ export function initDebugLogger(): void {
   _dirEnsured = false
 }
 
-// Initialization is done explicitly via initDebugLogger() in index.ts
+// Parent and proxy entry points initialize their process-local logger explicitly.
