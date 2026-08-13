@@ -50,7 +50,16 @@ export interface NormalizedModelSet {
 // Constants
 // ---------------------------------------------------------------------------
 
-const EFFORT_SUFFIXES: ReadonlySet<string> = new Set(['minimal', 'none', 'low', 'medium', 'high', 'xhigh', 'max'])
+const EFFORT_SUFFIXES: ReadonlySet<string> = new Set([
+  'minimal',
+  'none',
+  'low',
+  'medium',
+  'high',
+  'extra-high',
+  'xhigh',
+  'max',
+])
 
 // ---------------------------------------------------------------------------
 // parseSlug
@@ -270,8 +279,19 @@ export function resolveModelId(
       if (Object.hasOwn(effortMap, effort)) {
         const suffix = effortMap[effort]
         resolvedEffort = suffix || 'default'
-      } else if (EFFORT_SUFFIXES.has(effort)) {
+      } else if (EFFORT_SUFFIXES.has(effort) && availableEfforts.has(effort as CursorEffort)) {
         resolvedEffort = effort
+      } else {
+        let piEffort: 'minimal' | 'xhigh' | null = null
+        if (effort === 'none') {
+          piEffort = 'minimal'
+        } else if (effort === 'extra-high' || effort === 'max') {
+          piEffort = 'xhigh'
+        }
+        if (piEffort) {
+          const suffix = effortMap[piEffort]
+          resolvedEffort = suffix || 'default'
+        }
       }
     }
 

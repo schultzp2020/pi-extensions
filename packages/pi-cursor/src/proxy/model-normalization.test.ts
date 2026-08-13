@@ -369,6 +369,16 @@ describe('resolveModelId', () => {
     expect(resolveModelId('gpt-5.4', 'xhigh', false, false, modelSet)).toBe('gpt-5.4-xhigh')
   })
 
+  it('accepts an already-mapped Cursor effort', () => {
+    const modelSet = processModels([
+      makeModel('gpt-5.5', {
+        legacySlugs: ['gpt-5.5-high-fast', 'gpt-5.5-extra-high-fast'],
+      }),
+    ])
+
+    expect(resolveModelId('gpt-5.5', 'extra-high', true, false, modelSet)).toBe('gpt-5.5-extra-high-fast')
+  })
+
   it('resolves GPT with no effort → returns model ID as-is', () => {
     const modelSet = buildGptModelSet()
     expect(resolveModelId('gpt-5.4', null, false, false, modelSet)).toBe('gpt-5.4')
@@ -413,6 +423,16 @@ describe('resolveModelId', () => {
 
     expect(resolveModelId('claude-haiku-4-5', 'low', false, true, modelSet)).toBe('claude-4.5-haiku-thinking')
     expect(resolveModelId('claude-haiku-4-5', 'low', false, false, modelSet)).toBe('claude-4.5-haiku')
+  })
+
+  it('maps an unavailable Cursor max effort within the selected variant', () => {
+    const modelSet = processModels([
+      makeModel('claude-opus-5', {
+        legacySlugs: ['claude-opus-5-low', 'claude-opus-5-medium', 'claude-opus-5-high', 'claude-opus-5-thinking-max'],
+      }),
+    ])
+
+    expect(resolveModelId('claude-opus-5', 'max', false, false, modelSet)).toBe('claude-opus-5-high')
   })
 
   it('preserves thinking by falling back to its default effort', () => {
