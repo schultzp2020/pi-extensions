@@ -190,7 +190,7 @@ The `agent_pb.ts` is vendored directly (the `.proto` source is not publicly avai
 4. **Provider registration** — Extension registers a `cursor` provider with Pi using `api: 'openai-completions'`, pointing `baseUrl` at the local proxy.
 5. **Chat completion** — Pi sends standard OpenAI requests to the proxy. The proxy builds an `AgentRunRequest` protobuf, opens an H2 stream to `api2.cursor.sh`, and translates the response back into SSE chunks.
 6. **Tool calls** — Cursor's native tools (read, write, shell) are intercepted and emitted as OpenAI `tool_calls` only if the mapped Pi tool is enabled for the session. MCP tool calls are gated against the same registered tool set, and Cursor-only web/exa queries are rejected so the model falls back to available tools. Results flow back as protobuf frames.
-7. **Multi-session** — The proxy writes a port file at `~/.pi/agent/cursor-proxy.json`. Other Pi sessions discover and reuse the same proxy. Each session sends heartbeats every 10s; the proxy exits 30s after the last heartbeat stops.
+7. **Multi-session** — The proxy writes a port file at `~/.pi/agent/cursor-proxy.json`. Other Pi sessions discover and reuse the same proxy. Each session sends heartbeats every 10s; the proxy exits 30s after the last heartbeat stops. If the heartbeat monitor itself was suspended past that timeout (e.g. system sleep), sessions that were active before the gap get one fresh heartbeat window on resume instead of being evicted.
 
 ## License
 
