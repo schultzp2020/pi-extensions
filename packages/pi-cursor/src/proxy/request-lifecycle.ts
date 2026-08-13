@@ -68,7 +68,6 @@ import {
   deriveConvKey,
   getConversationState,
   persistConversation,
-  pruneBlobs,
   registerBridge,
   resetConversation,
   resolveSession,
@@ -760,8 +759,6 @@ export async function handleChatCompletion(
       stored.checkpoint = checkpointBytes
       // blobStore is a shared Map reference — SetBlob mutations from
       // handleKvMessage are already visible in stored.blobStore.
-      // Prune oldest blobs if the store exceeds the size cap.
-      pruneBlobs(stored.blobStore)
       persistConversation(sessionId, stored, convConfig)
       logCheckpointCommit(sessionId, requestId, { sizeBytes: checkpointBytes.length })
     },

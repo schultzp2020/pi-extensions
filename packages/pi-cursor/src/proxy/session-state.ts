@@ -17,11 +17,6 @@ import { join } from 'node:path'
 import type { CursorSession } from './cursor-session.ts'
 import type { ParsedConversationTurn } from './openai-messages.ts'
 
-// ── Constants ──
-
-/** Maximum number of blobs retained per conversation. LRU-evicted on overflow. */
-const MAX_BLOB_COUNT = 128
-
 /** Single TTL for both Bridge and Conversation entries. */
 const SESSION_TTL_MS = 30 * 60 * 1000 // 30 minutes
 
@@ -30,6 +25,13 @@ const SESSION_TTL_MS = 30 * 60 * 1000 // 30 minutes
 export interface StoredConversation {
   conversationId: string
   checkpoint: Uint8Array | null
+  /**
+   * Retained for the full conversation lifetime because checkpoints may
+   * reference any previously supplied blob and the protocol exposes no
+   * reachability map for safe garbage collection. This means persisted state
+   * can grow with long conversations; resetConversation() remains the safe
+   * cleanup boundary.
+   */
   blobStore: Map<string, Uint8Array>
   lastAccessMs: number
   checkpointHistory: Map<string, Uint8Array>
@@ -198,27 +200,6 @@ export function resetConversation(stored: StoredConversation): void {
 }
 
 /**
- * Evict oldest blobs when the store exceeds MAX_BLOB_COUNT.
- * Map iteration order is insertion-order, so deleting from the front
- * evicts the oldest entries first (LRU approximation).
- */
-export function pruneBlobs(blobStore: Map<string, Uint8Array>): number {
-  const excess = blobStore.size - MAX_BLOB_COUNT
-  if (excess <= 0) {
-    return 0
-  }
-  let evicted = 0
-  for (const key of blobStore.keys()) {
-    if (evicted >= excess) {
-      break
-    }
-    blobStore.delete(key)
-    evicted++
-  }
-  return evicted
-}
-
-/**
  * Persist conversation state to disk atomically (write to temp file, then rename).
  */
 export function persistConversation(sessionId: string, stored: StoredConversation, config: ConversationConfig): void {
@@ -310,7 +291,7 @@ export function registerBridge(sessionId: string, bridge: CursorSession): void {
 
 /**
  * Commit a completed turn: update lineage metadata and persist to disk.
- * Prunes blobs before persisting.
+ * Blobs are retained because the checkpoint may still reference any of them.
  */
 export function commitTurn(sessionId: string, lineage: LineageMetadata, config: ConversationConfig): void {
   const key = deriveConvKey(sessionId)
@@ -320,7 +301,6 @@ export function commitTurn(sessionId: string, lineage: LineageMetadata, config: 
   }
   stored.lineageTurnCount = lineage.turnCount
   stored.lineageFingerprint = lineage.fingerprint
-  pruneBlobs(stored.blobStore)
   persistConversation(sessionId, stored, config)
 }
 
