@@ -53,7 +53,9 @@ export function startHeartbeatMonitor(): NodeJS.Timeout {
     previousMonitorMs = now
     if (monitorGapMs > SUSPEND_DETECTION_THRESHOLD_MS && heartbeatClients.size > 0) {
       // Rewrite timestamps, rather than only skipping this sweep, so client
-      // heartbeat timers have a full window to resume after wake.
+      // heartbeat timers have a full window to resume after wake. An
+      // already-dead client gets the same window, delaying its eviction by up
+      // to one heartbeat window; later ordinary sweeps still evict it.
       for (const session of heartbeatClients.values()) {
         session.lastHeartbeatMs = now
       }
