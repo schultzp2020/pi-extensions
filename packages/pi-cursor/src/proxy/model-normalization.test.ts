@@ -440,3 +440,146 @@ describe('resolveModelId', () => {
     expect(resolveModelId('unknown-model', 'high', true, false, modelSet)).toBe('unknown-model')
   })
 })
+
+// ---------------------------------------------------------------------------
+// Current Cursor legacy slug regressions
+// ---------------------------------------------------------------------------
+
+describe('current Cursor legacy slug regressions', () => {
+  const cases: {
+    name: string
+    id: string
+    legacySlugs: string[]
+    effort: string
+    fast: boolean
+    thinking: boolean
+    expected: string
+  }[] = [
+    {
+      name: 'Claude Haiku 4.5 default thinking variant',
+      id: 'claude-haiku-4-5',
+      legacySlugs: ['claude-4.5-haiku', 'claude-4.5-haiku-thinking'],
+      effort: 'low',
+      fast: false,
+      thinking: true,
+      expected: 'claude-4.5-haiku-thinking',
+    },
+    {
+      name: 'Claude Sonnet 4 default thinking variant',
+      id: 'claude-sonnet-4',
+      legacySlugs: ['claude-4-sonnet', 'claude-4-sonnet-thinking'],
+      effort: 'high',
+      fast: false,
+      thinking: true,
+      expected: 'claude-4-sonnet-thinking',
+    },
+    {
+      name: 'Claude Sonnet 4.5 default thinking variant',
+      id: 'claude-sonnet-4-5',
+      legacySlugs: ['claude-4.5-sonnet', 'claude-4.5-sonnet-thinking'],
+      effort: 'xhigh',
+      fast: false,
+      thinking: true,
+      expected: 'claude-4.5-sonnet-thinking',
+    },
+    {
+      name: 'Claude Fable 5 reordered thinking suffix',
+      id: 'claude-fable-5',
+      legacySlugs: ['claude-fable-5-medium', 'claude-fable-5-thinking-medium'],
+      effort: 'medium',
+      fast: false,
+      thinking: true,
+      expected: 'claude-fable-5-thinking-medium',
+    },
+    {
+      name: 'Claude Opus 4.7 reordered thinking and fast suffixes',
+      id: 'claude-opus-4-7',
+      legacySlugs: [
+        'claude-opus-4-7-high',
+        'claude-opus-4-7-high-fast',
+        'claude-opus-4-7-thinking-high',
+        'claude-opus-4-7-thinking-high-fast',
+      ],
+      effort: 'high',
+      fast: true,
+      thinking: true,
+      expected: 'claude-opus-4-7-thinking-high-fast',
+    },
+    {
+      name: 'Claude Opus 4.8 reordered thinking suffix',
+      id: 'claude-opus-4-8',
+      legacySlugs: ['claude-opus-4-8-medium', 'claude-opus-4-8-thinking-medium'],
+      effort: 'medium',
+      fast: false,
+      thinking: true,
+      expected: 'claude-opus-4-8-thinking-medium',
+    },
+    {
+      name: 'Claude Opus 5 sparse non-thinking efforts',
+      id: 'claude-opus-5',
+      legacySlugs: [
+        'claude-opus-5-low',
+        'claude-opus-5-medium',
+        'claude-opus-5-high',
+        'claude-opus-5-thinking-high',
+        'claude-opus-5-thinking-xhigh',
+        'claude-opus-5-thinking-max',
+      ],
+      effort: 'xhigh',
+      fast: false,
+      thinking: false,
+      expected: 'claude-opus-5-high',
+    },
+    {
+      name: 'Claude Sonnet 5 reordered thinking suffix',
+      id: 'claude-sonnet-5',
+      legacySlugs: [
+        'claude-sonnet-5-high',
+        'claude-sonnet-5-max',
+        'claude-sonnet-5-thinking-high',
+        'claude-sonnet-5-thinking-max',
+      ],
+      effort: 'xhigh',
+      fast: false,
+      thinking: true,
+      expected: 'claude-sonnet-5-thinking-max',
+    },
+    {
+      name: 'Gemini 3.6 Flash minimal effort',
+      id: 'gemini-3.6-flash',
+      legacySlugs: [
+        'gemini-3.6-flash-minimal',
+        'gemini-3.6-flash-low',
+        'gemini-3.6-flash-medium',
+        'gemini-3.6-flash-high',
+      ],
+      effort: 'minimal',
+      fast: false,
+      thinking: false,
+      expected: 'gemini-3.6-flash-minimal',
+    },
+    {
+      name: 'GPT-5.5 extra-high fast effort',
+      id: 'gpt-5.5',
+      legacySlugs: ['gpt-5.5-high', 'gpt-5.5-high-fast', 'gpt-5.5-extra-high', 'gpt-5.5-extra-high-fast'],
+      effort: 'xhigh',
+      fast: true,
+      thinking: false,
+      expected: 'gpt-5.5-extra-high-fast',
+    },
+    {
+      name: 'Grok 4.5 canonical non-fast alias',
+      id: 'grok-4.5',
+      legacySlugs: ['cursor-grok-4.5-medium', 'cursor-grok-4.5-medium-fast', 'grok-4.5-medium', 'grok-4.5-fast-medium'],
+      effort: 'medium',
+      fast: false,
+      thinking: false,
+      expected: 'cursor-grok-4.5-medium',
+    },
+  ]
+
+  it.each(cases)('$name', ({ id, legacySlugs, effort, fast, thinking, expected }) => {
+    const modelSet = processModels([makeModel(id, { legacySlugs })])
+    expect(resolveModelId(id, effort, fast, thinking, modelSet)).toBe(expected)
+  })
+})
