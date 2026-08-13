@@ -189,10 +189,12 @@ export function processModels(rawModels: CursorModel[]): NormalizedModelSet {
           meta.supportsThinking = true
         }
 
-        // Build slug lookup key: "modelId|effort|fast|thinking"
+        // Cursor lists preferred slugs before compatibility aliases.
         const effort = parsed.effort ?? 'default'
         const key = `${model.id}|${effort}|${String(parsed.fast)}|${String(parsed.thinking)}`
-        slugLookup.set(key, slug)
+        if (!slugLookup.has(key)) {
+          slugLookup.set(key, slug)
+        }
       }
     }
 

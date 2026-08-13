@@ -296,6 +296,17 @@ describe('processModels', () => {
     expect(result.slugLookup.get('gpt-5.4|high|false|false')).toBe('gpt-5.4-high')
     expect(result.slugLookup.get('gpt-5.4|high|true|false')).toBe('gpt-5.4-high-fast')
   })
+
+  it('keeps the first slug when compatibility aliases collide', () => {
+    const models = [
+      makeModel('grok-4.5', {
+        legacySlugs: ['cursor-grok-4.5-medium', 'grok-4.5-medium'],
+      }),
+    ]
+    const result = processModels(models)
+
+    expect(result.slugLookup.get('grok-4.5|medium|false|false')).toBe('cursor-grok-4.5-medium')
+  })
 })
 
 // ---------------------------------------------------------------------------
