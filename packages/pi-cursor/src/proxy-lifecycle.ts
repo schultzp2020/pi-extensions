@@ -14,6 +14,7 @@ import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { createInterface } from 'node:readline'
 
+import { captureProxyStderr } from './proxy-stderr.ts'
 import type { CursorModel } from './proxy/models.ts'
 
 const PORT_FILE = join(homedir(), '.pi', 'agent', 'cursor-proxy.json')
@@ -162,29 +163,36 @@ async function spawnProxy(sessionId: string, accessToken: string): Promise<{ por
   // Send config on stdin
   // stdio: ['pipe','pipe','pipe'] guarantees these are non-null
   const { stdin, stdout, stderr, pid: childPid } = child
+  const stderrCapture = captureProxyStderr(stderr)
   stdin.write(`${JSON.stringify({ accessToken })}\n`)
   stdin.end()
 
   // Read ready signal from stdout
   const rl = createInterface({ input: stdout })
-  const readyLine = await new Promise<string>((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      reject(new Error('Proxy startup timeout'))
-    }, PROXY_STARTUP_TIMEOUT_MS)
-    rl.once('line', (line) => {
-      clearTimeout(timeout)
-      resolve(line)
+  let ready: { type: string; port: number; models?: CursorModel[] }
+  try {
+    const readyLine = await new Promise<string>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        reject(new Error('Proxy startup timeout'))
+      }, PROXY_STARTUP_TIMEOUT_MS)
+      rl.once('line', (line) => {
+        clearTimeout(timeout)
+        resolve(line)
+      })
+      child.on('exit', (code) => {
+        clearTimeout(timeout)
+        reject(new Error(`Proxy exited with code ${String(code)}`))
+      })
     })
-    child.on('exit', (code) => {
-      clearTimeout(timeout)
-      reject(new Error(`Proxy exited with code ${String(code)}`))
-    })
-  })
-  rl.close()
-
-  const ready = JSON.parse(readyLine) as { type: string; port: number; models?: CursorModel[] }
-  if (ready.type !== 'ready' || !ready.port || !childPid) {
-    throw new Error(`Unexpected proxy output: ${readyLine}`)
+    ready = JSON.parse(readyLine) as { type: string; port: number; models?: CursorModel[] }
+    if (ready.type !== 'ready' || !ready.port || !childPid) {
+      throw new Error(`Unexpected proxy output: ${readyLine}`)
+    }
+    stderrCapture.finishStartup()
+  } catch (error) {
+    throw stderrCapture.startupError(error)
+  } finally {
+    rl.close()
   }
 
   // Write port file for other sessions to discover
@@ -192,10 +200,6 @@ async function spawnProxy(sessionId: string, accessToken: string): Promise<{ por
 
   // Start heartbeat
   startHeartbeat(ready.port, childPid, sessionId)
-
-  stderr.on('data', (chunk: Buffer) => {
-    process.stderr.write(`[cursor-proxy] ${chunk.toString()}`)
-  })
 
   // Don't let the child keep the parent alive
   child.unref()
