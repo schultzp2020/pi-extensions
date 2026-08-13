@@ -54,43 +54,34 @@ const EFFORT_SUFFIXES: ReadonlySet<string> = new Set(['none', 'low', 'medium', '
 // parseSlug
 // ---------------------------------------------------------------------------
 
-/**
- * Parse a legacy slug by stripping suffixes in order:
- * 1. Strip `-fast` → speed variant
- * 2. Strip `-thinking` → thinking variant
- * 3. Parse effort from last remaining segment
- * 4. Remaining segments → base name
- */
+/** Parse a legacy slug whose effort, thinking, and fast suffixes can appear in any order. */
 export function parseSlug(slug: string): ParsedSlug {
-  let remaining = slug
-
-  // 1. Strip -fast
-  let fast = false
-  if (remaining.endsWith('-fast')) {
-    fast = true
-    remaining = remaining.slice(0, -5)
-  }
-
-  // 2. Strip -thinking
-  let thinking = false
-  if (remaining.endsWith('-thinking')) {
-    thinking = true
-    remaining = remaining.slice(0, -9)
-  }
-
-  // 3. Parse effort from last segment
+  const segments = slug.split('-')
   let effort: CursorEffort | null = null
-  const segments = remaining.split('-')
-  if (segments.length > 1) {
+  let thinking = false
+  let fast = false
+
+  while (segments.length > 1) {
     const lastSegment = segments.at(-1) ?? ''
-    if (EFFORT_SUFFIXES.has(lastSegment)) {
+    if (lastSegment === 'fast') {
+      fast = true
+      segments.pop()
+      continue
+    }
+    if (lastSegment === 'thinking') {
+      thinking = true
+      segments.pop()
+      continue
+    }
+    if (effort === null && EFFORT_SUFFIXES.has(lastSegment)) {
       effort = lastSegment as CursorEffort
       segments.pop()
-      remaining = segments.join('-')
+      continue
     }
+    break
   }
 
-  return { base: remaining, effort, thinking, fast }
+  return { base: segments.join('-'), effort, thinking, fast }
 }
 
 // ---------------------------------------------------------------------------
