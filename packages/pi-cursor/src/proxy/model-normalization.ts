@@ -37,6 +37,8 @@ export interface NormalizedModelSet {
   modelMeta: Map<string, ModelMeta>
   /** Effort maps keyed by model ID */
   effortMaps: Map<string, Record<string, string>>
+  /** Available efforts keyed by "(modelId)|(fast)|(thinking)" */
+  variantEfforts: Map<string, Set<CursorEffort | 'default'>>
   /**
    * Slug resolution table: maps "(modelId)|(effort)|(fast)|(thinking)" to the
    * legacy slug that Cursor's server accepts.
@@ -166,6 +168,7 @@ function effortToSuffix(effort: CursorEffort | 'default'): string {
 export function processModels(rawModels: CursorModel[]): NormalizedModelSet {
   const modelMeta = new Map<string, ModelMeta>()
   const effortMaps = new Map<string, Record<string, string>>()
+  const variantEfforts = new Map<string, Set<CursorEffort | 'default'>>()
   const slugLookup = new Map<string, string>()
 
   for (const model of rawModels) {
@@ -191,6 +194,11 @@ export function processModels(rawModels: CursorModel[]): NormalizedModelSet {
 
         // Cursor lists preferred slugs before compatibility aliases.
         const effort = parsed.effort ?? 'default'
+        const variantKey = `${model.id}|${String(parsed.fast)}|${String(parsed.thinking)}`
+        const availableEfforts = variantEfforts.get(variantKey) ?? new Set<CursorEffort | 'default'>()
+        availableEfforts.add(effort)
+        variantEfforts.set(variantKey, availableEfforts)
+
         const key = `${model.id}|${effort}|${String(parsed.fast)}|${String(parsed.thinking)}`
         if (!slugLookup.has(key)) {
           slugLookup.set(key, slug)
@@ -207,7 +215,7 @@ export function processModels(rawModels: CursorModel[]): NormalizedModelSet {
     }
   }
 
-  return { models: rawModels, modelMeta, effortMaps, slugLookup }
+  return { models: rawModels, modelMeta, effortMaps, variantEfforts, slugLookup }
 }
 
 // ---------------------------------------------------------------------------
@@ -233,18 +241,6 @@ export function resolveModelId(
     return modelId
   }
 
-  // Resolve effort suffix from effort map
-  let resolvedEffort = 'default'
-  if (effort) {
-    const effortMap = modelSet.effortMaps.get(modelId)
-    if (effortMap && Object.hasOwn(effortMap, effort)) {
-      const suffix = effortMap[effort]
-      resolvedEffort = suffix || 'default'
-    } else if (effortMap && EFFORT_SUFFIXES.has(effort)) {
-      resolvedEffort = effort
-    }
-  }
-
   // Silently ignore flags the model doesn't support.
   const effectiveFast = fast && meta.supportsFast
   const effectiveThinking = thinking && meta.supportsThinking
@@ -261,14 +257,28 @@ export function resolveModelId(
     flagCandidates.push([false, false])
   }
 
-  const effortCandidates = resolvedEffort === 'default' ? ['default'] : [resolvedEffort, 'default']
   for (const [candidateFast, candidateThinking] of flagCandidates) {
-    for (const candidateEffort of effortCandidates) {
-      const key = `${modelId}|${candidateEffort}|${String(candidateFast)}|${String(candidateThinking)}`
-      const slug = modelSet.slugLookup.get(key)
-      if (slug) {
-        return slug
+    const variantKey = `${modelId}|${String(candidateFast)}|${String(candidateThinking)}`
+    const availableEfforts = modelSet.variantEfforts.get(variantKey)
+    if (!availableEfforts) {
+      continue
+    }
+
+    let resolvedEffort = 'default'
+    if (effort) {
+      const effortMap = buildEffortMap(availableEfforts)
+      if (Object.hasOwn(effortMap, effort)) {
+        const suffix = effortMap[effort]
+        resolvedEffort = suffix || 'default'
+      } else if (EFFORT_SUFFIXES.has(effort)) {
+        resolvedEffort = effort
       }
+    }
+
+    const key = `${modelId}|${resolvedEffort}|${String(candidateFast)}|${String(candidateThinking)}`
+    const slug = modelSet.slugLookup.get(key)
+    if (slug) {
+      return slug
     }
   }
 
