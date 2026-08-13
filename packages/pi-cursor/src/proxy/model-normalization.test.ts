@@ -404,6 +404,37 @@ describe('resolveModelId', () => {
     expect(resolveModelId('claude-opus-4-6', 'xhigh', false, true, modelSet)).toBe('claude-4.6-opus-max-thinking')
   })
 
+  it('ignores effort when a model only has default thinking variants', () => {
+    const modelSet = processModels([
+      makeModel('claude-haiku-4-5', {
+        legacySlugs: ['claude-4.5-haiku', 'claude-4.5-haiku-thinking'],
+      }),
+    ])
+
+    expect(resolveModelId('claude-haiku-4-5', 'low', false, true, modelSet)).toBe('claude-4.5-haiku-thinking')
+    expect(resolveModelId('claude-haiku-4-5', 'low', false, false, modelSet)).toBe('claude-4.5-haiku')
+  })
+
+  it('preserves thinking by falling back to its default effort', () => {
+    const modelSet = processModels([
+      makeModel('claude-example', {
+        legacySlugs: ['claude-example-low', 'claude-example-thinking'],
+      }),
+    ])
+
+    expect(resolveModelId('claude-example', 'low', false, true, modelSet)).toBe('claude-example-thinking')
+  })
+
+  it('drops fast before thinking when their combination is unavailable', () => {
+    const modelSet = processModels([
+      makeModel('claude-example', {
+        legacySlugs: ['claude-example-low-fast', 'claude-example-high', 'claude-example-high-thinking'],
+      }),
+    ])
+
+    expect(resolveModelId('claude-example', 'high', true, true, modelSet)).toBe('claude-example-high-thinking')
+  })
+
   it('resolves unknown model ID → returns as-is', () => {
     const modelSet = buildGptModelSet()
     expect(resolveModelId('unknown-model', 'high', true, false, modelSet)).toBe('unknown-model')

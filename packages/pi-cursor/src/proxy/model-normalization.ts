@@ -240,49 +240,38 @@ export function resolveModelId(
     if (effortMap && Object.hasOwn(effortMap, effort)) {
       const suffix = effortMap[effort]
       resolvedEffort = suffix || 'default'
-    } else if (EFFORT_SUFFIXES.has(effort)) {
+    } else if (effortMap && EFFORT_SUFFIXES.has(effort)) {
       resolvedEffort = effort
     }
   }
 
-  // Silently ignore flags the model doesn't support
+  // Silently ignore flags the model doesn't support.
   const effectiveFast = fast && meta.supportsFast
   const effectiveThinking = thinking && meta.supportsThinking
+  const flagCandidates: [fast: boolean, thinking: boolean][] = [[effectiveFast, effectiveThinking]]
 
-  // Look up the legacy slug
-  const key = `${modelId}|${resolvedEffort}|${String(effectiveFast)}|${String(effectiveThinking)}`
-  const slug = modelSet.slugLookup.get(key)
-  if (slug) {
-    return slug
-  }
-
-  // Fallback: try without thinking
-  if (effectiveThinking) {
-    const keyNoThinking = `${modelId}|${resolvedEffort}|${String(effectiveFast)}|false`
-    const slugNoThinking = modelSet.slugLookup.get(keyNoThinking)
-    if (slugNoThinking) {
-      return slugNoThinking
-    }
-  }
-
-  // Fallback: try without fast
+  // Preserve thinking when the exact fast variant is unavailable.
   if (effectiveFast) {
-    const keyNoFast = `${modelId}|${resolvedEffort}|false|${String(effectiveThinking)}`
-    const slugNoFast = modelSet.slugLookup.get(keyNoFast)
-    if (slugNoFast) {
-      return slugNoFast
+    flagCandidates.push([false, effectiveThinking])
+  }
+  if (effectiveThinking) {
+    flagCandidates.push([effectiveFast, false])
+  }
+  if (effectiveFast && effectiveThinking) {
+    flagCandidates.push([false, false])
+  }
+
+  const effortCandidates = resolvedEffort === 'default' ? ['default'] : [resolvedEffort, 'default']
+  for (const [candidateFast, candidateThinking] of flagCandidates) {
+    for (const candidateEffort of effortCandidates) {
+      const key = `${modelId}|${candidateEffort}|${String(candidateFast)}|${String(candidateThinking)}`
+      const slug = modelSet.slugLookup.get(key)
+      if (slug) {
+        return slug
+      }
     }
   }
 
-  // Fallback: try bare effort only
-  if (resolvedEffort !== 'default') {
-    const keyBare = `${modelId}|${resolvedEffort}|false|false`
-    const slugBare = modelSet.slugLookup.get(keyBare)
-    if (slugBare) {
-      return slugBare
-    }
-  }
-
-  // No slug found — return model ID as-is (e.g. gemini models with no legacy slugs)
+  // The normalized model ID represents the default non-fast, non-thinking variant.
   return modelId
 }
