@@ -28,6 +28,7 @@ import {
 } from './internal-api.ts'
 import { processModels, type NormalizedModelSet } from './model-normalization.ts'
 import { discoverCursorModels, type CursorModel } from './models.ts'
+import { buildProxyReadySignal } from './proxy-ready.ts'
 import { handleChatCompletion, type ProxyContext } from './request-lifecycle.ts'
 import { closeAll, evict, type ConversationConfig } from './session-state.ts'
 import { createShutdownController } from './shutdown.ts'
@@ -208,18 +209,7 @@ async function main(): Promise<void> {
     listeningPort = port
 
     // 7. Write ready signal to stdout (extension reads this)
-    const readySignal = JSON.stringify({
-      type: 'ready',
-      port,
-      models: models.map((m) => ({
-        id: m.id,
-        name: m.name,
-        reasoning: m.reasoning,
-        contextWindow: m.contextWindow,
-        maxTokens: m.maxTokens,
-        supportsImages: m.supportsImages,
-      })),
-    })
+    const readySignal = JSON.stringify(buildProxyReadySignal(port, models))
     console.log(readySignal)
 
     // 8. Start heartbeat monitor
