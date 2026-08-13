@@ -26,6 +26,7 @@ type DebugEventType =
   | 'bridge_close'
   | 'lineage_invalidation'
   | 'lifecycle'
+  | 'proxy_stderr'
 
 interface DebugLogEntry {
   timestamp: string
@@ -260,7 +261,25 @@ export function logLifecycle(sessionId: string, requestId: string, payload: { ev
   })
 }
 
+/** Log text captured from the proxy child process stderr stream. */
+export function logProxyStderr(sessionId: string, output: string): void {
+  if (!_enabled) {
+    return
+  }
+  writeEntry({
+    timestamp: new Date().toISOString(),
+    type: 'proxy_stderr',
+    sessionId,
+    requestId: '',
+    output,
+  })
+}
+
 // ── Initialization ──
+
+export function isDebugLoggingEnabled(): boolean {
+  return _enabled
+}
 
 /**
  * Initialize the debug logger from environment variables.

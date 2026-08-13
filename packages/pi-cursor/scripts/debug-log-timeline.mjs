@@ -40,6 +40,7 @@ import { createInterface } from 'node:readline'
  *   mode?: string
  *   resultType?: string
  *   event?: string
+ *   output?: string
  * }} DebugEntry
  */
 
@@ -185,6 +186,9 @@ function formatEvent(ev) {
     }
     case 'lifecycle': {
       return `◉ LIFECYCLE  ${ev.event}`
+    }
+    case 'proxy_stderr': {
+      return `! PROXY STDERR  ${(ev.output ?? '').trimEnd()}`
     }
     default: {
       return `? ${ev.type}  ${JSON.stringify(ev)}`

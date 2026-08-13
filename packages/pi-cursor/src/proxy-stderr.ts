@@ -7,20 +7,26 @@ export interface ProxyStderrCapture {
   startupError(error: unknown): Error
 }
 
+export interface ProxyStderrCaptureOptions {
+  startupLimitBytes?: number
+  onOutput?: (output: string) => void
+}
+
 /** Drains proxy stderr while retaining only bounded startup diagnostics. */
-export function captureProxyStderr(
-  stream: Readable,
-  startupLimitBytes = DEFAULT_STARTUP_STDERR_LIMIT,
-): ProxyStderrCapture {
+export function captureProxyStderr(stream: Readable, options: ProxyStderrCaptureOptions = {}): ProxyStderrCapture {
+  const startupLimitBytes = options.startupLimitBytes ?? DEFAULT_STARTUP_STDERR_LIMIT
   let startupBuffer = Buffer.alloc(0)
   let captureStartup = true
 
   stream.on('data', (chunk: Buffer | string) => {
+    const output = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
+    options.onOutput?.(output.toString())
+
     if (!captureStartup) {
       return
     }
 
-    const next = Buffer.concat([startupBuffer, Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)])
+    const next = Buffer.concat([startupBuffer, output])
     startupBuffer = next.subarray(Math.max(0, next.length - startupLimitBytes))
   })
 

@@ -15,6 +15,7 @@ import { join, resolve } from 'node:path'
 import { createInterface } from 'node:readline'
 
 import { captureProxyStderr } from './proxy-stderr.ts'
+import { isDebugLoggingEnabled, logProxyStderr } from './proxy/debug-logger.ts'
 import type { CursorModel } from './proxy/models.ts'
 
 const PORT_FILE = join(homedir(), '.pi', 'agent', 'cursor-proxy.json')
@@ -163,7 +164,9 @@ async function spawnProxy(sessionId: string, accessToken: string): Promise<{ por
   // Send config on stdin
   // stdio: ['pipe','pipe','pipe'] guarantees these are non-null
   const { stdin, stdout, stderr, pid: childPid } = child
-  const stderrCapture = captureProxyStderr(stderr)
+  const stderrCapture = captureProxyStderr(stderr, {
+    onOutput: isDebugLoggingEnabled() ? (output) => logProxyStderr(sessionId, output) : undefined,
+  })
   stdin.write(`${JSON.stringify({ accessToken })}\n`)
   stdin.end()
 

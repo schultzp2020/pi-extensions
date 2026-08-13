@@ -29,10 +29,21 @@ describe('captureProxyStderr', () => {
 
   it('keeps only the configured number of startup bytes', () => {
     const stream = new PassThrough()
-    const capture = captureProxyStderr(stream, 5)
+    const capture = captureProxyStderr(stream, { startupLimitBytes: 5 })
 
     stream.write('123456789')
 
     expect(capture.startupError(new Error('failed')).message).toBe('failed\nProxy stderr:\n56789')
+  })
+
+  it('routes output emitted after startup to the configured sink', () => {
+    const stream = new PassThrough()
+    const output: string[] = []
+    const capture = captureProxyStderr(stream, { onOutput: (chunk) => output.push(chunk) })
+
+    capture.finishStartup()
+    stream.write('[proxy] Shutdown requested\n')
+
+    expect(output).toEqual(['[proxy] Shutdown requested\n'])
   })
 })
