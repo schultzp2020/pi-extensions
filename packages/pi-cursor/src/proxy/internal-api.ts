@@ -44,8 +44,20 @@ export function getCachedModels(): CursorModel[] {
 }
 
 export function startHeartbeatMonitor(): NodeJS.Timeout {
+  let previousMonitorMs = Date.now()
   const timer = setInterval(() => {
     const now = Date.now()
+    const monitorGapMs = now - previousMonitorMs
+    previousMonitorMs = now
+    if (monitorGapMs > HEARTBEAT_TIMEOUT_MS && heartbeatClients.size > 0) {
+      for (const session of heartbeatClients.values()) {
+        session.lastHeartbeatMs = now
+      }
+      console.error(
+        `[proxy] Heartbeat monitor resumed after ${String(monitorGapMs)}ms; granting active sessions a fresh heartbeat window`,
+      )
+      return
+    }
     for (const [id] of heartbeatClients) {
       const session = heartbeatClients.get(id)
       if (session && now - session.lastHeartbeatMs > HEARTBEAT_TIMEOUT_MS) {
