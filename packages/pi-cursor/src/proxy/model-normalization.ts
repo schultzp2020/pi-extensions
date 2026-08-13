@@ -5,7 +5,7 @@ import type { CursorModel } from './models.ts'
 // ---------------------------------------------------------------------------
 
 /** Effort suffixes found in Cursor legacy slug model IDs */
-export type CursorEffort = 'none' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
+export type CursorEffort = 'minimal' | 'none' | 'low' | 'medium' | 'high' | 'extra-high' | 'xhigh' | 'max'
 
 /** Result of parsing a legacy slug into its components */
 export interface ParsedSlug {
@@ -48,7 +48,7 @@ export interface NormalizedModelSet {
 // Constants
 // ---------------------------------------------------------------------------
 
-const EFFORT_SUFFIXES: ReadonlySet<string> = new Set(['none', 'low', 'medium', 'high', 'xhigh', 'max'])
+const EFFORT_SUFFIXES: ReadonlySet<string> = new Set(['minimal', 'none', 'low', 'medium', 'high', 'xhigh', 'max'])
 
 // ---------------------------------------------------------------------------
 // parseSlug
@@ -73,6 +73,11 @@ export function parseSlug(slug: string): ParsedSlug {
       segments.pop()
       continue
     }
+    if (effort === null && lastSegment === 'high' && segments.at(-2) === 'extra') {
+      effort = 'extra-high'
+      segments.splice(-2)
+      continue
+    }
     if (effort === null && EFFORT_SUFFIXES.has(lastSegment)) {
       effort = lastSegment as CursorEffort
       segments.pop()
@@ -91,14 +96,24 @@ export function parseSlug(slug: string): ParsedSlug {
 /**
  * Map Pi's effort levels to the best available Cursor effort suffix.
  *
- * - minimal → none if available, else low, else lowest available
- * - low → low if available, else none, else lowest available
+ * - minimal → minimal if available, then none, then low
+ * - low → low if available, then none, then minimal
  * - medium → medium if available, else 'default' (no suffix)
- * - high → high if available, else highest below xhigh
- * - xhigh → max if available, else xhigh, else high
+ * - high → high if available, else highest lower effort
+ * - xhigh → max if available, then xhigh, then extra-high, then high
  */
 export function buildEffortMap(availableEfforts: Set<CursorEffort | 'default'>): Record<string, string> {
-  const orderedEfforts: (CursorEffort | 'default')[] = ['none', 'low', 'default', 'medium', 'high', 'xhigh', 'max']
+  const orderedEfforts: (CursorEffort | 'default')[] = [
+    'minimal',
+    'none',
+    'low',
+    'default',
+    'medium',
+    'high',
+    'extra-high',
+    'xhigh',
+    'max',
+  ]
   const available = orderedEfforts.filter((e) => availableEfforts.has(e))
 
   if (available.length === 0) {
@@ -117,14 +132,19 @@ export function buildEffortMap(availableEfforts: Set<CursorEffort | 'default'>):
     return effortToSuffix(fallback)
   }
 
-  const highFallback: CursorEffort | 'default' = highest === 'max' || highest === 'xhigh' ? 'high' : highest
+  let highFallback = highest
+  for (const candidate of available) {
+    if (candidate !== 'extra-high' && candidate !== 'xhigh' && candidate !== 'max') {
+      highFallback = candidate
+    }
+  }
 
   return {
-    minimal: pick(['none', 'low'], lowest),
-    low: pick(['low', 'none'], lowest),
+    minimal: pick(['minimal', 'none', 'low'], lowest),
+    low: pick(['low', 'none', 'minimal'], lowest),
     medium: pick(['medium', 'default'], lowest),
     high: pick(['high'], highFallback),
-    xhigh: pick(['max', 'xhigh', 'high'], highest),
+    xhigh: pick(['max', 'xhigh', 'extra-high', 'high'], highest),
   }
 }
 
