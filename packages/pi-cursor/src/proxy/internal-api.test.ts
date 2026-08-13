@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { configureInternalApi, handleInternalRequest, startHeartbeatMonitor } from './internal-api.ts'
 
 const START_MS = Date.UTC(2026, 7, 13)
+const HEARTBEAT_MONITOR_INTERVAL_MS = 10_000
 
 interface InternalApi {
   configureInternalApi: typeof configureInternalApi
@@ -42,6 +43,11 @@ async function getSessionCount(): Promise<number> {
   return (JSON.parse(responseBody) as { sessions: number }).sessions
 }
 
+async function advanceMonitorAfterGap(gapMs: number): Promise<void> {
+  vi.setSystemTime(Date.now() + gapMs - HEARTBEAT_MONITOR_INTERVAL_MS)
+  await vi.advanceTimersToNextTimerAsync()
+}
+
 beforeEach(async () => {
   vi.useFakeTimers({ now: START_MS })
   vi.resetModules()
@@ -56,17 +62,36 @@ afterEach(() => {
 describe('startHeartbeatMonitor', () => {
   it('preserves clients when the monitor resumes after a long suspension', async () => {
     const onShutdown = vi.fn<() => void>()
-    vi.spyOn(console, 'error').mockImplementation(() => {})
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
     internalApi.configureInternalApi({ initialToken: null, initialModels: [], onShutdown })
     await sendHeartbeat('session-a')
     await sendHeartbeat('session-b')
     internalApi.startHeartbeatMonitor()
 
-    vi.setSystemTime(START_MS + 40_000)
-    await vi.advanceTimersToNextTimerAsync()
+    await advanceMonitorAfterGap(40_000)
 
     expect(onShutdown).not.toHaveBeenCalled()
     expect(await getSessionCount()).toBe(2)
+    expect(consoleError).toHaveBeenCalledWith(
+      '[proxy] Heartbeat monitor resumed after 40000ms; granting active sessions a fresh heartbeat window',
+    )
+  })
+
+  it('preserves a stale client after a shorter monitor suspension', async () => {
+    const onShutdown = vi.fn<() => void>()
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+    internalApi.configureInternalApi({ initialToken: null, initialModels: [], onShutdown })
+    await sendHeartbeat('session-a')
+    internalApi.startHeartbeatMonitor()
+    await vi.advanceTimersByTimeAsync(HEARTBEAT_MONITOR_INTERVAL_MS)
+
+    await advanceMonitorAfterGap(22_000)
+
+    expect(onShutdown).not.toHaveBeenCalled()
+    expect(await getSessionCount()).toBe(1)
+    expect(consoleError).toHaveBeenCalledWith(
+      '[proxy] Heartbeat monitor resumed after 22000ms; granting active sessions a fresh heartbeat window',
+    )
   })
 
   it('shuts down after a long monitor gap when no clients are registered', async () => {
@@ -75,8 +100,7 @@ describe('startHeartbeatMonitor', () => {
     internalApi.configureInternalApi({ initialToken: null, initialModels: [], onShutdown })
     internalApi.startHeartbeatMonitor()
 
-    vi.setSystemTime(START_MS + 40_000)
-    await vi.advanceTimersToNextTimerAsync()
+    await advanceMonitorAfterGap(40_000)
 
     expect(onShutdown).toHaveBeenCalledOnce()
   })
@@ -100,11 +124,13 @@ describe('startHeartbeatMonitor', () => {
     await sendHeartbeat('session-a')
     internalApi.startHeartbeatMonitor()
 
-    vi.setSystemTime(START_MS + 40_000)
-    await vi.advanceTimersToNextTimerAsync()
+    await advanceMonitorAfterGap(40_000)
     expect(onShutdown).not.toHaveBeenCalled()
 
-    await vi.advanceTimersByTimeAsync(40_000)
+    await vi.advanceTimersByTimeAsync(30_000)
+    expect(onShutdown).not.toHaveBeenCalled()
+
+    await vi.advanceTimersByTimeAsync(10_000)
 
     expect(onShutdown).toHaveBeenCalledOnce()
   })

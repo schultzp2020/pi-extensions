@@ -17,6 +17,8 @@ interface SessionHeartbeat {
 
 const heartbeatClients = new Map<string, SessionHeartbeat>()
 const HEARTBEAT_TIMEOUT_MS = 30_000
+const HEARTBEAT_MONITOR_INTERVAL_MS = 10_000
+const SUSPEND_DETECTION_THRESHOLD_MS = HEARTBEAT_MONITOR_INTERVAL_MS * 1.5
 
 let currentAccessToken: string | null = null
 let cachedModels: CursorModel[] = []
@@ -49,7 +51,9 @@ export function startHeartbeatMonitor(): NodeJS.Timeout {
     const now = Date.now()
     const monitorGapMs = now - previousMonitorMs
     previousMonitorMs = now
-    if (monitorGapMs > HEARTBEAT_TIMEOUT_MS && heartbeatClients.size > 0) {
+    if (monitorGapMs > SUSPEND_DETECTION_THRESHOLD_MS && heartbeatClients.size > 0) {
+      // Rewrite timestamps, rather than only skipping this sweep, so client
+      // heartbeat timers have a full window to resume after wake.
       for (const session of heartbeatClients.values()) {
         session.lastHeartbeatMs = now
       }
@@ -68,7 +72,7 @@ export function startHeartbeatMonitor(): NodeJS.Timeout {
       console.error('[proxy] No active sessions, shutting down')
       shutdownCallback?.()
     }
-  }, 10_000)
+  }, HEARTBEAT_MONITOR_INTERVAL_MS)
   if (typeof timer === 'object' && 'unref' in timer) {
     timer.unref()
   }
