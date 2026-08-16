@@ -19,6 +19,7 @@ import { flushDebugLogger, initDebugLogger, logLifecycle } from './proxy/debug-l
 import { processModels, type NormalizedModelSet } from './proxy/model-normalization.ts'
 import type { CursorModel } from './proxy/models.ts'
 import { DEBUG_FLUSH_SHUTDOWN_TIMEOUT_MS } from './proxy/shutdown.ts'
+import { getOwnString, isRecord } from './unknown.ts'
 
 const PROVIDER_ID = 'cursor'
 const AGENT_DIR = join(homedir(), '.pi', 'agent')
@@ -58,11 +59,12 @@ export function formatTokenCount(tokens: number): string {
 
 function toProviderModels(models: CursorModel[], modelSet?: NormalizedModelSet): ProviderModelConfig[] {
   return models.flatMap((m) => {
+    const input: ('text' | 'image')[] = m.supportsImages ? ['text', 'image'] : ['text']
     const base: ProviderModelConfig = {
       id: m.id,
       name: m.name,
       reasoning: m.reasoning,
-      input: (m.supportsImages ? ['text', 'image'] : ['text']) as ('text' | 'image')[],
+      input,
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
       contextWindow: m.contextWindow,
       maxTokens: m.maxTokens,
@@ -75,7 +77,7 @@ function toProviderModels(models: CursorModel[], modelSet?: NormalizedModelSet):
       if (effortMap) {
         base.compat = {
           supportsReasoningEffort: true,
-        } as ProviderModelConfig['compat']
+        }
 
         const thinkingLevels = ['minimal', 'low', 'medium', 'high', 'xhigh'] as const
         const thinkingLevelMap: Partial<Record<(typeof thinkingLevels)[number], string | null>> = {}
@@ -112,15 +114,10 @@ function loadStoredToken(): string | null {
       return null
     }
     const auth: unknown = JSON.parse(readFileSync(authPath, 'utf8'))
-    if (typeof auth !== 'object' || auth === null) {
+    if (!isRecord(auth)) {
       return null
     }
-    const { cursor } = auth as Record<string, unknown>
-    if (typeof cursor !== 'object' || cursor === null) {
-      return null
-    }
-    const { access } = cursor as { access?: string }
-    return typeof access === 'string' ? access : null
+    return getOwnString(auth.cursor, 'access') ?? null
   } catch {
     return null
   }
@@ -138,15 +135,17 @@ export default async function (pi: ExtensionAPI): Promise<void> {
   async function loginCursor(callbacks: OAuthLoginCallbacks): Promise<OAuthCredentials> {
     const { verifier, uuid, loginUrl } = await generateCursorAuthParams()
     callbacks.onAuth({ url: loginUrl })
-    const { accessToken, refreshToken } = await pollCursorAuth(uuid, verifier)
+    const { accessToken, refreshToken } = await pollCursorAuth(uuid, verifier, callbacks.signal)
     return { refresh: refreshToken, access: accessToken, expires: getTokenExpiry(accessToken) }
   }
 
-  async function onRefreshToken(credentials: OAuthCredentials): Promise<OAuthCredentials> {
-    const result = await refreshCursorToken(credentials.refresh)
+  async function onRefreshToken(credentials: OAuthCredentials, signal: AbortSignal): Promise<OAuthCredentials> {
+    // Always return a successful exchange so Pi can persist rotated refresh tokens.
+    // Only skip/cancel the proxy push if the caller already aborted.
+    const result = await refreshCursorToken(credentials.refresh, signal)
     const port = getActivePort()
-    if (port) {
-      await pushToken(port, result.access)
+    if (port && !signal.aborted) {
+      await pushToken(port, result.access, signal)
     }
     return result
   }

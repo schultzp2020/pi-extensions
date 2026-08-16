@@ -129,10 +129,12 @@ for await (const line of rl) {
     continue
   }
 
-  if (!byRequest.has(rid)) {
-    byRequest.set(rid, [])
+  let requestEntries = byRequest.get(rid)
+  if (!requestEntries) {
+    requestEntries = []
+    byRequest.set(rid, requestEntries)
   }
-  /** @type {DebugEntry[]} */ (byRequest.get(rid)).push(entry)
+  requestEntries.push(entry)
 }
 
 // ── Formatting helpers ──

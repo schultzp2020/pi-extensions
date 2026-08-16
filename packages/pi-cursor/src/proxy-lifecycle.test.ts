@@ -1,9 +1,13 @@
+import type * as ChildProcessModule from 'node:child_process'
 import type { ChildProcess, SpawnOptions } from 'node:child_process'
 import { EventEmitter } from 'node:events'
+import type * as FsModule from 'node:fs'
 import { resolve } from 'node:path'
 import { PassThrough } from 'node:stream'
 
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
+
+import type * as DebugLoggerModule from './proxy/debug-logger.ts'
 
 const fsMocks = vi.hoisted(() => ({
   existsSync: vi.fn<() => boolean>(() => false),
@@ -14,7 +18,7 @@ const fsMocks = vi.hoisted(() => ({
 }))
 
 vi.mock('node:fs', async (importOriginal) => {
-  const actual = (await importOriginal()) as Record<string, unknown>
+  const actual = await importOriginal<typeof FsModule>()
   return {
     ...actual,
     existsSync: fsMocks.existsSync,
@@ -40,15 +44,15 @@ const realSetTimeout = setTimeout
 const realClearTimeout = clearTimeout
 
 vi.mock('node:child_process', async (importOriginal) => {
-  const actual = (await importOriginal()) as Record<string, unknown>
-  realSpawnRef.current = actual.spawn as SpawnFn
+  const actual = await importOriginal<typeof ChildProcessModule>()
+  realSpawnRef.current = actual.spawn
   return { ...actual, spawn: spawnMock }
 })
 
 const logProxyStderrMock = vi.hoisted(() => vi.fn<(sessionId: string, output: string) => void>())
 
 vi.mock('./proxy/debug-logger.ts', async (importOriginal) => {
-  const actual = (await importOriginal()) as Record<string, unknown>
+  const actual = await importOriginal<typeof DebugLoggerModule>()
   return {
     ...actual,
     isDebugLoggingEnabled: () => true,
@@ -56,7 +60,7 @@ vi.mock('./proxy/debug-logger.ts', async (importOriginal) => {
   }
 })
 
-import { connectToProxy, stopHeartbeat } from './proxy-lifecycle.ts'
+import { connectToProxy, pushToken, stopHeartbeat } from './proxy-lifecycle.ts'
 import { logProxyStderr } from './proxy/debug-logger.ts'
 
 const HEARTBEAT_INTERVAL_MS = 10_000
@@ -818,5 +822,34 @@ describe('real-time observation deadline', () => {
     await expect(withRealDeadline(Promise.reject(new Error('inner failure')), 25, 'observation')).rejects.toThrow(
       'inner failure',
     )
+  })
+})
+
+describe('pushToken', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('does not fetch when the caller signal is already aborted', async () => {
+    const fetchMock = vi.fn<typeof fetch>()
+    vi.stubGlobal('fetch', fetchMock)
+    const controller = new AbortController()
+    controller.abort()
+
+    await pushToken(3456, 'token', controller.signal)
+
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('combines the caller signal with the push timeout', async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue({ ok: true } as Response)
+    vi.stubGlobal('fetch', fetchMock)
+    const controller = new AbortController()
+
+    await pushToken(3456, 'token', controller.signal)
+
+    expect(fetchMock).toHaveBeenCalledOnce()
+    expect(fetchMock.mock.calls[0]?.[1]?.signal).toBeInstanceOf(AbortSignal)
+    expect(fetchMock.mock.calls[0]?.[1]?.signal?.aborted).toBeFalsy()
   })
 })
