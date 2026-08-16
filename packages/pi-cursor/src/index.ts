@@ -15,9 +15,10 @@ import {
   type CursorConfig,
   type NativeToolsMode,
 } from './proxy/config.ts'
-import { initDebugLogger, logLifecycle } from './proxy/debug-logger.ts'
+import { flushDebugLogger, initDebugLogger, logLifecycle } from './proxy/debug-logger.ts'
 import { processModels, type NormalizedModelSet } from './proxy/model-normalization.ts'
 import type { CursorModel } from './proxy/models.ts'
+import { DEBUG_FLUSH_SHUTDOWN_TIMEOUT_MS } from './proxy/shutdown.ts'
 
 const PROVIDER_ID = 'cursor'
 const AGENT_DIR = join(homedir(), '.pi', 'agent')
@@ -419,5 +420,9 @@ export default async function (pi: ExtensionAPI): Promise<void> {
     logLifecycle(sessionId, '', { event: 'session_shutdown' })
     await cleanupCurrentSession()
     stopHeartbeat()
+    // Queued debug entries must reach the file before Pi exits; the flush
+    // timer is unref'd and cannot be relied on at process end. The bound
+    // keeps a stuck filesystem from hanging the shutdown handler.
+    await flushDebugLogger(DEBUG_FLUSH_SHUTDOWN_TIMEOUT_MS)
   })
 }

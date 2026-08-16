@@ -16,7 +16,7 @@ import { join } from 'node:path'
 import { createInterface } from 'node:readline'
 
 import { resolveEffective } from './config.ts'
-import { initDebugLogger } from './debug-logger.ts'
+import { flushDebugLogger, initDebugLogger } from './debug-logger.ts'
 import { errorResponse, jsonResponse } from './http-helpers.ts'
 import {
   configureInternalApi,
@@ -29,6 +29,7 @@ import { processModels, type NormalizedModelSet } from './model-normalization.ts
 import { discoverCursorModels, type CursorModel } from './models.ts'
 import { handleChatCompletion, type ProxyContext } from './request-lifecycle.ts'
 import { closeAll, evict, type ConversationConfig } from './session-state.ts'
+import { createShutdownController } from './shutdown.ts'
 
 // ── Types ──
 
@@ -96,6 +97,10 @@ async function main(): Promise<void> {
 
   const portFilePath = join(homedir(), '.pi', 'agent', 'cursor-proxy.json')
 
+  // Queued debug entries are best-effort: flush them under a bounded
+  // deadline, then exit. Repeat shutdown requests stay idempotent.
+  const requestShutdown = createShutdownController(flushDebugLogger, (code) => process.exit(code))
+
   function shutdown(): void {
     console.error('[proxy] Shutdown requested')
     closeAll()
@@ -104,7 +109,7 @@ async function main(): Promise<void> {
     } catch {
       /* may not exist */
     }
-    process.exit(0)
+    requestShutdown()
   }
 
   // 2. Discover models
