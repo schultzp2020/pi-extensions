@@ -129,7 +129,7 @@ The shared Proxy state that is stable across requests and injected into each Req
 _Avoid_: server state, global config
 
 **Debug Logger**:
-A structured JSONL debug logger gated behind `PI_CURSOR_PROVIDER_DEBUG=1`. When enabled, appends one JSON object per line to `~/.pi/agent/cursor-debug.jsonl` (configurable via `PI_CURSOR_PROVIDER_EXTENSION_DEBUG_FILE`). When disabled, all log functions are zero-cost no-ops. Logs event types: `request_start`, `request_end`, `session_create`, `session_resume`, `checkpoint_commit`, `checkpoint_discard`, `retry`, `tool_call`, `bridge_open`, `bridge_close`, `lifecycle`. Each entry includes `timestamp` (ISO 8601), `type`, `sessionId`, `requestId`, and type-specific payload. A companion timeline script (`scripts/debug-log-timeline.mjs`) transforms JSONL logs into human-readable timelines grouped by request, with `--session`, `--since`, and `--until` filtering.
+A structured JSONL debug logger gated behind `PI_CURSOR_PROVIDER_DEBUG=1`. When enabled, appends one JSON object per line to `~/.pi/agent/cursor-debug.jsonl` (configurable via `PI_CURSOR_PROVIDER_EXTENSION_DEBUG_FILE`). When disabled, all log functions are zero-cost no-ops. Enabled logging uses bounded asynchronous batching: log calls queue entries, and a background writer attempts to append each batch. Normal shutdown attempts to flush each process's queued entries within a bounded deadline. Logs event types: `request_start`, `request_end`, `session_create`, `session_resume`, `checkpoint_commit`, `checkpoint_discard`, `retry`, `tool_call`, `bridge_open`, `bridge_close`, `lineage_invalidation`, `lifecycle`, `proxy_stderr`, `log_drop`. Each entry includes `timestamp` (ISO 8601), `type`, `sessionId`, `requestId`, and type-specific payload. `proxy_stderr` records text captured from the spawned Proxy child's stderr. The extension always drains that stream so it cannot corrupt Pi's TUI. When logging is enabled, the Debug Logger records the captured text as structured JSONL and does not forward it to the terminal. `log_drop` reports entries the bounded queue lost to overload or failed writes. Each marker carries a `dropped` count. A companion timeline script (`scripts/debug-log-timeline.mjs`) transforms JSONL logs into human-readable timelines grouped by request, with `--session`, `--since`, and `--until` filtering; event types without a dedicated renderer appear in a generic format.
 _Avoid_: debug mode, verbose mode, trace
 
 ## Image Bridging
@@ -154,7 +154,7 @@ The message parsing layer (`openai-messages.ts`) preserves image content parts f
 - The **Request Lifecycle** orchestrates the full request path: Session State resolution → protobuf construction → Bridge creation → retry loop → response streaming → Checkpoint commit
 - The **Proxy Context** carries stable state (access token, models, config) into each **Request Lifecycle** invocation
 - On client disconnect, the Proxy sends a **CancelAction** protobuf to Cursor and suppresses pending Checkpoint commits to preserve the last committed state
-- The **Debug Logger** records structured events from both the Proxy (request lifecycle, sessions, checkpoints) and the extension (lifecycle hooks), output to JSONL when `PI_CURSOR_PROVIDER_DEBUG=1`
+- The **Debug Logger** records structured events from both the Proxy (request lifecycle, sessions, checkpoints) and the extension (lifecycle hooks, captured Proxy stderr), output to JSONL when `PI_CURSOR_PROVIDER_DEBUG=1`
 
 ## Example dialogue
 
