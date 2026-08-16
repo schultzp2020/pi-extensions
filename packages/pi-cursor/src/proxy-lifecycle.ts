@@ -36,7 +36,6 @@ interface ProxyConnection {
   port: number
   pid: number
   heartbeatTimer: NodeJS.Timeout
-  sessionId: string
 }
 
 let activeConnection: ProxyConnection | null = null
@@ -130,10 +129,10 @@ async function getModels(port: number): Promise<CursorModel[]> {
  *
  * 1. Checks the port file for a running proxy and validates via health check.
  * 2. If no healthy proxy exists, spawns a new child process.
- * 3. Starts the heartbeat timer for the given session.
+ * 3. Starts the heartbeat timer; each heartbeat resolves the current session ID.
  */
 export async function connectToProxy(
-  sessionId: string,
+  getSessionId: () => string,
   accessToken: string | null,
 ): Promise<{ port: number; models: CursorModel[] }> {
   // 1. Try existing proxy via port file
@@ -142,7 +141,7 @@ export async function connectToProxy(
     if (accessToken) {
       await pushToken(existing.port, accessToken)
     }
-    startHeartbeat(existing.port, existing.pid, sessionId)
+    startHeartbeat(existing.port, existing.pid, getSessionId)
     const models = await getModels(existing.port)
     return { port: existing.port, models }
   }
@@ -151,10 +150,13 @@ export async function connectToProxy(
   if (!accessToken) {
     throw new Error('No access token and no existing proxy')
   }
-  return spawnProxy(sessionId, accessToken)
+  return spawnProxy(getSessionId, accessToken)
 }
 
-async function spawnProxy(sessionId: string, accessToken: string): Promise<{ port: number; models: CursorModel[] }> {
+async function spawnProxy(
+  getSessionId: () => string,
+  accessToken: string,
+): Promise<{ port: number; models: CursorModel[] }> {
   const child = spawn('node', [PROXY_ENTRY], {
     stdio: ['pipe', 'pipe', 'pipe'],
     detached: false,
@@ -164,8 +166,10 @@ async function spawnProxy(sessionId: string, accessToken: string): Promise<{ por
   // Send config on stdin
   // stdio: ['pipe','pipe','pipe'] guarantees these are non-null
   const { stdin, stdout, stderr, pid: childPid } = child
+  // Resolve the session ID at event time so stderr logs use the real ID
+  // after session_start replaces the bootstrap UUID.
   const stderrCapture = captureProxyStderr(stderr, {
-    onOutput: isDebugLoggingEnabled() ? (output) => logProxyStderr(sessionId, output) : undefined,
+    onOutput: isDebugLoggingEnabled() ? (output) => logProxyStderr(getSessionId(), output) : undefined,
   })
   stdin.write(`${JSON.stringify({ accessToken })}\n`)
   stdin.end()
@@ -202,7 +206,7 @@ async function spawnProxy(sessionId: string, accessToken: string): Promise<{ por
   writePortFile({ port: ready.port, pid: childPid })
 
   // Start heartbeat
-  startHeartbeat(ready.port, childPid, sessionId)
+  startHeartbeat(ready.port, childPid, getSessionId)
 
   // Don't let the child keep the parent alive
   child.unref()
@@ -210,16 +214,17 @@ async function spawnProxy(sessionId: string, accessToken: string): Promise<{ por
   return { port: ready.port, models: ready.models ?? [] }
 }
 
-function startHeartbeat(port: number, pid: number, sessionId: string): void {
+function startHeartbeat(port: number, pid: number, getSessionId: () => string): void {
   stopHeartbeat()
-  void sendHeartbeat(port, sessionId) // immediate first heartbeat
+  // Resolve the session ID at each send so heartbeats follow session_start updates.
+  void sendHeartbeat(port, getSessionId()) // immediate first heartbeat
   const timer = setInterval(() => {
-    void sendHeartbeat(port, sessionId)
+    void sendHeartbeat(port, getSessionId())
   }, HEARTBEAT_INTERVAL_MS)
   if (typeof timer === 'object' && 'unref' in timer) {
     timer.unref()
   }
-  activeConnection = { port, pid, heartbeatTimer: timer, sessionId }
+  activeConnection = { port, pid, heartbeatTimer: timer }
 }
 
 export function stopHeartbeat(): void {

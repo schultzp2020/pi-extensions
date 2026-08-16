@@ -163,7 +163,8 @@ export default async function (pi: ExtensionAPI): Promise<void> {
       return
     }
     try {
-      const result = await connectToProxy(sessionId, accessToken)
+      // Pass a getter so proxy activity uses the real session ID after session_start
+      const result = await connectToProxy(() => sessionId, accessToken)
       currentPort = result.port
       if (result.models.length > 0) {
         updateModels(result.models)
@@ -214,7 +215,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
 
   if (existingProxy) {
     try {
-      const result = await connectToProxy(sessionId, storedToken)
+      const result = await connectToProxy(() => sessionId, storedToken)
       currentPort = result.port
       if (result.models.length > 0) {
         updateModels(result.models)
