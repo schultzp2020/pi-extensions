@@ -29,7 +29,7 @@ import { createInterface } from 'node:readline'
 
 import { captureProxyStderr } from './proxy-stderr.ts'
 import { isDebugLoggingEnabled, logProxyStderr } from './proxy/debug-logger.ts'
-import { removeOwnedProxyPortFile } from './proxy-port-file.ts'
+import { removeOwnedProxyPortFileUnderLock, type ProxyPortIdentity } from './proxy-port-file.ts'
 import type { CursorModel } from './proxy/models.ts'
 
 const PORT_FILE = join(homedir(), '.pi', 'agent', 'cursor-proxy.json')
@@ -46,6 +46,7 @@ const TOKEN_PUSH_TIMEOUT_MS = 2_000
 const MODEL_REFRESH_TIMEOUT_MS = 10_000
 const LIFECYCLE_LOCK_RETRY_MS = 5
 const LIFECYCLE_LOCK_STALE_MS = 2_000
+const LIFECYCLE_LOCK_MAX_WAIT_MS = LIFECYCLE_LOCK_STALE_MS + 250
 const PROCESS_IDENTITY_CACHE_MS = 250
 const PROXY_LOCK_MAX_WAIT_MS =
   PROXY_STARTUP_TIMEOUT_MS +
@@ -536,8 +537,22 @@ async function withSharedLock<T>(
 
 async function withLifecycleRecordLock(lifecycleFilePath: string, update: () => void): Promise<void> {
   try {
-    await withSharedLock(`${lifecycleFilePath}.lock`, LIFECYCLE_LOCK_STALE_MS, update)
+    await withSharedLock(`${lifecycleFilePath}.lock`, LIFECYCLE_LOCK_MAX_WAIT_MS, update)
   } catch {}
+}
+
+export async function removeOwnedProxyPortFileWithLock(
+  portFilePath: string,
+  expected: ProxyPortIdentity,
+): Promise<boolean> {
+  try {
+    const result = await withSharedLock(`${portFilePath}.lock`, PROXY_LOCK_MAX_WAIT_MS, () =>
+      removeOwnedProxyPortFileUnderLock(portFilePath, expected),
+    )
+    return result.acquired ? result.value : false
+  } catch {
+    return false
+  }
 }
 
 function readLifecycleRecord(lifecycleFilePath: string): ProxyLifecycleRecord | null {
@@ -715,7 +730,7 @@ async function persistProxyExitWithCoordination(
 ): Promise<void> {
   await withSharedLock(`${portFilePath}.lock`, PROXY_LOCK_MAX_WAIT_MS, async () => {
     await persistProxyExit(record, portFilePath, lifecycleFilePath)
-    removeOwnedProxyPortFile(portFilePath, proxy)
+    removeOwnedProxyPortFileUnderLock(portFilePath, proxy)
   })
 }
 
@@ -827,7 +842,7 @@ async function finalizeProxyConnection<T extends ProxyInfo & { models: CursorMod
     ) {
       stopHeartbeat()
     }
-    removeOwnedProxyPortFile(portFilePath, connection)
+    removeOwnedProxyPortFileUnderLock(portFilePath, connection)
     throw new Error(`Proxy ${String(connection.pid)} exited before connection completed`)
   }
   return connection
@@ -868,7 +883,7 @@ export async function connectToProxy(
         await persistObservedProxyExit(existing, portFilePath, lifecycleFilePath)
       }
       if (existing) {
-        removeOwnedProxyPortFile(portFilePath, existing)
+        removeOwnedProxyPortFileUnderLock(portFilePath, existing)
       } else if (parsedPortFile.exists) {
         try {
           unlinkSync(portFilePath)

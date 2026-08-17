@@ -5,7 +5,7 @@ import { loadConfig } from 'rolldown/config'
 import { describe, expect, it } from 'vitest'
 
 describe('published extension bundle', () => {
-  it('bundles the Pi API helpers required at runtime', async () => {
+  it('bundles legacy lazy streaming while preserving host adapter dispatch', async () => {
     const configPath = fileURLToPath(new URL('../rolldown.config.ts', import.meta.url))
     const loadedConfig = await loadConfig(configPath)
     if (typeof loadedConfig === 'function' || Array.isArray(loadedConfig)) {
@@ -19,11 +19,14 @@ describe('published extension bundle', () => {
     const result = await build({ ...loadedConfig, output, write: false })
     const chunks = result.output.filter((output): output is OutputChunk => output.type === 'chunk')
     const imports = chunks.flatMap((chunk) => chunk.imports)
+    const dynamicImports = chunks.flatMap((chunk) => chunk.dynamicImports)
     const moduleIds = chunks.flatMap((chunk) => chunk.moduleIds.map((id) => id.replaceAll('\\', '/')))
 
     expect(imports).not.toContain('@earendil-works/pi-ai/api/lazy')
     expect(imports).not.toContain('@earendil-works/pi-ai/api/openai-completions')
+    expect(imports).toContain('@earendil-works/pi-ai')
+    expect(dynamicImports).toContain('@earendil-works/pi-ai/compat')
     expect(moduleIds.some((id) => id.endsWith('/dist/api/lazy.js'))).toBe(true)
-    expect(moduleIds.some((id) => id.endsWith('/dist/api/openai-completions.js'))).toBe(true)
+    expect(moduleIds.some((id) => id.endsWith('/dist/api/openai-completions.js'))).toBe(false)
   })
 })

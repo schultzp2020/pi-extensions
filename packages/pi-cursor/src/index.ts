@@ -2,9 +2,9 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
+import * as piAi from '@earendil-works/pi-ai'
 import type { OAuthCredentials, OAuthLoginCallbacks } from '@earendil-works/pi-ai'
 import { lazyStream } from '@earendil-works/pi-ai/api/lazy'
-import { streamSimple as streamOpenAICompletions } from '@earendil-works/pi-ai/api/openai-completions'
 import type { ExtensionAPI, ProviderModelConfig } from '@earendil-works/pi-coding-agent'
 
 import { generateCursorAuthParams, getTokenExpiry, pollCursorAuth, refreshCursorToken } from './auth.ts'
@@ -36,6 +36,22 @@ const CURSOR_API = 'cursor-openai-completions'
 const PROXY_API_KEY = 'cursor-proxy'
 const AGENT_DIR = join(homedir(), '.pi', 'agent')
 const MODEL_CACHE_PATH = join(AGENT_DIR, 'cursor-model-cache.json')
+type HostStreamSimple = typeof import('@earendil-works/pi-ai/api/openai-completions').streamSimple
+let hostStreamSimple: HostStreamSimple | null = null
+
+async function resolveHostStreamSimple(): Promise<HostStreamSimple> {
+  if (hostStreamSimple) {
+    return hostStreamSimple
+  }
+  const legacyStreamSimple = (piAi as typeof piAi & { streamSimple?: HostStreamSimple }).streamSimple
+  if (legacyStreamSimple) {
+    hostStreamSimple = legacyStreamSimple
+    return hostStreamSimple
+  }
+  const compat = await import('@earendil-works/pi-ai/compat')
+  hostStreamSimple = compat.streamSimple as HostStreamSimple
+  return hostStreamSimple
+}
 
 function supportsLegacyXhigh(modelId: string): boolean {
   return (
@@ -179,7 +195,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
   }
 
   let registeredPort: number | null = null
-  let reconnectPromise: Promise<boolean> | null = null
+  let reconnectPromise: Promise<number | null> | null = null
 
   function updateModels(newModels: CursorModel[]): void {
     models = newModels
@@ -205,7 +221,9 @@ export default async function (pi: ExtensionAPI): Promise<void> {
       if (currentAccessToken) {
         await pushToken(port, currentAccessToken)
       }
-      return true
+      if (currentPort === port) {
+        return true
+      }
     }
     if (port) {
       clearCurrentProxy(port)
@@ -225,18 +243,21 @@ export default async function (pi: ExtensionAPI): Promise<void> {
           if (currentPort !== registeredPort) {
             register()
           }
-          return true
+          return currentPort === result.port ? result.port : null
         } catch {
-          return false
+          return null
         }
       })())
 
     try {
-      const connected = await reconnect
-      if (connected && currentPort && currentAccessToken) {
-        await pushToken(currentPort, currentAccessToken)
+      const connectedPort = await reconnect
+      if (connectedPort === null || currentPort !== connectedPort) {
+        return false
       }
-      return connected
+      if (currentAccessToken) {
+        await pushToken(connectedPort, currentAccessToken)
+      }
+      return currentPort === connectedPort
     } finally {
       if (reconnectPromise === reconnect) {
         reconnectPromise = null
@@ -263,6 +284,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
         const requestAccessToken =
           options?.apiKey && options.apiKey !== PROXY_API_KEY ? options.apiKey : currentAccessToken
         return lazyStream(model, async () => {
+          const streamHostSimple = await resolveHostStreamSimple()
           if (!(await ensureProxyForRequest(requestAccessToken)) || !currentPort) {
             throw new Error('Cursor proxy is unavailable after one reconnect attempt')
           }
@@ -271,7 +293,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
             model.thinkingLevelMap ??
             configuredModel?.thinkingLevelMap ??
             (supportsLegacyXhigh(model.id) ? { xhigh: 'xhigh' as const } : undefined)
-          return streamOpenAICompletions(
+          return streamHostSimple(
             {
               ...model,
               api: 'openai-completions',

@@ -14,7 +14,7 @@ import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createInterface } from 'node:readline'
 
-import { removeOwnedProxyPortFile } from '../proxy-port-file.ts'
+import { removeOwnedProxyPortFileWithLock } from '../proxy-lifecycle.ts'
 import { resolveEffective } from './config.ts'
 import { flushDebugLogger, initDebugLogger } from './debug-logger.ts'
 import { errorResponse, jsonResponse } from './http-helpers.ts'
@@ -112,14 +112,17 @@ async function main(): Promise<void> {
     shuttingDown = true
     console.error('[proxy] Shutdown requested')
     closeAll()
-    if (listeningPort !== null) {
-      removeOwnedProxyPortFile(portFilePath, {
-        port: listeningPort,
-        pid: process.pid,
-        generation: config.generation,
-      })
-    }
-    requestShutdown()
+    const port = listeningPort
+    void (async () => {
+      if (port !== null) {
+        await removeOwnedProxyPortFileWithLock(portFilePath, {
+          port,
+          pid: process.pid,
+          generation: config.generation,
+        })
+      }
+      requestShutdown()
+    })()
   }
 
   // 2. Discover models

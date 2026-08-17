@@ -1,5 +1,4 @@
-import { randomUUID } from 'node:crypto'
-import { linkSync, readFileSync, renameSync, unlinkSync } from 'node:fs'
+import { readFileSync, unlinkSync } from 'node:fs'
 
 export interface ProxyPortIdentity {
   port: number
@@ -39,34 +38,14 @@ function matchesProxyPortIdentity(current: ProxyPortIdentity | null, expected: P
   return !current.generation || !expected.generation || current.generation === expected.generation
 }
 
-export function removeOwnedProxyPortFile(path: string, expected: ProxyPortIdentity): boolean {
-  const claimedPath = `${path}.${String(process.pid)}.${randomUUID()}.remove`
-  try {
-    renameSync(path, claimedPath)
-  } catch {
+export function removeOwnedProxyPortFileUnderLock(path: string, expected: ProxyPortIdentity): boolean {
+  if (!matchesProxyPortIdentity(readProxyPortIdentity(path), expected)) {
     return false
   }
-
-  let discardClaim = false
   try {
-    if (matchesProxyPortIdentity(readProxyPortIdentity(claimedPath), expected)) {
-      discardClaim = true
-      return true
-    }
-    try {
-      linkSync(claimedPath, path)
-      discardClaim = true
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
-        discardClaim = true
-      }
-    }
+    unlinkSync(path)
+    return true
+  } catch {
     return false
-  } finally {
-    if (discardClaim) {
-      try {
-        unlinkSync(claimedPath)
-      } catch {}
-    }
   }
 }

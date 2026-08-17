@@ -1,4 +1,4 @@
-import { clampThinkingLevel, type Model } from '@earendil-works/pi-ai'
+import { clampThinkingLevel, type Context, type Model, type SimpleStreamOptions } from '@earendil-works/pi-ai'
 import type { ExtensionAPI, ProviderConfig } from '@earendil-works/pi-coding-agent'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -11,15 +11,18 @@ const lifecycle = vi.hoisted(() => ({
 }))
 
 const delegatedStream = vi.hoisted(() =>
-  vi.fn<(model: Model<'openai-completions'>) => AsyncIterable<never>>(() => ({
-    async *[Symbol.asyncIterator]() {
-      // The recovery assertions only require delegation to begin.
-    },
-  })),
+  vi.fn<(model: Model<'openai-completions'>, context: Context, options?: SimpleStreamOptions) => AsyncIterable<never>>(
+    () => ({
+      async *[Symbol.asyncIterator]() {},
+    }),
+  ),
 )
 
 vi.mock('node:os', () => ({ homedir: () => '/nonexistent/pi-cursor-runtime-recovery-test' }))
-vi.mock('@earendil-works/pi-ai/api/openai-completions', () => ({ streamSimple: delegatedStream }))
+vi.mock('@earendil-works/pi-ai', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@earendil-works/pi-ai')>()),
+  streamSimple: delegatedStream,
+}))
 vi.mock('./proxy-lifecycle.ts', () => ({
   connectToProxy: lifecycle.connectToProxy,
   getActivePort: () => null,
@@ -136,6 +139,47 @@ describe('request-time proxy recovery', () => {
     expect(registrations.at(-1)?.baseUrl).toBe('http://localhost:4300/v1')
   })
 
+  it('reconnects the same request when the healthy child exits during its token push', async () => {
+    const registrations: ProviderConfig[] = []
+    const pi = {
+      on: vi.fn<(event: string, handler: (...args: unknown[]) => unknown) => void>(),
+      registerCommand: vi.fn<(name: string, command: unknown) => void>(),
+      registerProvider: vi.fn<(name: string, config: ProviderConfig) => void>((_name, config) => {
+        registrations.push(config)
+      }),
+    }
+    await cursorExtension(pi as unknown as ExtensionAPI)
+
+    lifecycle.connectToProxy.mockResolvedValueOnce({ port: 4200, pid: 42, models: [] })
+    lifecycle.pushToken.mockImplementationOnce(async (port) => {
+      if (port === 4100) {
+        lifecycle.exitListener?.({ port: 4100, childPid: 41 })
+      }
+    })
+    const model: Model<'cursor-openai-completions'> = {
+      id: 'cursor-test',
+      name: 'Cursor Test',
+      provider: 'cursor',
+      api: 'cursor-openai-completions',
+      baseUrl: 'http://localhost:4100/v1',
+      reasoning: false,
+      input: ['text'],
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: 1000,
+      maxTokens: 100,
+    }
+    registrations
+      .at(-1)
+      ?.streamSimple?.(model, { systemPrompt: '', messages: [], tools: [] }, { apiKey: 'fresh-access' })
+
+    await vi.waitFor(() => expect(delegatedStream).toHaveBeenCalledOnce())
+    expect(lifecycle.connectToProxy).toHaveBeenCalledTimes(2)
+    expect(registrations.at(-1)?.baseUrl).toBe('http://localhost:4200/v1')
+    expect(delegatedStream.mock.calls[0]?.[0]).toMatchObject({
+      baseUrl: 'http://localhost:4200/v1',
+    })
+  })
+
   it('waits for a request before reconnecting after exit-driven OAuth projection', async () => {
     const registrations: ProviderConfig[] = []
     const pi = {
@@ -216,13 +260,9 @@ describe('request-time proxy recovery', () => {
       contextWindow: 200_000,
       maxTokens: 64_000,
     }
-    registrations
-      .at(-1)
-      ?.streamSimple?.(
-        model,
-        { systemPrompt: '', messages: [], tools: [] },
-        { apiKey: 'cursor-proxy', reasoning: 'xhigh' },
-      )
+    const context = { systemPrompt: '', messages: [], tools: [] }
+    const options = { apiKey: 'cursor-proxy', reasoning: 'xhigh' as const }
+    registrations.at(-1)?.streamSimple?.(model, context, options)
 
     await vi.waitFor(() => expect(delegatedStream).toHaveBeenCalledOnce())
     const delegatedModel = delegatedStream.mock.calls[0]?.[0]
@@ -231,5 +271,7 @@ describe('request-time proxy recovery', () => {
       thinkingLevelMap: { xhigh: 'xhigh' },
     })
     expect(delegatedModel && clampThinkingLevel(delegatedModel, 'xhigh')).toBe('xhigh')
+    expect(delegatedStream.mock.calls[0]?.[1]).toBe(context)
+    expect(delegatedStream.mock.calls[0]?.[2]).toBe(options)
   })
 })

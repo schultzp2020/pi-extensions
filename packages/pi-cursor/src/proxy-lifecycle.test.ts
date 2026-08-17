@@ -67,9 +67,15 @@ vi.mock('./proxy/debug-logger.ts', async (importOriginal) => {
   }
 })
 
-import { connectToProxy, getActivePort, onProxyExit, pushToken, stopHeartbeat } from './proxy-lifecycle.ts'
+import {
+  connectToProxy,
+  getActivePort,
+  onProxyExit,
+  pushToken,
+  removeOwnedProxyPortFileWithLock,
+  stopHeartbeat,
+} from './proxy-lifecycle.ts'
 import { logProxyStderr } from './proxy/debug-logger.ts'
-import { removeOwnedProxyPortFile } from './proxy-port-file.ts'
 
 const HEARTBEAT_INTERVAL_MS = 10_000
 const PROXY_STARTUP_TIMEOUT_MS = 15_000
@@ -1455,7 +1461,6 @@ describe('post-ready child exit recovery', () => {
       })
       childPid = connection.pid
       writeFileSync(lockFilePath, '')
-      utimesSync(lockFilePath, new Date(0), new Date(0))
 
       process.kill(childPid, 'SIGKILL')
       await waitFor(() => {
@@ -1465,7 +1470,7 @@ describe('post-ready child exit recovery', () => {
         } catch {
           return false
         }
-      })
+      }, 4_000)
 
       const recordText = readFileSync(lifecycleFilePath, 'utf8')
       const record = JSON.parse(recordText) as Record<string, unknown>
@@ -1502,7 +1507,7 @@ describe('post-ready child exit recovery', () => {
 })
 
 describe('proxy port ownership', () => {
-  it('keeps a replacement discovery record when an older proxy shuts down', () => {
+  it('keeps a replacement discovery record when an older proxy shuts down', async () => {
     const tempDir = mkdtempSync(join(tmpdir(), 'pi-cursor-port-ownership-'))
     const portFilePath = join(tempDir, 'cursor-proxy.json')
     const predecessor = { port: 4200, pid: 42, generation: '2026-01-01T00:00:00.000Z' }
@@ -1511,9 +1516,9 @@ describe('proxy port ownership', () => {
     try {
       writeFileSync(portFilePath, JSON.stringify(replacement))
 
-      expect(removeOwnedProxyPortFile(portFilePath, predecessor)).toBeFalsy()
+      expect(await removeOwnedProxyPortFileWithLock(portFilePath, predecessor)).toBeFalsy()
       expect(JSON.parse(readFileSync(portFilePath, 'utf8'))).toEqual(replacement)
-      expect(removeOwnedProxyPortFile(portFilePath, replacement)).toBeTruthy()
+      expect(await removeOwnedProxyPortFileWithLock(portFilePath, replacement)).toBeTruthy()
       expect(existsSync(portFilePath)).toBeFalsy()
     } finally {
       rmSync(tempDir, { recursive: true, force: true })
