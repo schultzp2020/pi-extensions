@@ -10,7 +10,19 @@
  * grace rules live in proxy/internal-api.ts).
  */
 import { spawn } from 'node:child_process'
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
+import { randomUUID } from 'node:crypto'
+import {
+  closeSync,
+  existsSync,
+  fstatSync,
+  lstatSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  renameSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs'
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { createInterface } from 'node:readline'
@@ -32,7 +44,8 @@ const HEARTBEAT_TIMEOUT_MS = 2_000
 const TOKEN_PUSH_TIMEOUT_MS = 2_000
 const MODEL_REFRESH_TIMEOUT_MS = 10_000
 const LIFECYCLE_LOCK_RETRY_MS = 5
-const LIFECYCLE_LOCK_MAX_ATTEMPTS = 20
+const LIFECYCLE_LOCK_STALE_MS = 2_000
+const LIFECYCLE_LOCK_MAX_ATTEMPTS = Math.ceil(LIFECYCLE_LOCK_STALE_MS / LIFECYCLE_LOCK_RETRY_MS) + 10
 
 interface ProxyInfo {
   port: number
@@ -60,6 +73,27 @@ interface ProxyLifecycleRecord {
   exitCode: number | null
   exitSignal: NodeJS.Signals | null
   restartOutcome: 'not-attempted' | 'succeeded' | 'failed'
+}
+
+interface LifecycleLockOwner {
+  ownerPid: number
+  ownerId: string
+  acquiredAt: number
+}
+
+interface LifecycleLockSnapshot {
+  device: number
+  inode: number
+  modifiedAt: number
+  size: number
+  owner: LifecycleLockOwner | null
+}
+
+interface AcquiredLifecycleLock {
+  handle: number
+  device: number
+  inode: number
+  owner: LifecycleLockOwner
 }
 
 export interface ProxyConnectOptions {
@@ -122,12 +156,147 @@ export async function isProxyHealthy(port: number): Promise<boolean> {
 }
 
 function persistLifecycleRecord(record: ProxyLifecycleRecord, lifecycleFilePath: string): void {
+  const temporaryPath = `${lifecycleFilePath}.${String(process.pid)}.${randomUUID()}.tmp`
   try {
     mkdirSync(resolve(lifecycleFilePath, '..'), { recursive: true })
-    writeFileSync(lifecycleFilePath, JSON.stringify(record))
+    writeFileSync(temporaryPath, JSON.stringify(record), { flag: 'wx' })
+    renameSync(temporaryPath, lifecycleFilePath)
   } catch {
     // Diagnostics must never interfere with recovery.
+  } finally {
+    try {
+      unlinkSync(temporaryPath)
+    } catch {}
   }
+}
+
+function readLifecycleLockSnapshot(lockPath: string): LifecycleLockSnapshot | null {
+  try {
+    const stats = lstatSync(lockPath)
+    let owner: LifecycleLockOwner | null = null
+    if (stats.isFile()) {
+      try {
+        const value: unknown = JSON.parse(readFileSync(lockPath, 'utf8'))
+        if (typeof value === 'object' && value !== null) {
+          const record = value as Record<string, unknown>
+          const { ownerPid, ownerId, acquiredAt } = record
+          if (
+            typeof ownerPid === 'number' &&
+            Number.isSafeInteger(ownerPid) &&
+            ownerPid > 0 &&
+            typeof ownerId === 'string' &&
+            ownerId.length > 0 &&
+            typeof acquiredAt === 'number' &&
+            Number.isFinite(acquiredAt) &&
+            acquiredAt > 0
+          ) {
+            owner = { ownerPid, ownerId, acquiredAt }
+          }
+        }
+      } catch {}
+    }
+    return {
+      device: stats.dev,
+      inode: stats.ino,
+      modifiedAt: stats.mtimeMs,
+      size: stats.size,
+      owner,
+    }
+  } catch {
+    return null
+  }
+}
+
+function hasSameLifecycleLockSnapshot(left: LifecycleLockSnapshot, right: LifecycleLockSnapshot): boolean {
+  return (
+    left.device === right.device &&
+    left.inode === right.inode &&
+    left.modifiedAt === right.modifiedAt &&
+    left.size === right.size &&
+    left.owner?.ownerPid === right.owner?.ownerPid &&
+    left.owner?.ownerId === right.owner?.ownerId &&
+    left.owner?.acquiredAt === right.owner?.acquiredAt
+  )
+}
+
+function isLifecycleLockStale(snapshot: LifecycleLockSnapshot): boolean {
+  if (snapshot.owner && !isProcessAlive(snapshot.owner.ownerPid)) {
+    return true
+  }
+  const lastActivity = Math.min(snapshot.modifiedAt, snapshot.owner?.acquiredAt ?? snapshot.modifiedAt)
+  const now = Date.now()
+  return lastActivity > now + LIFECYCLE_LOCK_STALE_MS || now - lastActivity >= LIFECYCLE_LOCK_STALE_MS
+}
+
+function removeStaleLifecycleLock(lockPath: string): void {
+  const observed = readLifecycleLockSnapshot(lockPath)
+  if (!observed || !isLifecycleLockStale(observed)) {
+    return
+  }
+  const current = readLifecycleLockSnapshot(lockPath)
+  if (!current || !hasSameLifecycleLockSnapshot(observed, current)) {
+    return
+  }
+  try {
+    unlinkSync(lockPath)
+  } catch {}
+}
+
+function acquireLifecycleLock(lockPath: string): AcquiredLifecycleLock | null {
+  const owner: LifecycleLockOwner = {
+    ownerPid: process.pid,
+    ownerId: randomUUID(),
+    acquiredAt: Date.now(),
+  }
+  let handle: number | null = null
+  let device: number | null = null
+  let inode: number | null = null
+  try {
+    handle = openSync(lockPath, 'wx', 0o600)
+    const stats = fstatSync(handle)
+    device = stats.dev
+    inode = stats.ino
+    writeFileSync(handle, JSON.stringify(owner))
+    return { handle, device, inode, owner }
+  } catch (error) {
+    if (handle !== null) {
+      try {
+        closeSync(handle)
+      } catch {}
+      const snapshot = readLifecycleLockSnapshot(lockPath)
+      if (snapshot && snapshot.device === device && snapshot.inode === inode) {
+        try {
+          unlinkSync(lockPath)
+        } catch {}
+      }
+    } else if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
+      removeStaleLifecycleLock(lockPath)
+    }
+    return null
+  }
+}
+
+function ownsLifecycleLock(lockPath: string, lock: AcquiredLifecycleLock): boolean {
+  const snapshot = readLifecycleLockSnapshot(lockPath)
+  return (
+    snapshot?.device === lock.device &&
+    snapshot.inode === lock.inode &&
+    snapshot.owner?.ownerPid === lock.owner.ownerPid &&
+    snapshot.owner.ownerId === lock.owner.ownerId &&
+    snapshot.owner.acquiredAt === lock.owner.acquiredAt
+  )
+}
+
+function releaseLifecycleLock(lockPath: string, lock: AcquiredLifecycleLock): void {
+  try {
+    closeSync(lock.handle)
+  } catch {}
+  if (!ownsLifecycleLock(lockPath, lock)) {
+    return
+  }
+  try {
+    unlinkSync(lockPath)
+  } catch {}
 }
 
 async function withLifecycleRecordLock(lifecycleFilePath: string, update: () => void): Promise<void> {
@@ -139,10 +308,8 @@ async function withLifecycleRecordLock(lifecycleFilePath: string, update: () => 
   }
 
   for (let attempt = 0; attempt < LIFECYCLE_LOCK_MAX_ATTEMPTS; attempt += 1) {
-    let lockHandle: number
-    try {
-      lockHandle = openSync(lockPath, 'wx')
-    } catch {
+    const lock = acquireLifecycleLock(lockPath)
+    if (!lock) {
       if (attempt + 1 < LIFECYCLE_LOCK_MAX_ATTEMPTS) {
         await new Promise<void>((resolveWait) => {
           setTimeout(resolveWait, LIFECYCLE_LOCK_RETRY_MS)
@@ -151,18 +318,21 @@ async function withLifecycleRecordLock(lifecycleFilePath: string, update: () => 
       continue
     }
 
+    let retry = false
     try {
-      update()
+      if (!ownsLifecycleLock(lockPath, lock)) {
+        retry = true
+      } else {
+        update()
+        retry = !ownsLifecycleLock(lockPath, lock)
+      }
     } catch {
     } finally {
-      try {
-        closeSync(lockHandle)
-      } catch {}
-      try {
-        unlinkSync(lockPath)
-      } catch {}
+      releaseLifecycleLock(lockPath, lock)
     }
-    return
+    if (!retry) {
+      return
+    }
   }
 }
 
@@ -206,6 +376,34 @@ function hasSameLifecycleIdentity(left: ProxyLifecycleRecord, right: ProxyLifecy
   )
 }
 
+function mergeRestartOutcome(
+  left: ProxyLifecycleRecord['restartOutcome'],
+  right: ProxyLifecycleRecord['restartOutcome'],
+): ProxyLifecycleRecord['restartOutcome'] {
+  if (left === 'succeeded' || right === 'succeeded') {
+    return 'succeeded'
+  }
+  if (left === 'failed' || right === 'failed') {
+    return 'failed'
+  }
+  return 'not-attempted'
+}
+
+function isLifecycleRecordLater(left: ProxyLifecycleRecord, right: ProxyLifecycleRecord): boolean {
+  if (left.timestamp !== right.timestamp) {
+    return left.timestamp > right.timestamp
+  }
+  if (left.childPid !== right.childPid) {
+    return left.childPid > right.childPid
+  }
+  const leftExitCode = left.exitCode ?? Number.MIN_SAFE_INTEGER
+  const rightExitCode = right.exitCode ?? Number.MIN_SAFE_INTEGER
+  if (leftExitCode !== rightExitCode) {
+    return leftExitCode > rightExitCode
+  }
+  return (left.exitSignal ?? '') > (right.exitSignal ?? '')
+}
+
 async function completePendingRestart(
   restartOutcome: 'succeeded' | 'failed',
   lifecycleFilePath: string,
@@ -219,8 +417,7 @@ async function completePendingRestart(
     if (!persistedRecord || !hasSameLifecycleIdentity(expectedRecord, persistedRecord)) {
       return
     }
-    const nextOutcome =
-      persistedRecord.restartOutcome === 'succeeded' || restartOutcome === 'succeeded' ? 'succeeded' : 'failed'
+    const nextOutcome = mergeRestartOutcome(persistedRecord.restartOutcome, restartOutcome)
     if (persistedRecord.restartOutcome !== nextOutcome) {
       persistLifecycleRecord({ ...persistedRecord, restartOutcome: nextOutcome }, lifecycleFilePath)
     }
@@ -244,12 +441,21 @@ async function persistProxyExit(
   lifecycleFilePath: string,
 ): Promise<void> {
   await withLifecycleRecordLock(lifecycleFilePath, () => {
-    persistLifecycleRecord(record, lifecycleFilePath)
-    const replacement = readPortFile(portFilePath)
-    if (replacement && replacement.pid !== record.childPid) {
-      record.restartOutcome = 'succeeded'
-      persistLifecycleRecord(record, lifecycleFilePath)
+    const persistedRecord = readLifecycleRecord(lifecycleFilePath)
+    if (
+      persistedRecord &&
+      !hasSameLifecycleIdentity(record, persistedRecord) &&
+      isLifecycleRecordLater(persistedRecord, record)
+    ) {
+      return
     }
+    const replacement = readPortFile(portFilePath)
+    const observedOutcome = replacement && replacement.pid !== record.childPid ? 'succeeded' : record.restartOutcome
+    const restartOutcome =
+      persistedRecord && hasSameLifecycleIdentity(record, persistedRecord)
+        ? mergeRestartOutcome(persistedRecord.restartOutcome, observedOutcome)
+        : observedOutcome
+    persistLifecycleRecord({ ...record, restartOutcome }, lifecycleFilePath)
   })
 }
 

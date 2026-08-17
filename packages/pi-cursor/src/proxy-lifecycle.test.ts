@@ -2,7 +2,7 @@ import type * as ChildProcessModule from 'node:child_process'
 import type { ChildProcess, SpawnOptions } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import type * as FsModule from 'node:fs'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { PassThrough } from 'node:stream'
@@ -1035,6 +1035,67 @@ describe('post-ready child exit recovery', () => {
           }
         }),
       )
+      rmSync(tempDir, { recursive: true, force: true })
+    }
+  })
+
+  it('reclaims an orphaned lifecycle lock before persisting a later exit', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'pi-cursor-lifecycle-stale-lock-'))
+    const portFilePath = join(tempDir, 'cursor-proxy.json')
+    const lifecycleFilePath = join(tempDir, 'cursor-proxy-lifecycle.json')
+    const lockFilePath = `${lifecycleFilePath}.lock`
+    const proxyEntry = fileURLToPath(new URL('./test-fixtures/ready-proxy.mjs', import.meta.url))
+    let childPid: number | undefined
+
+    try {
+      const connection = await connectToProxy('test-session', 'test-secret', {
+        portFilePath,
+        lifecycleFilePath,
+        proxyEntry,
+      })
+      childPid = connection.pid
+      writeFileSync(lockFilePath, '')
+      utimesSync(lockFilePath, new Date(0), new Date(0))
+
+      process.kill(childPid, 'SIGKILL')
+      await waitFor(() => {
+        try {
+          const record = JSON.parse(readFileSync(lifecycleFilePath, 'utf8')) as Record<string, unknown>
+          return record.childPid === childPid && record.restartOutcome === 'not-attempted'
+        } catch {
+          return false
+        }
+      })
+
+      const recordText = readFileSync(lifecycleFilePath, 'utf8')
+      const record = JSON.parse(recordText) as Record<string, unknown>
+      expect(Object.keys(record).sort()).toEqual(
+        ['timestamp', 'childPid', 'exitCode', 'exitSignal', 'restartOutcome'].sort(),
+      )
+      expect(record).toMatchObject({
+        childPid,
+        exitCode: null,
+        exitSignal: 'SIGKILL',
+        restartOutcome: 'not-attempted',
+      })
+      expect(recordText).not.toContain('test-secret')
+      expect(existsSync(lockFilePath)).toBeFalsy()
+    } finally {
+      stopHeartbeat()
+      if (childPid !== undefined) {
+        const pid = childPid
+        try {
+          process.kill(pid, 'SIGKILL')
+        } catch {}
+        await waitFor(() => {
+          try {
+            process.kill(pid, 0)
+            return false
+          } catch {
+            return true
+          }
+        })
+      }
       rmSync(tempDir, { recursive: true, force: true })
     }
   })
