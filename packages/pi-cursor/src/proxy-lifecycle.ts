@@ -270,7 +270,7 @@ function mergeRestartOutcome(
 
 function isLifecycleRecordLater(left: ProxyLifecycleRecord, right: ProxyLifecycleRecord): boolean {
   if (left.timestamp !== right.timestamp) {
-    return left.timestamp > right.timestamp
+    return Date.parse(left.timestamp) > Date.parse(right.timestamp)
   }
   if (left.childPid !== right.childPid) {
     return left.childPid > right.childPid
@@ -347,32 +347,55 @@ function allocateProxyGeneration(lifecycleFilePath: string, previousProxy: Proxy
   return new Date(generationMs).toISOString()
 }
 
-function hasSameProxyGeneration(info: ProxyInfo, record: ProxyLifecycleRecord): boolean {
-  return info.pid === record.childPid && info.generation === record.timestamp
+function hasSameProxyGeneration(left: ProxyInfo, right: ProxyInfo): boolean {
+  return left.pid === right.pid && left.generation === right.generation
+}
+
+function hasExitDetail(record: ProxyLifecycleRecord): boolean {
+  return record.exitCode !== null || record.exitSignal !== null
+}
+
+function isObservedLifecycleRecordForProxy(
+  persistedRecord: ProxyLifecycleRecord,
+  record: ProxyLifecycleRecord,
+  proxy: ProxyInfo,
+): boolean {
+  if (persistedRecord.childPid !== proxy.pid || hasExitDetail(persistedRecord) || !hasExitDetail(record)) {
+    return false
+  }
+  const generationMs = Date.parse(proxy.generation)
+  const observedMs = Date.parse(persistedRecord.timestamp)
+  return observedMs >= generationMs
 }
 
 async function persistProxyExit(
   record: ProxyLifecycleRecord,
+  proxy: ProxyInfo,
   portFilePath: string,
   lifecycleFilePath: string,
   authoritative = false,
 ): Promise<void> {
   await withLifecycleRecordLock(lifecycleFilePath, () => {
     const persistedRecord = readLifecycleRecord(lifecycleFilePath)
+    const sameLifecycleIdentity = Boolean(
+      persistedRecord &&
+      (hasSameLifecycleIdentity(persistedRecord, record) ||
+        isObservedLifecycleRecordForProxy(persistedRecord, record, proxy)),
+    )
     if (
       !authoritative &&
       persistedRecord &&
-      !hasSameLifecycleIdentity(persistedRecord, record) &&
+      !sameLifecycleIdentity &&
       isLifecycleRecordLater(persistedRecord, record)
     ) {
       return
     }
     const replacement = readPortFile(portFilePath)
     const observedOutcome =
-      replacement && !hasSameProxyGeneration(replacement, record) ? 'succeeded' : record.restartOutcome
-    if (persistedRecord && hasSameLifecycleIdentity(persistedRecord, record)) {
-      const persistedHasExitDetail = persistedRecord.exitCode !== null || persistedRecord.exitSignal !== null
-      const recordHasExitDetail = record.exitCode !== null || record.exitSignal !== null
+      replacement && !hasSameProxyGeneration(replacement, proxy) ? 'succeeded' : record.restartOutcome
+    if (persistedRecord && sameLifecycleIdentity) {
+      const persistedHasExitDetail = hasExitDetail(persistedRecord)
+      const recordHasExitDetail = hasExitDetail(record)
       const baseRecord =
         recordHasExitDetail && !persistedHasExitDetail
           ? record
@@ -400,13 +423,13 @@ async function persistObservedProxyExit(
   lifecycleFilePath: string,
 ): Promise<ProxyLifecycleRecord> {
   const record: ProxyLifecycleRecord = {
-    timestamp: proxy.generation,
+    timestamp: new Date().toISOString(),
     childPid: proxy.pid,
     exitCode: null,
     exitSignal: null,
     restartOutcome: 'not-attempted',
   }
-  await persistProxyExit(record, portFilePath, lifecycleFilePath, true)
+  await persistProxyExit(record, proxy, portFilePath, lifecycleFilePath, true)
   return record
 }
 
@@ -417,14 +440,14 @@ async function persistProxyExitWithCoordination(
   lifecycleFilePath: string,
 ): Promise<void> {
   await withProxyPortLock(portFilePath, async () => {
-    await persistProxyExit(record, portFilePath, lifecycleFilePath)
+    await persistProxyExit(record, proxy, portFilePath, lifecycleFilePath)
     removeOwnedProxyPortFileUnderLock(portFilePath, proxy)
   })
 }
 
 function handleProxyExit(event: ProxyExitEvent, portFilePath: string, lifecycleFilePath: string): void {
   const record: ProxyLifecycleRecord = {
-    timestamp: event.generation,
+    timestamp: new Date().toISOString(),
     childPid: event.childPid,
     exitCode: event.exitCode,
     exitSignal: event.exitSignal,

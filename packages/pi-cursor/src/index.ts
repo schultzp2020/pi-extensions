@@ -9,6 +9,7 @@ import type { ExtensionAPI, ProviderModelConfig } from '@earendil-works/pi-codin
 
 import { generateCursorAuthParams, getTokenExpiry, pollCursorAuth, refreshCursorToken } from './auth.ts'
 import { FALLBACK_MODELS } from './fallback-models.ts'
+import { CURSOR_PROXY_API_KEY } from './proxy-auth.ts'
 import {
   connectToProxy,
   getActivePort,
@@ -33,7 +34,6 @@ import { getOwnString, isRecord } from './unknown.ts'
 
 const PROVIDER_ID = 'cursor'
 const CURSOR_API = 'cursor-openai-completions'
-const PROXY_API_KEY = 'cursor-proxy'
 const AGENT_DIR = join(homedir(), '.pi', 'agent')
 const MODEL_CACHE_PATH = join(AGENT_DIR, 'cursor-model-cache.json')
 type HostStreamSimple = typeof import('@earendil-works/pi-ai/api/openai-completions').streamSimple
@@ -353,11 +353,11 @@ export default async function (pi: ExtensionAPI): Promise<void> {
     pi.registerProvider(PROVIDER_ID, {
       name: 'Cursor',
       baseUrl: currentPort ? `http://localhost:${String(currentPort)}/v1` : 'http://localhost:0/v1',
-      apiKey: PROXY_API_KEY,
+      apiKey: CURSOR_PROXY_API_KEY,
       api: CURSOR_API,
       streamSimple(model, context, options) {
         const requestAccessToken =
-          options?.apiKey && options.apiKey !== PROXY_API_KEY ? options.apiKey : currentAccessToken
+          options?.apiKey && options.apiKey !== CURSOR_PROXY_API_KEY ? options.apiKey : currentAccessToken
         return lazyStream(model, async () => {
           options?.signal?.throwIfAborted()
           const streamHostSimple = await waitForSharedRecovery(resolveHostStreamSimple(), options?.signal)
@@ -370,6 +370,10 @@ export default async function (pi: ExtensionAPI): Promise<void> {
             model.thinkingLevelMap ??
             configuredModel?.thinkingLevelMap ??
             (supportsLegacyXhigh(model.id) ? { xhigh: 'xhigh' as const } : undefined)
+          const requestOptions =
+            requestAccessToken && options?.apiKey === CURSOR_PROXY_API_KEY
+              ? { ...options, apiKey: requestAccessToken }
+              : options
           return streamHostSimple(
             {
               ...model,
@@ -378,7 +382,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
               thinkingLevelMap,
             },
             context,
-            options,
+            requestOptions,
           )
         })
       },

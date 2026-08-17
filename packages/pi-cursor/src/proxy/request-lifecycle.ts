@@ -36,6 +36,7 @@ import {
   UserMessageActionSchema,
   UserMessageSchema,
 } from '../proto/agent_pb.ts'
+import { getCursorRequestAccessToken } from '../proxy-auth.ts'
 import { asJsonValue, isRecord } from '../unknown.ts'
 import type { NativeToolsMode, CursorConfig } from './config.ts'
 import { CursorSession, type RetryHint, type SessionOptions } from './cursor-session.ts'
@@ -598,7 +599,7 @@ export async function handleChatCompletion(
   ctx: ProxyContext,
 ): Promise<void> {
   const { convConfig } = ctx
-  const accessToken = ctx.getAccessToken()
+  const accessToken = getCursorRequestAccessToken(req.headers.authorization) ?? ctx.getAccessToken()
   if (!accessToken) {
     errorResponse(res, 401, 'No access token configured')
     return

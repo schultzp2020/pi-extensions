@@ -112,6 +112,7 @@ describe('request-time proxy recovery', () => {
       signal: expect.any(AbortSignal),
     })
     expect(delegatedStream.mock.calls[2]?.[0]).toMatchObject({ baseUrl: 'http://localhost:4300/v1' })
+    expect(delegatedStream.mock.calls[2]?.[2]).toMatchObject({ apiKey: 'fresh-access' })
   })
 
   it('health-checks a cached port and makes only one reconnect attempt when no exit event was observed', async () => {

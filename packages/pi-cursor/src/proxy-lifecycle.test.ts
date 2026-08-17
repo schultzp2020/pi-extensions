@@ -1101,13 +1101,14 @@ describe('post-ready child exit recovery', () => {
       expect(healthChecks).toBe(2)
       expect(getActivePort()).toBeNull()
       expect(existsSync(portFilePath)).toBeFalsy()
-      expect(JSON.parse(readFileSync(lifecycleFilePath, 'utf8'))).toEqual({
-        timestamp: generation,
+      const record = JSON.parse(readFileSync(lifecycleFilePath, 'utf8')) as Record<string, unknown>
+      expect(record).toMatchObject({
         childPid: process.pid,
         exitCode: null,
         exitSignal: null,
         restartOutcome: 'failed',
       })
+      expect(Date.parse(String(record.timestamp))).toBeGreaterThanOrEqual(Date.parse(generation))
     } finally {
       stopHeartbeat()
       rmSync(tempDir, { recursive: true, force: true })
@@ -1136,13 +1137,14 @@ describe('post-ready child exit recovery', () => {
         connectToProxy('test-session', null, { portFilePath, lifecycleFilePath, proxyEntry }),
       ).rejects.toThrow('No access token and no existing proxy')
       expect(getActivePort()).toBeNull()
-      expect(JSON.parse(readFileSync(lifecycleFilePath, 'utf8'))).toMatchObject({
-        timestamp: connection.generation,
+      const observedRecord = JSON.parse(readFileSync(lifecycleFilePath, 'utf8')) as Record<string, unknown>
+      expect(observedRecord).toMatchObject({
         childPid: connection.pid,
         exitCode: null,
         exitSignal: null,
         restartOutcome: 'failed',
       })
+      expect(Date.parse(String(observedRecord.timestamp))).toBeGreaterThanOrEqual(Date.parse(connection.generation))
 
       process.kill(connection.pid, 'SIGKILL')
       await waitFor(() => {
@@ -1153,13 +1155,16 @@ describe('post-ready child exit recovery', () => {
           return false
         }
       })
-      expect(JSON.parse(readFileSync(lifecycleFilePath, 'utf8'))).toMatchObject({
-        timestamp: connection.generation,
+      const exitRecord = JSON.parse(readFileSync(lifecycleFilePath, 'utf8')) as Record<string, unknown>
+      expect(exitRecord).toMatchObject({
         childPid: connection.pid,
         exitCode: null,
         exitSignal: 'SIGKILL',
         restartOutcome: 'failed',
       })
+      expect(Date.parse(String(exitRecord.timestamp))).toBeGreaterThanOrEqual(
+        Date.parse(String(observedRecord.timestamp)),
+      )
     } finally {
       stopHeartbeat()
       if (childPid !== undefined) {
@@ -1251,11 +1256,12 @@ describe('post-ready child exit recovery', () => {
         connectToProxy('test-session', null, { portFilePath, lifecycleFilePath, proxyEntry }),
       ).rejects.toThrow('No access token and no existing proxy')
 
-      expect(JSON.parse(readFileSync(lifecycleFilePath, 'utf8'))).toMatchObject({
-        timestamp: currentGeneration,
+      const record = JSON.parse(readFileSync(lifecycleFilePath, 'utf8')) as Record<string, unknown>
+      expect(record).toMatchObject({
         childPid,
         restartOutcome: 'failed',
       })
+      expect(Date.parse(String(record.timestamp))).toBeGreaterThan(Date.parse(currentGeneration))
     } finally {
       try {
         staleChild.kill('SIGKILL')
@@ -1286,11 +1292,14 @@ describe('post-ready child exit recovery', () => {
       await waitFor(() => {
         try {
           const record = JSON.parse(readFileSync(lifecycleFilePath, 'utf8')) as Record<string, unknown>
-          return record.timestamp === first.generation
+          return record.childPid === first.pid && record.exitSignal === 'SIGKILL'
         } catch {
           return false
         }
       })
+      const firstExitTimestamp = String(
+        (JSON.parse(readFileSync(lifecycleFilePath, 'utf8')) as Record<string, unknown>).timestamp,
+      )
 
       vi.useFakeTimers({ toFake: ['Date'] })
       vi.setSystemTime(Date.parse(first.generation) - 60_000)
@@ -1303,6 +1312,7 @@ describe('post-ready child exit recovery', () => {
       vi.useRealTimers()
 
       expect(Date.parse(second.generation)).toBeGreaterThan(Date.parse(first.generation))
+      expect(Date.parse(second.generation)).toBeGreaterThan(Date.parse(firstExitTimestamp))
     } finally {
       vi.useRealTimers()
       stopObserving()
@@ -1515,6 +1525,77 @@ describe('post-ready child exit recovery', () => {
       stopObserving()
       stopHeartbeat()
       stopReplacementHeartbeat?.()
+      for (const pid of childPids) {
+        try {
+          process.kill(pid, 'SIGKILL')
+        } catch {}
+      }
+      await waitFor(() =>
+        childPids.every((pid) => {
+          try {
+            process.kill(pid, 0)
+            return false
+          } catch {
+            return true
+          }
+        }),
+      )
+      rmSync(tempDir, { recursive: true, force: true })
+    }
+  })
+
+  it('records the actual latest exit when an older generation outlives its replacement', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'pi-cursor-lifecycle-latest-exit-'))
+    const firstPortFilePath = join(tempDir, 'first-proxy.json')
+    const secondPortFilePath = join(tempDir, 'second-proxy.json')
+    const lifecycleFilePath = join(tempDir, 'cursor-proxy-lifecycle.json')
+    const proxyEntry = fileURLToPath(new URL('./test-fixtures/ready-proxy.mjs', import.meta.url))
+    const childPids: number[] = []
+
+    try {
+      const first = await connectToProxy('first-session', 'first-secret', {
+        portFilePath: firstPortFilePath,
+        lifecycleFilePath,
+        proxyEntry,
+      })
+      childPids.push(first.pid)
+      const second = await connectToProxy('second-session', 'second-secret', {
+        portFilePath: secondPortFilePath,
+        lifecycleFilePath,
+        proxyEntry,
+      })
+      childPids.push(second.pid)
+      expect(Date.parse(second.generation)).toBeGreaterThan(Date.parse(first.generation))
+
+      process.kill(second.pid, 'SIGKILL')
+      await waitFor(() => {
+        try {
+          const record = JSON.parse(readFileSync(lifecycleFilePath, 'utf8')) as Record<string, unknown>
+          return record.childPid === second.pid && record.exitSignal === 'SIGKILL'
+        } catch {
+          return false
+        }
+      })
+      const secondExitTimestamp = String(
+        (JSON.parse(readFileSync(lifecycleFilePath, 'utf8')) as Record<string, unknown>).timestamp,
+      )
+      await new Promise<void>((resolveWait) => {
+        setTimeout(resolveWait, 10)
+      })
+
+      process.kill(first.pid, 'SIGKILL')
+      await waitFor(() => {
+        try {
+          const record = JSON.parse(readFileSync(lifecycleFilePath, 'utf8')) as Record<string, unknown>
+          return record.childPid === first.pid && record.exitSignal === 'SIGKILL'
+        } catch {
+          return false
+        }
+      })
+      const latestRecord = JSON.parse(readFileSync(lifecycleFilePath, 'utf8')) as Record<string, unknown>
+      expect(Date.parse(String(latestRecord.timestamp))).toBeGreaterThan(Date.parse(secondExitTimestamp))
+    } finally {
+      stopHeartbeat()
       for (const pid of childPids) {
         try {
           process.kill(pid, 'SIGKILL')
