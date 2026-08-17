@@ -129,13 +129,71 @@ function persistLifecycleRecord(record: ProxyLifecycleRecord, lifecycleFilePath:
   }
 }
 
-function completePendingRestart(restartOutcome: 'succeeded' | 'failed'): void {
-  if (!pendingRestart) {
+function readLifecycleRecord(lifecycleFilePath: string): ProxyLifecycleRecord | null {
+  try {
+    const value: unknown = JSON.parse(readFileSync(lifecycleFilePath, 'utf8'))
+    if (typeof value !== 'object' || value === null) {
+      return null
+    }
+    const record = value as Record<string, unknown>
+    const { timestamp, childPid, exitCode, exitSignal, restartOutcome } = record
+    if (
+      typeof timestamp !== 'string' ||
+      typeof childPid !== 'number' ||
+      !Number.isSafeInteger(childPid) ||
+      childPid <= 0 ||
+      (exitCode !== null && (typeof exitCode !== 'number' || !Number.isSafeInteger(exitCode))) ||
+      (exitSignal !== null && typeof exitSignal !== 'string') ||
+      (restartOutcome !== 'not-attempted' && restartOutcome !== 'succeeded' && restartOutcome !== 'failed')
+    ) {
+      return null
+    }
+    return {
+      timestamp,
+      childPid,
+      exitCode,
+      exitSignal: exitSignal as NodeJS.Signals | null,
+      restartOutcome,
+    }
+  } catch {
+    return null
+  }
+}
+
+function hasSameLifecycleIdentity(left: ProxyLifecycleRecord, right: ProxyLifecycleRecord): boolean {
+  return (
+    left.timestamp === right.timestamp &&
+    left.childPid === right.childPid &&
+    left.exitCode === right.exitCode &&
+    left.exitSignal === right.exitSignal
+  )
+}
+
+function completePendingRestart(
+  restartOutcome: 'succeeded' | 'failed',
+  lifecycleFilePath: string,
+): void {
+  const localRecord =
+    pendingRestart?.lifecycleFilePath === lifecycleFilePath ? pendingRestart.record : null
+  const record = localRecord ?? readLifecycleRecord(lifecycleFilePath)
+  if (!record || record.restartOutcome !== 'not-attempted') {
     return
   }
-  pendingRestart.record.restartOutcome = restartOutcome
-  persistLifecycleRecord(pendingRestart.record, pendingRestart.lifecycleFilePath)
-  pendingRestart = null
+  const persistedRecord = readLifecycleRecord(lifecycleFilePath)
+  if (
+    !persistedRecord ||
+    persistedRecord.restartOutcome !== 'not-attempted' ||
+    !hasSameLifecycleIdentity(record, persistedRecord)
+  ) {
+    if (localRecord && pendingRestart && hasSameLifecycleIdentity(localRecord, pendingRestart.record)) {
+      pendingRestart = null
+    }
+    return
+  }
+  persistLifecycleRecord({ ...record, restartOutcome }, lifecycleFilePath)
+  if (localRecord && pendingRestart && hasSameLifecycleIdentity(localRecord, pendingRestart.record)) {
+    pendingRestart = null
+  }
 }
 
 function removeOwnedPortFile(portFilePath: string, childPid: number): void {
@@ -237,7 +295,7 @@ export async function connectToProxy(
       }
       startHeartbeat(existing.port, existing.pid, getSessionId)
       const models = await getModels(existing.port)
-      completePendingRestart('succeeded')
+      completePendingRestart('succeeded', lifecycleFilePath)
       return { port: existing.port, pid: existing.pid, models }
     }
     // 2. No existing proxy — need to spawn
@@ -249,10 +307,10 @@ export async function connectToProxy(
       lifecycleFilePath,
       proxyEntry: options.proxyEntry ?? PROXY_ENTRY,
     })
-    completePendingRestart('succeeded')
+    completePendingRestart('succeeded', lifecycleFilePath)
     return result
   } catch (error) {
-    completePendingRestart('failed')
+    completePendingRestart('failed', lifecycleFilePath)
     throw error
   }
 }

@@ -31,6 +31,7 @@ import { DEBUG_FLUSH_SHUTDOWN_TIMEOUT_MS } from './proxy/shutdown.ts'
 import { getOwnString, isRecord } from './unknown.ts'
 
 const PROVIDER_ID = 'cursor'
+const PROXY_API_KEY = 'cursor-proxy'
 const AGENT_DIR = join(homedir(), '.pi', 'agent')
 const MODEL_CACHE_PATH = join(AGENT_DIR, 'cursor-model-cache.json')
 
@@ -194,28 +195,36 @@ export default async function (pi: ExtensionAPI): Promise<void> {
       clearCurrentProxy(port)
     }
 
-    reconnectPromise ??= (async () => {
-      try {
-        // Resolve the live session ID for heartbeats and debug logging.
-        const result = await connectToProxy(() => sessionId, currentAccessToken)
-        currentPort = result.port
-        if (result.models.length > 0) {
-          updateModels(result.models)
+    const reconnect =
+      reconnectPromise ??
+      (reconnectPromise = (async () => {
+        try {
+          // Resolve the live session ID for heartbeats and debug logging.
+          const result = await connectToProxy(() => sessionId, currentAccessToken)
+          currentPort = result.port
+          if (result.models.length > 0) {
+            updateModels(result.models)
+          }
+          // Re-register after a successful respawn so future requests use its port.
+          if (currentPort !== registeredPort) {
+            register()
+          }
+          return true
+        } catch {
+          return false
         }
-        // Re-register after a successful respawn so future requests use its port.
-        if (currentPort !== registeredPort) {
-          register()
-        }
-        return true
-      } catch {
-        return false
-      }
-    })()
+      })())
 
     try {
-      return await reconnectPromise
+      const connected = await reconnect
+      if (connected && currentPort && currentAccessToken) {
+        await pushToken(currentPort, currentAccessToken)
+      }
+      return connected
     } finally {
-      reconnectPromise = null
+      if (reconnectPromise === reconnect) {
+        reconnectPromise = null
+      }
     }
   }
 
@@ -232,11 +241,13 @@ export default async function (pi: ExtensionAPI): Promise<void> {
     pi.registerProvider(PROVIDER_ID, {
       name: 'Cursor',
       baseUrl: currentPort ? `http://localhost:${String(currentPort)}/v1` : 'http://localhost:0/v1',
-      apiKey: 'cursor-proxy',
+      apiKey: PROXY_API_KEY,
       api: 'openai-completions',
       streamSimple(model, context, options) {
+        const requestAccessToken =
+          options?.apiKey && options.apiKey !== PROXY_API_KEY ? options.apiKey : currentAccessToken
         return lazyStream(model, async () => {
-          if (!(await ensureProxy(currentAccessToken)) || !currentPort) {
+          if (!(await ensureProxy(requestAccessToken)) || !currentPort) {
             throw new Error('Cursor proxy is unavailable after one reconnect attempt')
           }
           return streamOpenAICompletions(

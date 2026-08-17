@@ -21,5 +21,9 @@ export default defineConfig({
     }
     defaultHandler(level, log)
   },
-  external: [/^node:/, '@earendil-works/pi-coding-agent', /^@earendil-works\/pi-ai(?:\/|$)/],
+  external: [
+    /^node:/,
+    '@earendil-works/pi-coding-agent',
+    /^@earendil-works\/pi-ai(?:$|\/(?:compat|oauth|providers\/all)$)/,
+  ],
 })

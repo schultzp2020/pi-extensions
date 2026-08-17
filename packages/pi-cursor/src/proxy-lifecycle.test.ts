@@ -895,6 +895,7 @@ describe('post-ready child exit recovery', () => {
     const childPids: number[] = []
     const exits: number[] = []
     const stopObserving = onProxyExit((event) => exits.push(event.childPid))
+    let stopRecoveredHeartbeat: (() => void) | undefined
 
     try {
       const first = await connectToProxy('test-session', 'test-secret', {
@@ -918,14 +919,17 @@ describe('post-ready child exit recovery', () => {
       })
       expect(typeof exitRecord.timestamp).toBe('string')
 
-      const second = await connectToProxy('test-session', 'test-secret', {
+      vi.resetModules()
+      const recoveringLifecycle = await import('./proxy-lifecycle.ts')
+      stopRecoveredHeartbeat = recoveringLifecycle.stopHeartbeat
+      const second = await recoveringLifecycle.connectToProxy('test-session', 'test-secret', {
         portFilePath,
         lifecycleFilePath,
         proxyEntry,
       })
       childPids.push(second.pid)
       expect(second.pid).not.toBe(first.pid)
-      expect(getActivePort()).toBe(second.port)
+      expect(recoveringLifecycle.getActivePort()).toBe(second.port)
 
       const recoveredRecordText = readFileSync(lifecycleFilePath, 'utf8')
       const recoveredRecord = JSON.parse(recoveredRecordText) as Record<string, unknown>
@@ -934,6 +938,7 @@ describe('post-ready child exit recovery', () => {
     } finally {
       stopObserving()
       stopHeartbeat()
+      stopRecoveredHeartbeat?.()
       for (const pid of childPids) {
         try {
           process.kill(pid, 'SIGKILL')

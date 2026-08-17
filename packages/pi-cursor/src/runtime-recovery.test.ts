@@ -58,7 +58,7 @@ describe('request-time proxy recovery', () => {
     const initialProvider = registrations.at(-1)
     expect(initialProvider?.baseUrl).toBe('http://localhost:4100/v1')
     initialProvider?.oauth?.modifyModels?.([], {
-      access: 'fresh-access',
+      access: 'stale-access',
       refresh: 'refresh',
       expires: Date.now() + 60_000,
     })
@@ -80,12 +80,22 @@ describe('request-time proxy recovery', () => {
       contextWindow: 1000,
       maxTokens: 100,
     }
-    initialProvider?.streamSimple?.(model, { systemPrompt: '', messages: [], tools: [] })
+    initialProvider?.streamSimple?.(model, { systemPrompt: '', messages: [], tools: [] }, { apiKey: 'fresh-access' })
 
     await vi.waitFor(() => expect(delegatedStream).toHaveBeenCalledOnce())
     expect(lifecycle.connectToProxy).toHaveBeenLastCalledWith(expect.any(String), 'fresh-access')
     expect(registrations.at(-1)?.baseUrl).toBe('http://localhost:4200/v1')
     expect(delegatedStream.mock.calls[0]?.[0]).toMatchObject({ baseUrl: 'http://localhost:4200/v1' })
+
+    lifecycle.exitListener?.({ port: 4200, childPid: 42 })
+    lifecycle.connectToProxy.mockResolvedValueOnce({ port: 4300, pid: 43, models: [] })
+    registrations
+      .at(-1)
+      ?.streamSimple?.(model, { systemPrompt: '', messages: [], tools: [] }, { apiKey: 'cursor-proxy' })
+
+    await vi.waitFor(() => expect(delegatedStream).toHaveBeenCalledTimes(2))
+    expect(lifecycle.connectToProxy).toHaveBeenLastCalledWith(expect.any(String), 'fresh-access')
+    expect(delegatedStream.mock.calls[1]?.[0]).toMatchObject({ baseUrl: 'http://localhost:4300/v1' })
   })
 
   it('health-checks a cached port and makes only one reconnect attempt when no exit event was observed', async () => {
