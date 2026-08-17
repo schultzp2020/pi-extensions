@@ -64,13 +64,14 @@ export interface ProxyExitEvent {
 
 interface ProxyLifecycleRecord {
   timestamp: string
+  generation?: string
   childPid: number
   exitCode: number | null
   exitSignal: NodeJS.Signals | null
   restartOutcome: 'not-attempted' | 'succeeded' | 'failed'
 }
 
-type ProxyLifecycleIdentity = Pick<ProxyLifecycleRecord, 'timestamp' | 'childPid'>
+type ProxyLifecycleIdentity = Pick<ProxyLifecycleRecord, 'timestamp' | 'generation' | 'childPid'>
 
 interface PendingProxyExit {
   record: ProxyLifecycleRecord
@@ -205,10 +206,12 @@ function readLifecycleRecord(lifecycleFilePath: string): ProxyLifecycleRecord | 
       return null
     }
     const record = value as Record<string, unknown>
-    const { timestamp, childPid, exitCode, exitSignal, restartOutcome } = record
+    const { timestamp, generation, childPid, exitCode, exitSignal, restartOutcome } = record
     if (
       typeof timestamp !== 'string' ||
       !Number.isFinite(Date.parse(timestamp)) ||
+      (generation !== undefined &&
+        (typeof generation !== 'string' || generation.length === 0 || !Number.isFinite(Date.parse(generation)))) ||
       typeof childPid !== 'number' ||
       !Number.isSafeInteger(childPid) ||
       childPid <= 0 ||
@@ -220,6 +223,7 @@ function readLifecycleRecord(lifecycleFilePath: string): ProxyLifecycleRecord | 
     }
     return {
       timestamp,
+      generation: typeof generation === 'string' ? generation : undefined,
       childPid,
       exitCode,
       exitSignal: exitSignal as NodeJS.Signals | null,
@@ -231,11 +235,19 @@ function readLifecycleRecord(lifecycleFilePath: string): ProxyLifecycleRecord | 
 }
 
 function hasSameLifecycleIdentity(left: ProxyLifecycleIdentity, right: ProxyLifecycleIdentity): boolean {
-  return left.timestamp === right.timestamp && left.childPid === right.childPid
+  if (left.childPid !== right.childPid) {
+    return false
+  }
+  if (left.generation !== undefined || right.generation !== undefined) {
+    return left.generation !== undefined && left.generation === right.generation
+  }
+  return left.timestamp === right.timestamp
 }
 
 function getLifecycleIdentityKey(identity: ProxyLifecycleIdentity): string {
-  return `${identity.timestamp}\0${String(identity.childPid)}`
+  const generationIdentity =
+    identity.generation === undefined ? `timestamp:${identity.timestamp}` : `generation:${identity.generation}`
+  return `${generationIdentity}\0${String(identity.childPid)}`
 }
 
 function getPendingProxyExit(
@@ -330,12 +342,13 @@ function getPendingRestartIdentity(lifecycleFilePath: string): ProxyLifecycleIde
   const latest =
     persisted && pending ? (isLifecycleRecordLater(pending, persisted) ? pending : persisted) : (pending ?? persisted)
   return latest && latest.restartOutcome !== 'succeeded'
-    ? { timestamp: latest.timestamp, childPid: latest.childPid }
+    ? { timestamp: latest.timestamp, generation: latest.generation, childPid: latest.childPid }
     : null
 }
 
 function allocateProxyGeneration(lifecycleFilePath: string, previousProxy: ProxyInfo | null): string {
-  const persistedGeneration = readLifecycleRecord(lifecycleFilePath)?.timestamp
+  const persistedRecord = readLifecycleRecord(lifecycleFilePath)
+  const persistedGeneration = persistedRecord?.generation ?? persistedRecord?.timestamp
   const previousGenerationMs = previousProxy ? Date.parse(previousProxy.generation) : Number.NEGATIVE_INFINITY
   const persistedGenerationMs = persistedGeneration ? Date.parse(persistedGeneration) : Number.NEGATIVE_INFINITY
   const latestGenerationMs = Math.max(lastAllocatedGenerationMs, previousGenerationMs, persistedGenerationMs)
@@ -355,19 +368,6 @@ function hasExitDetail(record: ProxyLifecycleRecord): boolean {
   return record.exitCode !== null || record.exitSignal !== null
 }
 
-function isObservedLifecycleRecordForProxy(
-  persistedRecord: ProxyLifecycleRecord,
-  record: ProxyLifecycleRecord,
-  proxy: ProxyInfo,
-): boolean {
-  if (persistedRecord.childPid !== proxy.pid || hasExitDetail(persistedRecord) || !hasExitDetail(record)) {
-    return false
-  }
-  const generationMs = Date.parse(proxy.generation)
-  const observedMs = Date.parse(persistedRecord.timestamp)
-  return observedMs >= generationMs
-}
-
 async function persistProxyExit(
   record: ProxyLifecycleRecord,
   proxy: ProxyInfo,
@@ -377,11 +377,7 @@ async function persistProxyExit(
 ): Promise<void> {
   await withLifecycleRecordLock(lifecycleFilePath, () => {
     const persistedRecord = readLifecycleRecord(lifecycleFilePath)
-    const sameLifecycleIdentity = Boolean(
-      persistedRecord &&
-      (hasSameLifecycleIdentity(persistedRecord, record) ||
-        isObservedLifecycleRecordForProxy(persistedRecord, record, proxy)),
-    )
+    const sameLifecycleIdentity = Boolean(persistedRecord && hasSameLifecycleIdentity(persistedRecord, record))
     if (
       !authoritative &&
       persistedRecord &&
@@ -424,6 +420,7 @@ async function persistObservedProxyExit(
 ): Promise<ProxyLifecycleRecord> {
   const record: ProxyLifecycleRecord = {
     timestamp: new Date().toISOString(),
+    generation: proxy.generation,
     childPid: proxy.pid,
     exitCode: null,
     exitSignal: null,
@@ -448,6 +445,7 @@ async function persistProxyExitWithCoordination(
 function handleProxyExit(event: ProxyExitEvent, portFilePath: string, lifecycleFilePath: string): void {
   const record: ProxyLifecycleRecord = {
     timestamp: new Date().toISOString(),
+    generation: event.generation,
     childPid: event.childPid,
     exitCode: event.exitCode,
     exitSignal: event.exitSignal,
@@ -648,7 +646,11 @@ export async function connectToProxy(
 
         if (existing) {
           const observedExit = await persistObservedProxyExit(existing, portFilePath, lifecycleFilePath)
-          restartIdentity = { timestamp: observedExit.timestamp, childPid: observedExit.childPid }
+          restartIdentity = {
+            timestamp: observedExit.timestamp,
+            generation: observedExit.generation,
+            childPid: observedExit.childPid,
+          }
           signal?.throwIfAborted()
           stopHeartbeatFor(existing)
           removeOwnedProxyPortFileUnderLock(portFilePath, existing)

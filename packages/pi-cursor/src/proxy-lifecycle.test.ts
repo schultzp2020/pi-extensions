@@ -850,9 +850,9 @@ describe('real-time observation deadline', () => {
 })
 
 async function waitFor(predicate: () => boolean, timeoutMs = 3000): Promise<void> {
-  const deadline = Date.now() + timeoutMs
+  const deadline = performance.now() + timeoutMs
   while (!predicate()) {
-    if (Date.now() >= deadline) {
+    if (performance.now() >= deadline) {
       throw new Error('Timed out waiting for proxy lifecycle state')
     }
     await new Promise<void>((resolve) => {
@@ -862,9 +862,9 @@ async function waitFor(predicate: () => boolean, timeoutMs = 3000): Promise<void
 }
 
 async function waitForProxyUnreachable(port: number, timeoutMs = 3000): Promise<void> {
-  const deadline = Date.now() + timeoutMs
+  const deadline = performance.now() + timeoutMs
   while (await isProxyHealthy(port)) {
-    if (Date.now() >= deadline) {
+    if (performance.now() >= deadline) {
       throw new Error('Timed out waiting for proxy to become unreachable')
     }
     await new Promise<void>((resolve) => {
@@ -1133,19 +1133,23 @@ describe('post-ready child exit recovery', () => {
       await waitForProxyUnreachable(connection.port)
       expect(() => process.kill(connection.pid, 0)).not.toThrow()
 
+      vi.useFakeTimers({ toFake: ['Date'] })
+      vi.setSystemTime(Date.parse(connection.generation) - 60_000)
       await expect(
         connectToProxy('test-session', null, { portFilePath, lifecycleFilePath, proxyEntry }),
       ).rejects.toThrow('No access token and no existing proxy')
       expect(getActivePort()).toBeNull()
       const observedRecord = JSON.parse(readFileSync(lifecycleFilePath, 'utf8')) as Record<string, unknown>
       expect(observedRecord).toMatchObject({
+        generation: connection.generation,
         childPid: connection.pid,
         exitCode: null,
         exitSignal: null,
         restartOutcome: 'failed',
       })
-      expect(Date.parse(String(observedRecord.timestamp))).toBeGreaterThanOrEqual(Date.parse(connection.generation))
+      expect(Date.parse(String(observedRecord.timestamp))).toBeLessThan(Date.parse(connection.generation))
 
+      vi.setSystemTime(Date.parse(connection.generation) - 59_000)
       process.kill(connection.pid, 'SIGKILL')
       await waitFor(() => {
         try {
@@ -1157,6 +1161,7 @@ describe('post-ready child exit recovery', () => {
       })
       const exitRecord = JSON.parse(readFileSync(lifecycleFilePath, 'utf8')) as Record<string, unknown>
       expect(exitRecord).toMatchObject({
+        generation: connection.generation,
         childPid: connection.pid,
         exitCode: null,
         exitSignal: 'SIGKILL',
@@ -1166,6 +1171,7 @@ describe('post-ready child exit recovery', () => {
         Date.parse(String(observedRecord.timestamp)),
       )
     } finally {
+      vi.useRealTimers()
       stopHeartbeat()
       if (childPid !== undefined) {
         const pid = childPid
@@ -1297,10 +1303,6 @@ describe('post-ready child exit recovery', () => {
           return false
         }
       })
-      const firstExitTimestamp = String(
-        (JSON.parse(readFileSync(lifecycleFilePath, 'utf8')) as Record<string, unknown>).timestamp,
-      )
-
       vi.useFakeTimers({ toFake: ['Date'] })
       vi.setSystemTime(Date.parse(first.generation) - 60_000)
       const second = await connectToProxy('test-session', 'test-secret', {
@@ -1312,7 +1314,6 @@ describe('post-ready child exit recovery', () => {
       vi.useRealTimers()
 
       expect(Date.parse(second.generation)).toBeGreaterThan(Date.parse(first.generation))
-      expect(Date.parse(second.generation)).toBeGreaterThan(Date.parse(firstExitTimestamp))
     } finally {
       vi.useRealTimers()
       stopObserving()
@@ -1848,7 +1849,7 @@ describe('post-ready child exit recovery', () => {
       const recordText = readFileSync(lifecycleFilePath, 'utf8')
       const record = JSON.parse(recordText) as Record<string, unknown>
       expect(Object.keys(record).sort()).toEqual(
-        ['timestamp', 'childPid', 'exitCode', 'exitSignal', 'restartOutcome'].sort(),
+        ['timestamp', 'generation', 'childPid', 'exitCode', 'exitSignal', 'restartOutcome'].sort(),
       )
       expect(record).toMatchObject({
         childPid,

@@ -92,6 +92,7 @@ function queryPsProcessIdentity(pid: number, maxProbeMs: number): ProcessIdentit
   }
   const result = spawnSync('ps', ['-o', 'lstart=', '-o', 'state=', '-p', String(pid)], {
     encoding: 'utf8',
+    env: { ...process.env, LANG: 'C', LANGUAGE: 'C', LC_ALL: 'C', TZ: 'UTC' },
     timeout,
     windowsHide: true,
   })
