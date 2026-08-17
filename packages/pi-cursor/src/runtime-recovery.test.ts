@@ -4,7 +4,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const lifecycle = vi.hoisted(() => ({
   connectToProxy:
-    vi.fn<(sessionId: string, accessToken: string | null) => Promise<{ port: number; pid: number; models: [] }>>(),
+    vi.fn<
+      (
+        sessionId: string,
+        accessToken: string | null,
+        options?: { signal?: AbortSignal },
+      ) => Promise<{ port: number; pid: number; models: [] }>
+    >(),
   exitListener: undefined as ((event: { port: number; childPid: number }) => void) | undefined,
   isProxyHealthy: vi.fn<(port: number, signal?: AbortSignal) => Promise<boolean>>(),
   pushToken: vi.fn<(port: number, accessToken: string, signal?: AbortSignal) => Promise<boolean>>(),
@@ -86,7 +92,9 @@ describe('request-time proxy recovery', () => {
     initialProvider?.streamSimple?.(model, { systemPrompt: '', messages: [], tools: [] }, { apiKey: 'fresh-access' })
 
     await vi.waitFor(() => expect(delegatedStream).toHaveBeenCalledTimes(2))
-    expect(lifecycle.connectToProxy).toHaveBeenLastCalledWith(expect.any(String), 'fresh-access')
+    expect(lifecycle.connectToProxy).toHaveBeenLastCalledWith(expect.any(String), 'fresh-access', {
+      signal: expect.any(AbortSignal),
+    })
     expect(registrations.at(-1)?.baseUrl).toBe('http://localhost:4200/v1')
     expect(delegatedStream.mock.calls[1]?.[0]).toMatchObject({
       api: 'openai-completions',
@@ -100,7 +108,9 @@ describe('request-time proxy recovery', () => {
       ?.streamSimple?.(model, { systemPrompt: '', messages: [], tools: [] }, { apiKey: 'cursor-proxy' })
 
     await vi.waitFor(() => expect(delegatedStream).toHaveBeenCalledTimes(3))
-    expect(lifecycle.connectToProxy).toHaveBeenLastCalledWith(expect.any(String), 'fresh-access')
+    expect(lifecycle.connectToProxy).toHaveBeenLastCalledWith(expect.any(String), 'fresh-access', {
+      signal: expect.any(AbortSignal),
+    })
     expect(delegatedStream.mock.calls[2]?.[0]).toMatchObject({ baseUrl: 'http://localhost:4300/v1' })
   })
 
@@ -229,9 +239,11 @@ describe('request-time proxy recovery', () => {
 
     lifecycle.isProxyHealthy.mockResolvedValue(false)
     let finishRecovery: ((result: { port: number; pid: number; models: [] }) => void) | undefined
+    let recoverySignal: AbortSignal | undefined
     lifecycle.connectToProxy.mockImplementationOnce(
-      async () =>
+      async (_sessionId, _accessToken, options) =>
         await new Promise<{ port: number; pid: number; models: [] }>((resolve) => {
+          recoverySignal = options?.signal
           finishRecovery = resolve
         }),
     )
@@ -283,12 +295,78 @@ describe('request-time proxy recovery', () => {
     expect(cancelledResult).not.toBe('timed-out')
     expect(cancelledResult).toMatchObject({ stopReason: 'error' })
     expect(delegatedStream).not.toHaveBeenCalled()
+    expect(recoverySignal?.aborted).toBeFalsy()
 
     finishRecovery?.({ port: 4200, pid: 42, models: [] })
 
     await vi.waitFor(() => expect(delegatedStream).toHaveBeenCalledOnce())
     expect(lifecycle.connectToProxy).toHaveBeenCalledTimes(2)
     expect(delegatedStream.mock.calls[0]?.[0]).toMatchObject({ baseUrl: 'http://localhost:4200/v1' })
+  })
+
+  it('cancels the underlying recovery when its only request aborts', async () => {
+    const registrations: ProviderConfig[] = []
+    const pi = {
+      on: vi.fn<(event: string, handler: (...args: unknown[]) => unknown) => void>(),
+      registerCommand: vi.fn<(name: string, command: unknown) => void>(),
+      registerProvider: vi.fn<(name: string, config: ProviderConfig) => void>((_name, config) => {
+        registrations.push(config)
+      }),
+    }
+    await cursorExtension(pi as unknown as ExtensionAPI)
+
+    lifecycle.isProxyHealthy.mockResolvedValue(false)
+    let recoverySignal: AbortSignal | undefined
+    lifecycle.connectToProxy.mockImplementationOnce(
+      async (_sessionId, _accessToken, options) =>
+        await new Promise<{ port: number; pid: number; models: [] }>((_resolve, reject) => {
+          recoverySignal = options?.signal
+          if (!recoverySignal) {
+            reject(new Error('Recovery did not receive a cancellation signal'))
+            return
+          }
+          const rejectAborted = (): void => {
+            reject(recoverySignal?.reason ?? new Error('Recovery aborted'))
+          }
+          if (recoverySignal.aborted) {
+            rejectAborted()
+          } else {
+            recoverySignal.addEventListener('abort', rejectAborted, { once: true })
+          }
+        }),
+    )
+    const model: Model<'cursor-openai-completions'> = {
+      id: 'cursor-test',
+      name: 'Cursor Test',
+      provider: 'cursor',
+      api: 'cursor-openai-completions',
+      baseUrl: 'http://localhost:4100/v1',
+      reasoning: false,
+      input: ['text'],
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: 1000,
+      maxTokens: 100,
+    }
+    const controller = new AbortController()
+    const stream = registrations
+      .at(-1)
+      ?.streamSimple?.(
+        model,
+        { systemPrompt: '', messages: [], tools: [] },
+        { apiKey: 'fresh-access', signal: controller.signal },
+      )
+    if (!stream) {
+      throw new Error('Cursor provider did not return a request stream')
+    }
+    await vi.waitFor(() => expect(lifecycle.connectToProxy).toHaveBeenCalledTimes(2))
+
+    controller.abort()
+
+    await expect(stream.result()).resolves.toMatchObject({ stopReason: 'error' })
+    expect(recoverySignal?.aborted).toBeTruthy()
+    expect(registrations.at(-1)?.baseUrl).toBe('http://localhost:0/v1')
+    expect(lifecycle.pushToken).not.toHaveBeenCalled()
+    expect(delegatedStream).not.toHaveBeenCalled()
   })
 
   it('does not probe or reconnect for an already-cancelled request', async () => {

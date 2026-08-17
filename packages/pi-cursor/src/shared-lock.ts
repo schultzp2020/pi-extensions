@@ -363,11 +363,34 @@ function releaseSharedLock(lockPath: string, lock: AcquiredSharedLock): void {
   } catch {}
 }
 
+async function waitForSharedLockRetry(waitMs: number, signal?: AbortSignal): Promise<void> {
+  if (!signal) {
+    await new Promise<void>((resolveWait) => {
+      setTimeout(resolveWait, waitMs)
+    })
+    return
+  }
+  signal.throwIfAborted()
+  await new Promise<void>((resolveWait, rejectWait) => {
+    const timer = setTimeout(() => {
+      signal.removeEventListener('abort', onAbort)
+      resolveWait()
+    }, waitMs)
+    const onAbort = (): void => {
+      clearTimeout(timer)
+      rejectWait(signal.reason ?? new Error('Operation aborted'))
+    }
+    signal.addEventListener('abort', onAbort, { once: true })
+  })
+}
+
 export async function withSharedLock<T>(
   lockPath: string,
   maxWaitMs: number,
   operation: () => T | Promise<T>,
+  signal?: AbortSignal,
 ): Promise<SharedLockResult<T>> {
+  signal?.throwIfAborted()
   try {
     mkdirSync(resolve(lockPath, '..'), { recursive: true })
   } catch {
@@ -378,6 +401,7 @@ export async function withSharedLock<T>(
   let lock: AcquiredSharedLock | null = null
   try {
     while (performance.now() < deadline) {
+      signal?.throwIfAborted()
       const remainingMs = Math.max(0, deadline - performance.now())
       lock ??= createSharedLockTicket(lockPath, remainingMs)
       const ownershipRemainingMs = Math.max(0, deadline - performance.now())
@@ -393,9 +417,7 @@ export async function withSharedLock<T>(
       }
       const waitMs = Math.min(SHARED_LOCK_RETRY_MS, Math.max(0, deadline - performance.now()))
       if (waitMs > 0) {
-        await new Promise<void>((resolveWait) => {
-          setTimeout(resolveWait, waitMs)
-        })
+        await waitForSharedLockRetry(waitMs, signal)
       }
     }
     return { acquired: false }

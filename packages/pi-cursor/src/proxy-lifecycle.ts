@@ -19,22 +19,25 @@ import { createInterface } from 'node:readline'
 import { captureProxyStderr } from './proxy-stderr.ts'
 import { isDebugLoggingEnabled, logProxyStderr } from './proxy/debug-logger.ts'
 import { removeOwnedProxyPortFileUnderLock, withProxyPortLock } from './proxy-port-file.ts'
+import {
+  HEALTH_CHECK_TIMEOUT_MS,
+  HEARTBEAT_TIMEOUT_MS,
+  LIFECYCLE_LOCK_MAX_WAIT_MS,
+  MODEL_REFRESH_TIMEOUT_MS,
+  PROXY_STARTUP_TIMEOUT_MS,
+  TOKEN_PUSH_TIMEOUT_MS,
+} from './proxy-timeouts.ts'
 import type { CursorModel } from './proxy/models.ts'
-import { SHARED_LOCK_STALE_MS, withSharedLock } from './shared-lock.ts'
+import { withSharedLock } from './shared-lock.ts'
 
 const PORT_FILE = join(homedir(), '.pi', 'agent', 'cursor-proxy.json')
 const LIFECYCLE_FILE = join(homedir(), '.pi', 'agent', 'cursor-proxy-lifecycle.json')
 const PROXY_ENTRY = resolve(import.meta.dirname, 'proxy', 'main.js')
 const HEARTBEAT_INTERVAL_MS = 10_000
-const PROXY_STARTUP_TIMEOUT_MS = 15_000
 const PROXY_STDERR_DRAIN_TIMEOUT_MS = 1_000
 const PROXY_SIGTERM_GRACE_MS = 1_000
 const PROXY_SIGKILL_WAIT_MS = 250
-const HEALTH_CHECK_TIMEOUT_MS = 2_000
-const HEARTBEAT_TIMEOUT_MS = 2_000
-const TOKEN_PUSH_TIMEOUT_MS = 2_000
-const MODEL_REFRESH_TIMEOUT_MS = 10_000
-const LIFECYCLE_LOCK_MAX_WAIT_MS = SHARED_LOCK_STALE_MS + 250
+const MAX_DATE_MS = 8_640_000_000_000_000
 
 export interface ProxyInfo {
   port: number
@@ -67,6 +70,8 @@ interface ProxyLifecycleRecord {
   restartOutcome: 'not-attempted' | 'succeeded' | 'failed'
 }
 
+type ProxyLifecycleIdentity = Pick<ProxyLifecycleRecord, 'timestamp' | 'childPid'>
+
 interface PendingProxyExit {
   record: ProxyLifecycleRecord
   persistence: Promise<void> | null
@@ -81,11 +86,20 @@ export interface ProxyConnectOptions {
   portFilePath?: string
   lifecycleFilePath?: string
   proxyEntry?: string
+  signal?: AbortSignal
+}
+
+interface SpawnProxyOptions {
+  portFilePath: string
+  lifecycleFilePath: string
+  proxyEntry: string
+  signal?: AbortSignal
 }
 
 let activeConnection: ProxyConnection | null = null
 const proxyExitListeners = new Set<(event: ProxyExitEvent) => void>()
-const pendingProxyExits = new Map<string, PendingProxyExit>()
+const pendingProxyExits = new Map<string, Map<string, PendingProxyExit>>()
+let lastAllocatedGenerationMs = 0
 
 function isProcessAlive(pid: number): boolean {
   try {
@@ -194,6 +208,7 @@ function readLifecycleRecord(lifecycleFilePath: string): ProxyLifecycleRecord | 
     const { timestamp, childPid, exitCode, exitSignal, restartOutcome } = record
     if (
       typeof timestamp !== 'string' ||
+      !Number.isFinite(Date.parse(timestamp)) ||
       typeof childPid !== 'number' ||
       !Number.isSafeInteger(childPid) ||
       childPid <= 0 ||
@@ -215,8 +230,29 @@ function readLifecycleRecord(lifecycleFilePath: string): ProxyLifecycleRecord | 
   }
 }
 
-function hasSameLifecycleIdentity(left: ProxyLifecycleRecord, right: ProxyLifecycleRecord): boolean {
+function hasSameLifecycleIdentity(left: ProxyLifecycleIdentity, right: ProxyLifecycleIdentity): boolean {
   return left.timestamp === right.timestamp && left.childPid === right.childPid
+}
+
+function getLifecycleIdentityKey(identity: ProxyLifecycleIdentity): string {
+  return `${identity.timestamp}\0${String(identity.childPid)}`
+}
+
+function getPendingProxyExit(
+  lifecycleFilePath: string,
+  identity: ProxyLifecycleIdentity,
+): PendingProxyExit | undefined {
+  return pendingProxyExits.get(lifecycleFilePath)?.get(getLifecycleIdentityKey(identity))
+}
+
+function getLatestPendingProxyExit(lifecycleFilePath: string): ProxyLifecycleRecord | null {
+  let latest: ProxyLifecycleRecord | null = null
+  for (const pending of pendingProxyExits.get(lifecycleFilePath)?.values() ?? []) {
+    if (!latest || isLifecycleRecordLater(pending.record, latest)) {
+      latest = pending.record
+    }
+  }
+  return latest
 }
 
 function mergeRestartOutcome(
@@ -250,13 +286,17 @@ function isLifecycleRecordLater(left: ProxyLifecycleRecord, right: ProxyLifecycl
 async function completePendingRestart(
   restartOutcome: 'succeeded' | 'failed',
   lifecycleFilePath: string,
+  expectedIdentity: ProxyLifecycleIdentity | null,
   isConnectionCurrent?: () => boolean,
   awaitPendingPersistence = true,
 ): Promise<boolean> {
   if (isConnectionCurrent && !isConnectionCurrent()) {
     return false
   }
-  const pendingExit = pendingProxyExits.get(lifecycleFilePath)
+  if (!expectedIdentity) {
+    return isConnectionCurrent?.() ?? true
+  }
+  const pendingExit = getPendingProxyExit(lifecycleFilePath, expectedIdentity)
   if (pendingExit) {
     pendingExit.record.restartOutcome = mergeRestartOutcome(pendingExit.record.restartOutcome, restartOutcome)
     if (awaitPendingPersistence && pendingExit.persistence) {
@@ -266,10 +306,6 @@ async function completePendingRestart(
   if (isConnectionCurrent && !isConnectionCurrent()) {
     return false
   }
-  const expectedRecord = readLifecycleRecord(lifecycleFilePath)
-  if (!expectedRecord) {
-    return isConnectionCurrent?.() ?? true
-  }
   let connectionCurrent = true
   await withLifecycleRecordLock(lifecycleFilePath, () => {
     if (isConnectionCurrent && !isConnectionCurrent()) {
@@ -277,7 +313,7 @@ async function completePendingRestart(
       return
     }
     const persistedRecord = readLifecycleRecord(lifecycleFilePath)
-    if (!persistedRecord || !hasSameLifecycleIdentity(expectedRecord, persistedRecord)) {
+    if (!persistedRecord || !hasSameLifecycleIdentity(expectedIdentity, persistedRecord)) {
       return
     }
     const nextOutcome = mergeRestartOutcome(persistedRecord.restartOutcome, restartOutcome)
@@ -288,6 +324,29 @@ async function completePendingRestart(
   return connectionCurrent && (isConnectionCurrent?.() ?? true)
 }
 
+function getPendingRestartIdentity(lifecycleFilePath: string): ProxyLifecycleIdentity | null {
+  const persisted = readLifecycleRecord(lifecycleFilePath)
+  const pending = getLatestPendingProxyExit(lifecycleFilePath)
+  const latest =
+    persisted && pending ? (isLifecycleRecordLater(pending, persisted) ? pending : persisted) : (pending ?? persisted)
+  return latest && latest.restartOutcome !== 'succeeded'
+    ? { timestamp: latest.timestamp, childPid: latest.childPid }
+    : null
+}
+
+function allocateProxyGeneration(lifecycleFilePath: string, previousProxy: ProxyInfo | null): string {
+  const persistedGeneration = readLifecycleRecord(lifecycleFilePath)?.timestamp
+  const previousGenerationMs = previousProxy ? Date.parse(previousProxy.generation) : Number.NEGATIVE_INFINITY
+  const persistedGenerationMs = persistedGeneration ? Date.parse(persistedGeneration) : Number.NEGATIVE_INFINITY
+  const latestGenerationMs = Math.max(lastAllocatedGenerationMs, previousGenerationMs, persistedGenerationMs)
+  if (latestGenerationMs >= MAX_DATE_MS) {
+    throw new Error('Cannot allocate a later proxy generation')
+  }
+  const generationMs = Math.max(Date.now(), latestGenerationMs + 1)
+  lastAllocatedGenerationMs = generationMs
+  return new Date(generationMs).toISOString()
+}
+
 function hasSameProxyGeneration(info: ProxyInfo, record: ProxyLifecycleRecord): boolean {
   return info.pid === record.childPid && info.generation === record.timestamp
 }
@@ -296,10 +355,12 @@ async function persistProxyExit(
   record: ProxyLifecycleRecord,
   portFilePath: string,
   lifecycleFilePath: string,
+  authoritative = false,
 ): Promise<void> {
   await withLifecycleRecordLock(lifecycleFilePath, () => {
     const persistedRecord = readLifecycleRecord(lifecycleFilePath)
     if (
+      !authoritative &&
       persistedRecord &&
       !hasSameLifecycleIdentity(persistedRecord, record) &&
       isLifecycleRecordLater(persistedRecord, record)
@@ -337,18 +398,16 @@ async function persistObservedProxyExit(
   proxy: ProxyInfo,
   portFilePath: string,
   lifecycleFilePath: string,
-): Promise<void> {
-  await persistProxyExit(
-    {
-      timestamp: proxy.generation,
-      childPid: proxy.pid,
-      exitCode: null,
-      exitSignal: null,
-      restartOutcome: 'not-attempted',
-    },
-    portFilePath,
-    lifecycleFilePath,
-  )
+): Promise<ProxyLifecycleRecord> {
+  const record: ProxyLifecycleRecord = {
+    timestamp: proxy.generation,
+    childPid: proxy.pid,
+    exitCode: null,
+    exitSignal: null,
+    restartOutcome: 'not-attempted',
+  }
+  await persistProxyExit(record, portFilePath, lifecycleFilePath, true)
+  return record
 }
 
 async function persistProxyExitWithCoordination(
@@ -372,7 +431,13 @@ function handleProxyExit(event: ProxyExitEvent, portFilePath: string, lifecycleF
     restartOutcome: 'not-attempted',
   }
   const pendingExit: PendingProxyExit = { record, persistence: null }
-  pendingProxyExits.set(lifecycleFilePath, pendingExit)
+  let exitsForFile = pendingProxyExits.get(lifecycleFilePath)
+  if (!exitsForFile) {
+    exitsForFile = new Map<string, PendingProxyExit>()
+    pendingProxyExits.set(lifecycleFilePath, exitsForFile)
+  }
+  const identityKey = getLifecycleIdentityKey(record)
+  exitsForFile.set(identityKey, pendingExit)
   const persistence = persistProxyExitWithCoordination(
     record,
     { port: event.port, pid: event.childPid, generation: event.generation },
@@ -381,8 +446,12 @@ function handleProxyExit(event: ProxyExitEvent, portFilePath: string, lifecycleF
   )
   pendingExit.persistence = persistence
   const clearPendingExit = (): void => {
-    if (pendingProxyExits.get(lifecycleFilePath) === pendingExit) {
-      pendingProxyExits.delete(lifecycleFilePath)
+    const currentExits = pendingProxyExits.get(lifecycleFilePath)
+    if (currentExits?.get(identityKey) === pendingExit) {
+      currentExits.delete(identityKey)
+      if (currentExits.size === 0) {
+        pendingProxyExits.delete(lifecycleFilePath)
+      }
     }
   }
   void persistence.then(clearPendingExit, clearPendingExit)
@@ -405,13 +474,17 @@ export function onProxyExit(listener: (event: ProxyExitEvent) => void): () => vo
   return () => proxyExitListeners.delete(listener)
 }
 
-async function sendHeartbeat(port: number, sessionId: string): Promise<boolean> {
+async function sendHeartbeat(port: number, sessionId: string, signal?: AbortSignal): Promise<boolean> {
+  if (signal?.aborted) {
+    return false
+  }
   try {
+    const timeout = AbortSignal.timeout(HEARTBEAT_TIMEOUT_MS)
     const response = await fetch(`http://localhost:${String(port)}/internal/heartbeat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ sessionId }),
-      signal: AbortSignal.timeout(HEARTBEAT_TIMEOUT_MS),
+      signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
     })
     return response.ok
   } catch {
@@ -437,9 +510,11 @@ export async function pushToken(port: number, accessToken: string, signal?: Abor
   }
 }
 
-async function getModels(port: number): Promise<CursorModel[]> {
+async function getModels(port: number, signal?: AbortSignal): Promise<CursorModel[]> {
+  signal?.throwIfAborted()
+  const timeout = AbortSignal.timeout(MODEL_REFRESH_TIMEOUT_MS)
   const res = await fetch(`http://localhost:${String(port)}/internal/models`, {
-    signal: AbortSignal.timeout(MODEL_REFRESH_TIMEOUT_MS),
+    signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
   })
   if (!res.ok) {
     throw new Error(`Proxy model refresh failed with status ${String(res.status)}`)
@@ -457,25 +532,31 @@ function isActiveProxyConnection(connection: ProxyInfo): boolean {
   )
 }
 
+function stopHeartbeatFor(connection: ProxyInfo): void {
+  if (
+    activeConnection?.port === connection.port &&
+    activeConnection.pid === connection.pid &&
+    activeConnection.generation === connection.generation
+  ) {
+    stopHeartbeat()
+  }
+}
+
 async function finalizeProxyConnection<T extends ProxyInfo & { models: CursorModel[] }>(
   connection: T,
   portFilePath: string,
   lifecycleFilePath: string,
+  restartIdentity: ProxyLifecycleIdentity | null,
 ): Promise<T> {
   const connectionCurrent = await completePendingRestart(
     'succeeded',
     lifecycleFilePath,
+    restartIdentity,
     () => isActiveProxyConnection(connection),
     false,
   )
   if (!connectionCurrent) {
-    if (
-      activeConnection?.port === connection.port &&
-      activeConnection.pid === connection.pid &&
-      activeConnection.generation === connection.generation
-    ) {
-      stopHeartbeat()
-    }
+    stopHeartbeatFor(connection)
     removeOwnedProxyPortFileUnderLock(portFilePath, connection)
     throw new Error(`Proxy ${String(connection.pid)} exited before connection completed`)
   }
@@ -497,52 +578,100 @@ export async function connectToProxy(
   const getSessionId = typeof sessionId === 'function' ? sessionId : () => sessionId
   const portFilePath = options.portFilePath ?? PORT_FILE
   const lifecycleFilePath = options.lifecycleFilePath ?? LIFECYCLE_FILE
-  const lockResult = await withProxyPortLock(portFilePath, async () => {
-    try {
-      const parsedPortFile = parsePortFile(portFilePath)
-      const existing = parsedPortFile.info
-      if (existing && isProcessAlive(existing.pid) && (await isProxyHealthy(existing.port))) {
-        const tokenAccepted = !accessToken || (await pushToken(existing.port, accessToken))
-        const heartbeatAccepted = tokenAccepted && (await sendHeartbeat(existing.port, getSessionId()))
-        if (heartbeatAccepted) {
-          try {
-            const models = await getModels(existing.port)
-            if (await isProxyHealthy(existing.port)) {
-              startHeartbeat(existing.port, existing.pid, existing.generation, getSessionId, false)
-              return await finalizeProxyConnection(
-                { port: existing.port, pid: existing.pid, generation: existing.generation, models },
-                portFilePath,
-                lifecycleFilePath,
-              )
+  const { signal } = options
+  signal?.throwIfAborted()
+  const lockResult = await withProxyPortLock(
+    portFilePath,
+    async () => {
+      let restartIdentity = getPendingRestartIdentity(lifecycleFilePath)
+      let spawnedConnection: (ProxyInfo & { models: CursorModel[] }) | null = null
+      let adoptedConnection: ProxyInfo | null = null
+      try {
+        signal?.throwIfAborted()
+        const parsedPortFile = parsePortFile(portFilePath)
+        const existing = parsedPortFile.info
+        if (existing && isProcessAlive(existing.pid)) {
+          const healthy = await isProxyHealthy(existing.port, signal)
+          signal?.throwIfAborted()
+          if (healthy) {
+            const tokenAccepted = !accessToken || (await pushToken(existing.port, accessToken, signal))
+            signal?.throwIfAborted()
+            const heartbeatAccepted = tokenAccepted && (await sendHeartbeat(existing.port, getSessionId(), signal))
+            signal?.throwIfAborted()
+            if (heartbeatAccepted) {
+              try {
+                const models = await getModels(existing.port, signal)
+                signal?.throwIfAborted()
+                if (await isProxyHealthy(existing.port, signal)) {
+                  signal?.throwIfAborted()
+                  startHeartbeat(existing.port, existing.pid, existing.generation, getSessionId, false)
+                  adoptedConnection = existing
+                  const connection = await finalizeProxyConnection(
+                    { port: existing.port, pid: existing.pid, generation: existing.generation, models },
+                    portFilePath,
+                    lifecycleFilePath,
+                    restartIdentity,
+                  )
+                  signal?.throwIfAborted()
+                  return connection
+                }
+                signal?.throwIfAborted()
+              } catch {
+                signal?.throwIfAborted()
+              }
             }
+          }
+        }
+
+        if (existing) {
+          const observedExit = await persistObservedProxyExit(existing, portFilePath, lifecycleFilePath)
+          restartIdentity = { timestamp: observedExit.timestamp, childPid: observedExit.childPid }
+          signal?.throwIfAborted()
+          stopHeartbeatFor(existing)
+          removeOwnedProxyPortFileUnderLock(portFilePath, existing)
+        } else if (parsedPortFile.exists) {
+          try {
+            unlinkSync(portFilePath)
           } catch {}
         }
-      }
-      if (existing && !isProcessAlive(existing.pid)) {
-        await persistObservedProxyExit(existing, portFilePath, lifecycleFilePath)
-      }
-      if (existing) {
-        removeOwnedProxyPortFileUnderLock(portFilePath, existing)
-      } else if (parsedPortFile.exists) {
-        try {
-          unlinkSync(portFilePath)
-        } catch {}
-      }
 
-      if (!accessToken) {
-        throw new Error('No access token and no existing proxy')
+        signal?.throwIfAborted()
+        if (!accessToken) {
+          throw new Error('No access token and no existing proxy')
+        }
+        const generation = allocateProxyGeneration(lifecycleFilePath, existing)
+        spawnedConnection = await spawnProxy(getSessionId, accessToken, generation, {
+          portFilePath,
+          lifecycleFilePath,
+          proxyEntry: options.proxyEntry ?? PROXY_ENTRY,
+          signal,
+        })
+        signal?.throwIfAborted()
+        const connection = await finalizeProxyConnection(
+          spawnedConnection,
+          portFilePath,
+          lifecycleFilePath,
+          restartIdentity,
+        )
+        signal?.throwIfAborted()
+        return connection
+      } catch (error) {
+        if (signal?.aborted && adoptedConnection) {
+          stopHeartbeatFor(adoptedConnection)
+        }
+        if (signal?.aborted && spawnedConnection) {
+          stopHeartbeatFor(spawnedConnection)
+          removeOwnedProxyPortFileUnderLock(portFilePath, spawnedConnection)
+          try {
+            process.kill(spawnedConnection.pid, 'SIGTERM')
+          } catch {}
+        }
+        await completePendingRestart('failed', lifecycleFilePath, restartIdentity, undefined, false)
+        throw error
       }
-      const result = await spawnProxy(getSessionId, accessToken, {
-        portFilePath,
-        lifecycleFilePath,
-        proxyEntry: options.proxyEntry ?? PROXY_ENTRY,
-      })
-      return await finalizeProxyConnection(result, portFilePath, lifecycleFilePath)
-    } catch (error) {
-      await completePendingRestart('failed', lifecycleFilePath, undefined, false)
-      throw error
-    }
-  })
+    },
+    signal,
+  )
   if (!lockResult.acquired) {
     throw new Error('Timed out waiting for shared proxy recovery')
   }
@@ -552,9 +681,10 @@ export async function connectToProxy(
 async function spawnProxy(
   getSessionId: () => string,
   accessToken: string,
-  options: Required<ProxyConnectOptions>,
+  generation: string,
+  options: SpawnProxyOptions,
 ): Promise<{ port: number; pid: number; generation: string; models: CursorModel[] }> {
-  const generation = new Date().toISOString()
+  options.signal?.throwIfAborted()
   const child = spawn('node', [options.proxyEntry], {
     stdio: ['pipe', 'pipe', 'pipe'],
     detached: false,
@@ -737,6 +867,19 @@ async function spawnProxy(
         detachStartupWatch()
         resolve({ ready: false, message: 'Proxy startup timeout' })
       }
+      const onAbort = (): void => {
+        if (state !== 'pending') {
+          return
+        }
+        state = 'failed'
+        detachStartupWatch()
+        const reason = options.signal?.reason
+        resolve({
+          ready: false,
+          message: 'Proxy startup aborted',
+          cause: reason instanceof Error ? reason : undefined,
+        })
+      }
       const onLine = (line: string): void => {
         if (state !== 'pending') {
           return
@@ -750,6 +893,10 @@ async function spawnProxy(
       child.on('exit', onExit)
       child.on('error', onChildError)
       rl.once('line', onLine)
+      options.signal?.addEventListener('abort', onAbort, { once: true })
+      if (options.signal?.aborted) {
+        onAbort()
+      }
 
       // Clears the startup timeout and detaches every startup listener once a
       // terminal state is claimed. Idempotent.
@@ -758,12 +905,14 @@ async function spawnProxy(
         child.removeListener('exit', onExit)
         child.removeListener('error', onChildError)
         rl.removeListener('line', onLine)
+        options.signal?.removeEventListener('abort', onAbort)
       }
     })
 
     if (!outcome.ready) {
       throw new Error(outcome.message, { cause: outcome.cause })
     }
+    options.signal?.throwIfAborted()
     ready = JSON.parse(outcome.line) as { type: string; port: number; models?: CursorModel[] }
     if (ready.type !== 'ready' || !ready.port || !childPid) {
       throw new Error(`Unexpected proxy output: ${outcome.line}`)

@@ -1,8 +1,7 @@
 import { readFileSync, unlinkSync } from 'node:fs'
 
+import { PROXY_PORT_LOCK_MAX_WAIT_MS } from './proxy-timeouts.ts'
 import { withSharedLock, type SharedLockResult } from './shared-lock.ts'
-
-const PROXY_PORT_LOCK_MAX_WAIT_MS = 31_000
 
 export interface ProxyPortIdentity {
   port: number
@@ -54,8 +53,12 @@ export function removeOwnedProxyPortFileUnderLock(path: string, expected: ProxyP
   }
 }
 
-export function withProxyPortLock<T>(path: string, operation: () => T | Promise<T>): Promise<SharedLockResult<T>> {
-  return withSharedLock(`${path}.lock`, PROXY_PORT_LOCK_MAX_WAIT_MS, operation)
+export function withProxyPortLock<T>(
+  path: string,
+  operation: () => T | Promise<T>,
+  signal?: AbortSignal,
+): Promise<SharedLockResult<T>> {
+  return withSharedLock(`${path}.lock`, PROXY_PORT_LOCK_MAX_WAIT_MS, operation, signal)
 }
 
 export async function removeOwnedProxyPortFileWithLock(path: string, expected: ProxyPortIdentity): Promise<boolean> {

@@ -14,6 +14,12 @@ const server = createServer((req, res) => {
     res.end(JSON.stringify({ ok: true }))
     return
   }
+  if (req.url === '/test/disconnect') {
+    res.end(JSON.stringify({ ok: true }))
+    setInterval(() => {}, 1_000)
+    server.close()
+    return
+  }
   res.statusCode = 404
   res.end(JSON.stringify({ error: 'not found' }))
 })

@@ -39,6 +39,13 @@ const MODEL_CACHE_PATH = join(AGENT_DIR, 'cursor-model-cache.json')
 type HostStreamSimple = typeof import('@earendil-works/pi-ai/api/openai-completions').streamSimple
 let hostStreamSimple: HostStreamSimple | null = null
 
+interface ProxyReconnectState {
+  controller: AbortController
+  promise: Promise<number | null>
+  consumers: number
+  settled: boolean
+}
+
 async function resolveHostStreamSimple(): Promise<HostStreamSimple> {
   if (hostStreamSimple) {
     return hostStreamSimple
@@ -74,6 +81,18 @@ async function waitForSharedRecovery<T>(recovery: Promise<T>, signal?: AbortSign
       },
     )
   })
+}
+
+async function waitForReconnectConsumer(state: ProxyReconnectState, signal?: AbortSignal): Promise<number | null> {
+  state.consumers += 1
+  try {
+    return await waitForSharedRecovery(state.promise, signal)
+  } finally {
+    state.consumers -= 1
+    if (!state.settled && state.consumers === 0) {
+      state.controller.abort(signal?.reason ?? new Error('Cursor proxy recovery cancelled'))
+    }
+  }
 }
 
 function supportsLegacyXhigh(modelId: string): boolean {
@@ -218,7 +237,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
   }
 
   let registeredPort: number | null = null
-  let reconnectPromise: Promise<number | null> | null = null
+  let reconnectState: ProxyReconnectState | null = null
 
   function updateModels(newModels: CursorModel[]): void {
     models = newModels
@@ -257,13 +276,21 @@ export default async function (pi: ExtensionAPI): Promise<void> {
       clearCurrentProxy(port)
     }
 
-    let reconnect = reconnectPromise
+    let reconnect = reconnectState
+    if (reconnect?.controller.signal.aborted) {
+      if (reconnectState === reconnect) {
+        reconnectState = null
+      }
+      reconnect = null
+    }
     if (!reconnect) {
       signal?.throwIfAborted()
-      reconnect = (async () => {
+      const controller = new AbortController()
+      const promise = (async () => {
         try {
           // Resolve the live session ID for heartbeats and debug logging.
-          const result = await connectToProxy(() => sessionId, currentAccessToken)
+          const result = await connectToProxy(() => sessionId, currentAccessToken, { signal: controller.signal })
+          controller.signal.throwIfAborted()
           currentPort = result.port
           if (result.models.length > 0) {
             updateModels(result.models)
@@ -277,22 +304,26 @@ export default async function (pi: ExtensionAPI): Promise<void> {
           return null
         }
       })()
-      reconnectPromise = reconnect
-      void reconnect.then(
+      const state: ProxyReconnectState = { controller, promise, consumers: 0, settled: false }
+      reconnect = state
+      reconnectState = state
+      const settleReconnect = (): void => {
+        state.settled = true
+        if (reconnectState === state) {
+          reconnectState = null
+        }
+      }
+      void promise.then(
         () => {
-          if (reconnectPromise === reconnect) {
-            reconnectPromise = null
-          }
+          settleReconnect()
         },
         () => {
-          if (reconnectPromise === reconnect) {
-            reconnectPromise = null
-          }
+          settleReconnect()
         },
       )
     }
 
-    const connectedPort = await waitForSharedRecovery(reconnect, signal)
+    const connectedPort = await waitForReconnectConsumer(reconnect, signal)
     signal?.throwIfAborted()
     if (connectedPort === null || currentPort !== connectedPort) {
       return false
