@@ -2,12 +2,21 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
-import type { OAuthCredentials, OAuthLoginCallbacks } from '@earendil-works/pi-ai'
+import { lazyStream, type OAuthCredentials, type OAuthLoginCallbacks } from '@earendil-works/pi-ai'
+import { streamSimple as streamOpenAICompletions } from '@earendil-works/pi-ai/api/openai-completions'
 import type { ExtensionAPI, ProviderModelConfig } from '@earendil-works/pi-coding-agent'
 
 import { generateCursorAuthParams, getTokenExpiry, pollCursorAuth, refreshCursorToken } from './auth.ts'
 import { FALLBACK_MODELS } from './fallback-models.ts'
-import { connectToProxy, getActivePort, pushToken, readPortFile, stopHeartbeat } from './proxy-lifecycle.ts'
+import {
+  connectToProxy,
+  getActivePort,
+  isProxyHealthy,
+  onProxyExit,
+  pushToken,
+  readPortFile,
+  stopHeartbeat,
+} from './proxy-lifecycle.ts'
 import {
   getEnvOverrides,
   resolveEffective,
@@ -130,6 +139,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
   // Temporary ID for initial proxy connection; replaced by real Pi session ID on session_start
   let sessionId: string = crypto.randomUUID()
   let currentPort: number | null = null
+  let currentAccessToken: string | null = loadStoredToken()
   let models: CursorModel[] = loadModelCache()
 
   async function loginCursor(callbacks: OAuthLoginCallbacks): Promise<OAuthCredentials> {
@@ -143,6 +153,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
     // Always return a successful exchange so Pi can persist rotated refresh tokens.
     // Only skip/cancel the proxy push if the caller already aborted.
     const result = await refreshCursorToken(credentials.refresh, signal)
+    currentAccessToken = result.access
     const port = getActivePort()
     if (port && !signal.aborted) {
       await pushToken(port, result.access, signal)
@@ -151,30 +162,60 @@ export default async function (pi: ExtensionAPI): Promise<void> {
   }
 
   let registeredPort: number | null = null
+  let reconnectPromise: Promise<boolean> | null = null
 
   function updateModels(newModels: CursorModel[]): void {
     models = newModels
     saveModelCache(models)
   }
 
-  async function ensureProxy(accessToken: string): Promise<void> {
-    if (currentPort) {
-      await pushToken(currentPort, accessToken)
+  function clearCurrentProxy(port?: number): void {
+    if (port !== undefined && currentPort !== port) {
       return
     }
-    try {
-      // Pass a getter so proxy activity uses the real session ID after session_start
-      const result = await connectToProxy(() => sessionId, accessToken)
-      currentPort = result.port
-      if (result.models.length > 0) {
-        updateModels(result.models)
-      }
-    } catch {
-      // proxy spawn failed — models will be empty until next attempt
+    currentPort = null
+    registeredPort = null
+    register()
+  }
+
+  async function ensureProxy(accessToken: string | null): Promise<boolean> {
+    if (accessToken) {
+      currentAccessToken = accessToken
     }
-    // Re-register if the proxy port changed (e.g. proxy restarted)
-    if (currentPort && currentPort !== registeredPort) {
-      register()
+
+    const port = currentPort
+    if (port && (await isProxyHealthy(port))) {
+      if (currentAccessToken) {
+        await pushToken(port, currentAccessToken)
+      }
+      return true
+    }
+    if (port) {
+      clearCurrentProxy(port)
+    }
+
+    reconnectPromise ??= (async () => {
+      try {
+        // Resolve the live session ID for heartbeats and debug logging.
+        const result = await connectToProxy(() => sessionId, currentAccessToken)
+        currentPort = result.port
+        if (result.models.length > 0) {
+          updateModels(result.models)
+        }
+        // Re-register after a successful respawn so future requests use its port.
+        if (currentPort !== registeredPort) {
+          register()
+        }
+        return true
+      } catch {
+        return false
+      }
+    })()
+
+    try {
+      return await reconnectPromise
+    } finally {
+      reconnectPromise = null
     }
   }
 
@@ -193,6 +234,18 @@ export default async function (pi: ExtensionAPI): Promise<void> {
       baseUrl: currentPort ? `http://localhost:${String(currentPort)}/v1` : 'http://localhost:0/v1',
       apiKey: 'cursor-proxy',
       api: 'openai-completions',
+      streamSimple(model, context, options) {
+        return lazyStream(model, async () => {
+          if (!(await ensureProxy(currentAccessToken)) || !currentPort) {
+            throw new Error('Cursor proxy is unavailable after one reconnect attempt')
+          }
+          return streamOpenAICompletions(
+            { ...model, api: 'openai-completions', baseUrl: `http://localhost:${String(currentPort)}/v1` },
+            context,
+            options,
+          )
+        })
+      },
       models: providerModels,
       headers: { 'X-Session-Id': sessionId },
       oauth: {
@@ -200,8 +253,9 @@ export default async function (pi: ExtensionAPI): Promise<void> {
         login: loginCursor,
         refreshToken: onRefreshToken,
         getApiKey: (cred) => cred.access,
-        // Pushes fresh token to proxy. Does NOT re-register to avoid infinite loop.
+        // Keep the in-memory token current and push it to the live proxy.
         modifyModels(registeredModels, credentials) {
+          currentAccessToken = credentials.access
           void ensureProxy(credentials.access)
           return registeredModels
         },
@@ -209,8 +263,12 @@ export default async function (pi: ExtensionAPI): Promise<void> {
     })
   }
 
+  const stopObservingProxyExits = onProxyExit((event) => {
+    clearCurrentProxy(event.port)
+  })
+
   // Try to connect to an existing proxy or spawn one with stored credentials
-  const storedToken = loadStoredToken()
+  const storedToken = currentAccessToken
   const existingProxy = readPortFile()
 
   if (existingProxy) {
@@ -417,6 +475,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
 
   pi.on('session_shutdown', async () => {
     logLifecycle(sessionId, '', { event: 'session_shutdown' })
+    stopObservingProxyExits()
     await cleanupCurrentSession()
     stopHeartbeat()
     // Queued debug entries must reach the file before Pi exits; the flush

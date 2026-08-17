@@ -20,6 +20,7 @@ import { isDebugLoggingEnabled, logProxyStderr } from './proxy/debug-logger.ts'
 import type { CursorModel } from './proxy/models.ts'
 
 const PORT_FILE = join(homedir(), '.pi', 'agent', 'cursor-proxy.json')
+const LIFECYCLE_FILE = join(homedir(), '.pi', 'agent', 'cursor-proxy-lifecycle.json')
 const PROXY_ENTRY = resolve(import.meta.dirname, 'proxy', 'main.js')
 const HEARTBEAT_INTERVAL_MS = 10_000
 const PROXY_STARTUP_TIMEOUT_MS = 15_000
@@ -44,7 +45,30 @@ interface ProxyConnection {
 
 type StartupOutcome = { ready: true; line: string } | { ready: false; message: string; cause?: Error }
 
+export interface ProxyExitEvent {
+  port: number
+  childPid: number
+  exitCode: number | null
+  exitSignal: NodeJS.Signals | null
+}
+
+interface ProxyLifecycleRecord {
+  timestamp: string
+  childPid: number
+  exitCode: number | null
+  exitSignal: NodeJS.Signals | null
+  restartOutcome: 'not-attempted' | 'succeeded' | 'failed'
+}
+
+export interface ProxyConnectOptions {
+  portFilePath?: string
+  lifecycleFilePath?: string
+  proxyEntry?: string
+}
+
 let activeConnection: ProxyConnection | null = null
+let pendingRestart: { record: ProxyLifecycleRecord; lifecycleFilePath: string } | null = null
+const proxyExitListeners = new Set<(event: ProxyExitEvent) => void>()
 
 function isProcessAlive(pid: number): boolean {
   try {
@@ -59,18 +83,18 @@ function isProcessAlive(pid: number): boolean {
  * Read the port file. Returns proxy info if the file exists and the
  * process is still alive, otherwise cleans up the stale file.
  */
-export function readPortFile(): ProxyInfo | null {
+export function readPortFile(portFilePath = PORT_FILE): ProxyInfo | null {
   try {
-    if (!existsSync(PORT_FILE)) {
+    if (!existsSync(portFilePath)) {
       return null
     }
-    const data = JSON.parse(readFileSync(PORT_FILE, 'utf8')) as ProxyInfo
+    const data = JSON.parse(readFileSync(portFilePath, 'utf8')) as ProxyInfo
     if (data.port && data.pid && isProcessAlive(data.pid)) {
       return data
     }
     // Stale port file — clean up
     try {
-      unlinkSync(PORT_FILE)
+      unlinkSync(portFilePath)
     } catch {
       // ignore cleanup errors
     }
@@ -80,12 +104,12 @@ export function readPortFile(): ProxyInfo | null {
   }
 }
 
-function writePortFile(info: ProxyInfo): void {
-  mkdirSync(join(homedir(), '.pi', 'agent'), { recursive: true })
-  writeFileSync(PORT_FILE, JSON.stringify(info))
+function writePortFile(info: ProxyInfo, portFilePath: string): void {
+  mkdirSync(resolve(portFilePath, '..'), { recursive: true })
+  writeFileSync(portFilePath, JSON.stringify(info))
 }
 
-async function checkProxyHealth(port: number): Promise<boolean> {
+export async function isProxyHealthy(port: number): Promise<boolean> {
   try {
     const res = await fetch(`http://localhost:${String(port)}/internal/health`, {
       signal: AbortSignal.timeout(HEALTH_CHECK_TIMEOUT_MS),
@@ -94,6 +118,61 @@ async function checkProxyHealth(port: number): Promise<boolean> {
   } catch {
     return false
   }
+}
+
+function persistLifecycleRecord(record: ProxyLifecycleRecord, lifecycleFilePath: string): void {
+  try {
+    mkdirSync(resolve(lifecycleFilePath, '..'), { recursive: true })
+    writeFileSync(lifecycleFilePath, JSON.stringify(record))
+  } catch {
+    // Diagnostics must never interfere with recovery.
+  }
+}
+
+function completePendingRestart(restartOutcome: 'succeeded' | 'failed'): void {
+  if (!pendingRestart) {
+    return
+  }
+  pendingRestart.record.restartOutcome = restartOutcome
+  persistLifecycleRecord(pendingRestart.record, pendingRestart.lifecycleFilePath)
+  pendingRestart = null
+}
+
+function removeOwnedPortFile(portFilePath: string, childPid: number): void {
+  try {
+    const info = JSON.parse(readFileSync(portFilePath, 'utf8')) as ProxyInfo
+    if (info.pid === childPid) {
+      unlinkSync(portFilePath)
+    }
+  } catch {
+    // The file may already be absent or may belong to a replacement proxy.
+  }
+}
+
+function handleProxyExit(event: ProxyExitEvent, portFilePath: string, lifecycleFilePath: string): void {
+  const record: ProxyLifecycleRecord = {
+    timestamp: new Date().toISOString(),
+    childPid: event.childPid,
+    exitCode: event.exitCode,
+    exitSignal: event.exitSignal,
+    restartOutcome: 'not-attempted',
+  }
+  pendingRestart = { record, lifecycleFilePath }
+  persistLifecycleRecord(record, lifecycleFilePath)
+  removeOwnedPortFile(portFilePath, event.childPid)
+
+  if (activeConnection?.pid !== event.childPid || activeConnection.port !== event.port) {
+    return
+  }
+  stopHeartbeat()
+  for (const listener of proxyExitListeners) {
+    listener(event)
+  }
+}
+
+export function onProxyExit(listener: (event: ProxyExitEvent) => void): () => void {
+  proxyExitListeners.add(listener)
+  return () => proxyExitListeners.delete(listener)
 }
 
 async function sendHeartbeat(port: number, sessionId: string): Promise<void> {
@@ -142,32 +221,48 @@ async function getModels(port: number): Promise<CursorModel[]> {
  * 3. Starts the heartbeat timer; each heartbeat resolves the current session ID.
  */
 export async function connectToProxy(
-  getSessionId: () => string,
+  sessionId: string | (() => string),
   accessToken: string | null,
-): Promise<{ port: number; models: CursorModel[] }> {
-  // 1. Try existing proxy via port file
-  const existing = readPortFile()
-  if (existing && (await checkProxyHealth(existing.port))) {
-    if (accessToken) {
-      await pushToken(existing.port, accessToken)
+  options: ProxyConnectOptions = {},
+): Promise<{ port: number; pid: number; models: CursorModel[] }> {
+  const getSessionId = typeof sessionId === 'function' ? sessionId : () => sessionId
+  const portFilePath = options.portFilePath ?? PORT_FILE
+  const lifecycleFilePath = options.lifecycleFilePath ?? LIFECYCLE_FILE
+  try {
+    // 1. Try existing proxy via port file
+    const existing = readPortFile(portFilePath)
+    if (existing && (await isProxyHealthy(existing.port))) {
+      if (accessToken) {
+        await pushToken(existing.port, accessToken)
+      }
+      startHeartbeat(existing.port, existing.pid, getSessionId)
+      const models = await getModels(existing.port)
+      completePendingRestart('succeeded')
+      return { port: existing.port, pid: existing.pid, models }
     }
-    startHeartbeat(existing.port, existing.pid, getSessionId)
-    const models = await getModels(existing.port)
-    return { port: existing.port, models }
+    // 2. No existing proxy — need to spawn
+    if (!accessToken) {
+      throw new Error('No access token and no existing proxy')
+    }
+    const result = await spawnProxy(getSessionId, accessToken, {
+      portFilePath,
+      lifecycleFilePath,
+      proxyEntry: options.proxyEntry ?? PROXY_ENTRY,
+    })
+    completePendingRestart('succeeded')
+    return result
+  } catch (error) {
+    completePendingRestart('failed')
+    throw error
   }
-
-  // 2. No existing proxy — need to spawn
-  if (!accessToken) {
-    throw new Error('No access token and no existing proxy')
-  }
-  return spawnProxy(getSessionId, accessToken)
 }
 
 async function spawnProxy(
   getSessionId: () => string,
   accessToken: string,
-): Promise<{ port: number; models: CursorModel[] }> {
-  const child = spawn('node', [PROXY_ENTRY], {
+  options: Required<ProxyConnectOptions>,
+): Promise<{ port: number; pid: number; models: CursorModel[] }> {
+  const child = spawn('node', [options.proxyEntry], {
     stdio: ['pipe', 'pipe', 'pipe'],
     detached: false,
     windowsHide: true,
@@ -186,7 +281,11 @@ async function spawnProxy(
 
   // Send config on stdin
   // stdio: ['pipe','pipe','pipe'] guarantees these are non-null
-  const { stdin, stdout, stderr, pid: childPid } = child
+  const { stdin, stdout, stderr } = child
+  const childPid = child.pid
+  if (!childPid) {
+    throw new Error('Proxy child did not receive a process ID')
+  }
   // Resolve the session ID at event time so stderr logs use the real ID
   // after session_start replaces the bootstrap UUID.
   const stderrCapture = captureProxyStderr(stderr, {
@@ -205,7 +304,6 @@ async function spawnProxy(
 
   // Read ready signal from stdout
   const rl = createInterface({ input: stdout })
-
   // Escalates termination of a still-running child: one SIGTERM, an
   // independent grace window, one SIGKILL if no exit was observed, then a
   // bounded wait for exit confirmation and final stderr. Disposes every
@@ -389,8 +487,21 @@ async function spawnProxy(
     rl.close()
   }
 
+  child.once('exit', (code, signal) => {
+    handleProxyExit(
+      { port: ready.port, childPid, exitCode: code, exitSignal: signal },
+      options.portFilePath,
+      options.lifecycleFilePath,
+    )
+  })
+  if (child.exitCode !== null || child.signalCode !== null) {
+    throw new Error(
+      `Proxy exited after readiness with code ${String(child.exitCode)} signal ${String(child.signalCode)}`,
+    )
+  }
+
   // Write port file for other sessions to discover
-  writePortFile({ port: ready.port, pid: childPid })
+  writePortFile({ port: ready.port, pid: childPid }, options.portFilePath)
 
   // Start heartbeat
   startHeartbeat(ready.port, childPid, getSessionId)
@@ -398,7 +509,7 @@ async function spawnProxy(
   // Don't let the child keep the parent alive
   child.unref()
 
-  return { port: ready.port, models: ready.models ?? [] }
+  return { port: ready.port, pid: childPid, models: ready.models ?? [] }
 }
 
 function startHeartbeat(port: number, pid: number, getSessionId: () => string): void {
