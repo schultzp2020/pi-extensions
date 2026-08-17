@@ -154,7 +154,6 @@ export default async function (pi: ExtensionAPI): Promise<void> {
     // Always return a successful exchange so Pi can persist rotated refresh tokens.
     // Only skip/cancel the proxy push if the caller already aborted.
     const result = await refreshCursorToken(credentials.refresh, signal)
-    currentAccessToken = result.access
     const port = getActivePort()
     if (port && !signal.aborted) {
       await pushToken(port, result.access, signal)
@@ -179,7 +178,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
     register()
   }
 
-  async function ensureProxy(accessToken: string | null): Promise<boolean> {
+  async function ensureProxyForRequest(accessToken: string | null): Promise<boolean> {
     if (accessToken) {
       currentAccessToken = accessToken
     }
@@ -247,7 +246,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
         const requestAccessToken =
           options?.apiKey && options.apiKey !== PROXY_API_KEY ? options.apiKey : currentAccessToken
         return lazyStream(model, async () => {
-          if (!(await ensureProxy(requestAccessToken)) || !currentPort) {
+          if (!(await ensureProxyForRequest(requestAccessToken)) || !currentPort) {
             throw new Error('Cursor proxy is unavailable after one reconnect attempt')
           }
           return streamOpenAICompletions(
@@ -264,10 +263,10 @@ export default async function (pi: ExtensionAPI): Promise<void> {
         login: loginCursor,
         refreshToken: onRefreshToken,
         getApiKey: (cred) => cred.access,
-        // Keep the in-memory token current and push it to the live proxy.
         modifyModels(registeredModels, credentials) {
-          currentAccessToken = credentials.access
-          void ensureProxy(credentials.access)
+          if (currentPort) {
+            void pushToken(currentPort, credentials.access)
+          }
           return registeredModels
         },
       },
@@ -282,20 +281,22 @@ export default async function (pi: ExtensionAPI): Promise<void> {
   const storedToken = currentAccessToken
   const existingProxy = readPortFile()
 
-  if (existingProxy) {
+  async function connectAtStartup(accessToken: string | null): Promise<void> {
     try {
-      const result = await connectToProxy(() => sessionId, storedToken)
+      const result = await connectToProxy(() => sessionId, accessToken)
       currentPort = result.port
       if (result.models.length > 0) {
         updateModels(result.models)
       }
-    } catch {
-      // no existing proxy available
-    }
+    } catch {}
+  }
+
+  if (existingProxy) {
+    await connectAtStartup(storedToken)
   }
 
   if (!currentPort && storedToken) {
-    await ensureProxy(storedToken)
+    await connectAtStartup(storedToken)
   }
 
   register()

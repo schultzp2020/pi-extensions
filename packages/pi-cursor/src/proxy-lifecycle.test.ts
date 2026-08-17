@@ -2,7 +2,7 @@ import type * as ChildProcessModule from 'node:child_process'
 import type { ChildProcess, SpawnOptions } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import type * as FsModule from 'node:fs'
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { PassThrough } from 'node:stream'
@@ -922,6 +922,16 @@ describe('post-ready child exit recovery', () => {
       vi.resetModules()
       const recoveringLifecycle = await import('./proxy-lifecycle.ts')
       stopRecoveredHeartbeat = recoveringLifecycle.stopHeartbeat
+      await expect(
+        recoveringLifecycle.connectToProxy('test-session', null, {
+          portFilePath,
+          lifecycleFilePath,
+          proxyEntry,
+        }),
+      ).rejects.toThrow('No access token and no existing proxy')
+      const failedRecord = JSON.parse(readFileSync(lifecycleFilePath, 'utf8')) as Record<string, unknown>
+      expect(failedRecord).toMatchObject({ childPid: first.pid, restartOutcome: 'failed' })
+
       const second = await recoveringLifecycle.connectToProxy('test-session', 'test-secret', {
         portFilePath,
         lifecycleFilePath,
@@ -945,6 +955,75 @@ describe('post-ready child exit recovery', () => {
         } catch {
           // The child already exited.
         }
+      }
+      await waitFor(() =>
+        childPids.every((pid) => {
+          try {
+            process.kill(pid, 0)
+            return false
+          } catch {
+            return true
+          }
+        }),
+      )
+      rmSync(tempDir, { recursive: true, force: true })
+    }
+  })
+
+  it('records success when a live replacement predates exit observation', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'pi-cursor-lifecycle-replacement-'))
+    const portFilePath = join(tempDir, 'cursor-proxy.json')
+    const lifecycleFilePath = join(tempDir, 'cursor-proxy-lifecycle.json')
+    const replacementPortFilePath = join(tempDir, 'replacement-proxy.json')
+    const replacementLifecycleFilePath = join(tempDir, 'replacement-proxy-lifecycle.json')
+    const proxyEntry = fileURLToPath(new URL('./test-fixtures/ready-proxy.mjs', import.meta.url))
+    const childPids: number[] = []
+    const exits: number[] = []
+    const stopObserving = onProxyExit((event) => exits.push(event.childPid))
+    let stopReplacementHeartbeat: (() => void) | undefined
+
+    try {
+      const first = await connectToProxy('test-session', 'first-secret', {
+        portFilePath,
+        lifecycleFilePath,
+        proxyEntry,
+      })
+      childPids.push(first.pid)
+
+      vi.resetModules()
+      const replacementLifecycle = await import('./proxy-lifecycle.ts')
+      stopReplacementHeartbeat = replacementLifecycle.stopHeartbeat
+      const replacement = await replacementLifecycle.connectToProxy('replacement-session', 'replacement-secret', {
+        portFilePath: replacementPortFilePath,
+        lifecycleFilePath: replacementLifecycleFilePath,
+        proxyEntry,
+      })
+      childPids.push(replacement.pid)
+      writeFileSync(portFilePath, JSON.stringify({ port: replacement.port, pid: replacement.pid }))
+
+      process.kill(first.pid, 'SIGKILL')
+      await waitFor(() => exits.includes(first.pid))
+      await waitFor(() => {
+        try {
+          const record = JSON.parse(readFileSync(lifecycleFilePath, 'utf8')) as Record<string, unknown>
+          return record.childPid === first.pid && record.restartOutcome === 'succeeded'
+        } catch {
+          return false
+        }
+      })
+
+      const recordText = readFileSync(lifecycleFilePath, 'utf8')
+      expect(JSON.parse(recordText)).toMatchObject({ childPid: first.pid, restartOutcome: 'succeeded' })
+      expect(recordText).not.toContain('first-secret')
+      expect(recordText).not.toContain('replacement-secret')
+    } finally {
+      stopObserving()
+      stopHeartbeat()
+      stopReplacementHeartbeat?.()
+      for (const pid of childPids) {
+        try {
+          process.kill(pid, 'SIGKILL')
+        } catch {}
       }
       await waitFor(() =>
         childPids.every((pid) => {

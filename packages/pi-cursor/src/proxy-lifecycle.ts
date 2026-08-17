@@ -10,7 +10,7 @@
  * grace rules live in proxy/internal-api.ts).
  */
 import { spawn } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { createInterface } from 'node:readline'
@@ -31,6 +31,8 @@ const HEALTH_CHECK_TIMEOUT_MS = 2_000
 const HEARTBEAT_TIMEOUT_MS = 2_000
 const TOKEN_PUSH_TIMEOUT_MS = 2_000
 const MODEL_REFRESH_TIMEOUT_MS = 10_000
+const LIFECYCLE_LOCK_RETRY_MS = 5
+const LIFECYCLE_LOCK_MAX_ATTEMPTS = 20
 
 interface ProxyInfo {
   port: number
@@ -67,7 +69,6 @@ export interface ProxyConnectOptions {
 }
 
 let activeConnection: ProxyConnection | null = null
-let pendingRestart: { record: ProxyLifecycleRecord; lifecycleFilePath: string } | null = null
 const proxyExitListeners = new Set<(event: ProxyExitEvent) => void>()
 
 function isProcessAlive(pid: number): boolean {
@@ -129,6 +130,42 @@ function persistLifecycleRecord(record: ProxyLifecycleRecord, lifecycleFilePath:
   }
 }
 
+async function withLifecycleRecordLock(lifecycleFilePath: string, update: () => void): Promise<void> {
+  const lockPath = `${lifecycleFilePath}.lock`
+  try {
+    mkdirSync(resolve(lifecycleFilePath, '..'), { recursive: true })
+  } catch {
+    return
+  }
+
+  for (let attempt = 0; attempt < LIFECYCLE_LOCK_MAX_ATTEMPTS; attempt += 1) {
+    let lockHandle: number
+    try {
+      lockHandle = openSync(lockPath, 'wx')
+    } catch {
+      if (attempt + 1 < LIFECYCLE_LOCK_MAX_ATTEMPTS) {
+        await new Promise<void>((resolveWait) => {
+          setTimeout(resolveWait, LIFECYCLE_LOCK_RETRY_MS)
+        })
+      }
+      continue
+    }
+
+    try {
+      update()
+    } catch {
+    } finally {
+      try {
+        closeSync(lockHandle)
+      } catch {}
+      try {
+        unlinkSync(lockPath)
+      } catch {}
+    }
+    return
+  }
+}
+
 function readLifecycleRecord(lifecycleFilePath: string): ProxyLifecycleRecord | null {
   try {
     const value: unknown = JSON.parse(readFileSync(lifecycleFilePath, 'utf8'))
@@ -169,31 +206,25 @@ function hasSameLifecycleIdentity(left: ProxyLifecycleRecord, right: ProxyLifecy
   )
 }
 
-function completePendingRestart(
+async function completePendingRestart(
   restartOutcome: 'succeeded' | 'failed',
   lifecycleFilePath: string,
-): void {
-  const localRecord =
-    pendingRestart?.lifecycleFilePath === lifecycleFilePath ? pendingRestart.record : null
-  const record = localRecord ?? readLifecycleRecord(lifecycleFilePath)
-  if (!record || record.restartOutcome !== 'not-attempted') {
+): Promise<void> {
+  const expectedRecord = readLifecycleRecord(lifecycleFilePath)
+  if (!expectedRecord) {
     return
   }
-  const persistedRecord = readLifecycleRecord(lifecycleFilePath)
-  if (
-    !persistedRecord ||
-    persistedRecord.restartOutcome !== 'not-attempted' ||
-    !hasSameLifecycleIdentity(record, persistedRecord)
-  ) {
-    if (localRecord && pendingRestart && hasSameLifecycleIdentity(localRecord, pendingRestart.record)) {
-      pendingRestart = null
+  await withLifecycleRecordLock(lifecycleFilePath, () => {
+    const persistedRecord = readLifecycleRecord(lifecycleFilePath)
+    if (!persistedRecord || !hasSameLifecycleIdentity(expectedRecord, persistedRecord)) {
+      return
     }
-    return
-  }
-  persistLifecycleRecord({ ...record, restartOutcome }, lifecycleFilePath)
-  if (localRecord && pendingRestart && hasSameLifecycleIdentity(localRecord, pendingRestart.record)) {
-    pendingRestart = null
-  }
+    const nextOutcome =
+      persistedRecord.restartOutcome === 'succeeded' || restartOutcome === 'succeeded' ? 'succeeded' : 'failed'
+    if (persistedRecord.restartOutcome !== nextOutcome) {
+      persistLifecycleRecord({ ...persistedRecord, restartOutcome: nextOutcome }, lifecycleFilePath)
+    }
+  })
 }
 
 function removeOwnedPortFile(portFilePath: string, childPid: number): void {
@@ -207,6 +238,21 @@ function removeOwnedPortFile(portFilePath: string, childPid: number): void {
   }
 }
 
+async function persistProxyExit(
+  record: ProxyLifecycleRecord,
+  portFilePath: string,
+  lifecycleFilePath: string,
+): Promise<void> {
+  await withLifecycleRecordLock(lifecycleFilePath, () => {
+    persistLifecycleRecord(record, lifecycleFilePath)
+    const replacement = readPortFile(portFilePath)
+    if (replacement && replacement.pid !== record.childPid) {
+      record.restartOutcome = 'succeeded'
+      persistLifecycleRecord(record, lifecycleFilePath)
+    }
+  })
+}
+
 function handleProxyExit(event: ProxyExitEvent, portFilePath: string, lifecycleFilePath: string): void {
   const record: ProxyLifecycleRecord = {
     timestamp: new Date().toISOString(),
@@ -215,9 +261,8 @@ function handleProxyExit(event: ProxyExitEvent, portFilePath: string, lifecycleF
     exitSignal: event.exitSignal,
     restartOutcome: 'not-attempted',
   }
-  pendingRestart = { record, lifecycleFilePath }
-  persistLifecycleRecord(record, lifecycleFilePath)
   removeOwnedPortFile(portFilePath, event.childPid)
+  void persistProxyExit(record, portFilePath, lifecycleFilePath)
 
   if (activeConnection?.pid !== event.childPid || activeConnection.port !== event.port) {
     return
@@ -295,7 +340,7 @@ export async function connectToProxy(
       }
       startHeartbeat(existing.port, existing.pid, getSessionId)
       const models = await getModels(existing.port)
-      completePendingRestart('succeeded', lifecycleFilePath)
+      await completePendingRestart('succeeded', lifecycleFilePath)
       return { port: existing.port, pid: existing.pid, models }
     }
     // 2. No existing proxy — need to spawn
@@ -307,10 +352,10 @@ export async function connectToProxy(
       lifecycleFilePath,
       proxyEntry: options.proxyEntry ?? PROXY_ENTRY,
     })
-    completePendingRestart('succeeded', lifecycleFilePath)
+    await completePendingRestart('succeeded', lifecycleFilePath)
     return result
   } catch (error) {
-    completePendingRestart('failed', lifecycleFilePath)
+    await completePendingRestart('failed', lifecycleFilePath)
     throw error
   }
 }
