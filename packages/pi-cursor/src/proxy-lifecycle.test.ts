@@ -69,6 +69,7 @@ vi.mock('./proxy/debug-logger.ts', async (importOriginal) => {
 
 import { connectToProxy, getActivePort, onProxyExit, pushToken, stopHeartbeat } from './proxy-lifecycle.ts'
 import { logProxyStderr } from './proxy/debug-logger.ts'
+import { removeOwnedProxyPortFile } from './proxy-port-file.ts'
 
 const HEARTBEAT_INTERVAL_MS = 10_000
 const PROXY_STARTUP_TIMEOUT_MS = 15_000
@@ -892,11 +893,14 @@ describe('post-ready child exit recovery', () => {
     const tempDir = mkdtempSync(join(tmpdir(), 'pi-cursor-lifecycle-shared-reconnect-'))
     const portFilePath = join(tempDir, 'cursor-proxy.json')
     const lifecycleFilePath = join(tempDir, 'cursor-proxy-lifecycle.json')
+    const proxyLockPath = `${portFilePath}.lock`
     const proxyEntry = fileURLToPath(new URL('./test-fixtures/ready-proxy.mjs', import.meta.url))
     const childPids = new Set<number>()
     let stopAlternateHeartbeat: (() => void) | undefined
 
     try {
+      writeFileSync(proxyLockPath, '')
+      utimesSync(proxyLockPath, new Date(0), new Date(0))
       vi.resetModules()
       const alternateLifecycle = await import('./proxy-lifecycle.ts')
       stopAlternateHeartbeat = alternateLifecycle.stopHeartbeat
@@ -912,7 +916,11 @@ describe('post-ready child exit recovery', () => {
       childPids.add(second.pid)
 
       expect(second).toMatchObject({ port: first.port, pid: first.pid })
-      expect(JSON.parse(readFileSync(portFilePath, 'utf8'))).toEqual({ port: first.port, pid: first.pid })
+      expect(JSON.parse(readFileSync(portFilePath, 'utf8'))).toEqual({
+        port: first.port,
+        pid: first.pid,
+        generation: first.generation,
+      })
     } finally {
       stopHeartbeat()
       stopAlternateHeartbeat?.()
@@ -961,6 +969,56 @@ describe('post-ready child exit recovery', () => {
 
       const record = JSON.parse(readFileSync(lifecycleFilePath, 'utf8')) as Record<string, unknown>
       expect(record).toMatchObject({ childPid, restartOutcome: 'failed' })
+    } finally {
+      try {
+        staleChild.kill('SIGKILL')
+      } catch {}
+      stopHeartbeat()
+      rmSync(tempDir, { recursive: true, force: true })
+    }
+  })
+
+  it('does not inherit a restart outcome when a child PID is reused', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'pi-cursor-lifecycle-reused-exit-pid-'))
+    const portFilePath = join(tempDir, 'cursor-proxy.json')
+    const lifecycleFilePath = join(tempDir, 'cursor-proxy-lifecycle.json')
+    const proxyEntry = fileURLToPath(new URL('./test-fixtures/ready-proxy.mjs', import.meta.url))
+    const staleChild = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+      stdio: 'ignore',
+      windowsHide: true,
+    })
+
+    try {
+      await once(staleChild, 'spawn')
+      const childPid = staleChild.pid
+      if (childPid === undefined) {
+        throw new Error('Stale proxy fixture did not receive a process ID')
+      }
+      staleChild.kill('SIGKILL')
+      await once(staleChild, 'exit')
+      const previousGeneration = '2026-01-01T00:00:00.000Z'
+      const currentGeneration = '2026-01-02T00:00:00.000Z'
+      writeFileSync(
+        lifecycleFilePath,
+        JSON.stringify({
+          timestamp: previousGeneration,
+          childPid,
+          exitCode: null,
+          exitSignal: 'SIGKILL',
+          restartOutcome: 'succeeded',
+        }),
+      )
+      writeFileSync(portFilePath, JSON.stringify({ port: 65_535, pid: childPid, generation: currentGeneration }))
+
+      await expect(
+        connectToProxy('test-session', null, { portFilePath, lifecycleFilePath, proxyEntry }),
+      ).rejects.toThrow('No access token and no existing proxy')
+
+      expect(JSON.parse(readFileSync(lifecycleFilePath, 'utf8'))).toMatchObject({
+        timestamp: currentGeneration,
+        childPid,
+        restartOutcome: 'failed',
+      })
     } finally {
       try {
         staleChild.kill('SIGKILL')
@@ -1438,6 +1496,26 @@ describe('post-ready child exit recovery', () => {
           }
         })
       }
+      rmSync(tempDir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('proxy port ownership', () => {
+  it('keeps a replacement discovery record when an older proxy shuts down', () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'pi-cursor-port-ownership-'))
+    const portFilePath = join(tempDir, 'cursor-proxy.json')
+    const predecessor = { port: 4200, pid: 42, generation: '2026-01-01T00:00:00.000Z' }
+    const replacement = { port: 4200, pid: 42, generation: '2026-01-02T00:00:00.000Z' }
+
+    try {
+      writeFileSync(portFilePath, JSON.stringify(replacement))
+
+      expect(removeOwnedProxyPortFile(portFilePath, predecessor)).toBeFalsy()
+      expect(JSON.parse(readFileSync(portFilePath, 'utf8'))).toEqual(replacement)
+      expect(removeOwnedProxyPortFile(portFilePath, replacement)).toBeTruthy()
+      expect(existsSync(portFilePath)).toBeFalsy()
+    } finally {
       rmSync(tempDir, { recursive: true, force: true })
     }
   })

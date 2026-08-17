@@ -32,9 +32,25 @@ import { DEBUG_FLUSH_SHUTDOWN_TIMEOUT_MS } from './proxy/shutdown.ts'
 import { getOwnString, isRecord } from './unknown.ts'
 
 const PROVIDER_ID = 'cursor'
+const CURSOR_API = 'cursor-openai-completions'
 const PROXY_API_KEY = 'cursor-proxy'
 const AGENT_DIR = join(homedir(), '.pi', 'agent')
 const MODEL_CACHE_PATH = join(AGENT_DIR, 'cursor-model-cache.json')
+
+function supportsLegacyXhigh(modelId: string): boolean {
+  return (
+    modelId.includes('gpt-5.2') ||
+    modelId.includes('gpt-5.3') ||
+    modelId.includes('gpt-5.4') ||
+    modelId.includes('gpt-5.5') ||
+    modelId.includes('deepseek-v4-pro') ||
+    modelId.includes('deepseek-v4-flash') ||
+    modelId.includes('opus-4-6') ||
+    modelId.includes('opus-4.6') ||
+    modelId.includes('opus-4-7') ||
+    modelId.includes('opus-4.7')
+  )
+}
 
 function loadModelCache(): CursorModel[] {
   try {
@@ -242,7 +258,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
       name: 'Cursor',
       baseUrl: currentPort ? `http://localhost:${String(currentPort)}/v1` : 'http://localhost:0/v1',
       apiKey: PROXY_API_KEY,
-      api: 'openai-completions',
+      api: CURSOR_API,
       streamSimple(model, context, options) {
         const requestAccessToken =
           options?.apiKey && options.apiKey !== PROXY_API_KEY ? options.apiKey : currentAccessToken
@@ -250,8 +266,18 @@ export default async function (pi: ExtensionAPI): Promise<void> {
           if (!(await ensureProxyForRequest(requestAccessToken)) || !currentPort) {
             throw new Error('Cursor proxy is unavailable after one reconnect attempt')
           }
+          const configuredModel = providerModels.find((candidate) => candidate.id === model.id)
+          const thinkingLevelMap =
+            model.thinkingLevelMap ??
+            configuredModel?.thinkingLevelMap ??
+            (supportsLegacyXhigh(model.id) ? { xhigh: 'xhigh' as const } : undefined)
           return streamOpenAICompletions(
-            { ...model, api: 'openai-completions', baseUrl: `http://localhost:${String(currentPort)}/v1` },
+            {
+              ...model,
+              api: 'openai-completions',
+              baseUrl: `http://localhost:${String(currentPort)}/v1`,
+              thinkingLevelMap,
+            },
             context,
             options,
           )

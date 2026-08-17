@@ -13,20 +13,23 @@ import { spawn, spawnSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import {
   existsSync,
-  linkSync,
   lstatSync,
   mkdirSync,
   readFileSync,
+  readdirSync,
   renameSync,
+  rmdirSync,
   unlinkSync,
   writeFileSync,
 } from 'node:fs'
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
+import { performance } from 'node:perf_hooks'
 import { createInterface } from 'node:readline'
 
 import { captureProxyStderr } from './proxy-stderr.ts'
 import { isDebugLoggingEnabled, logProxyStderr } from './proxy/debug-logger.ts'
+import { removeOwnedProxyPortFile } from './proxy-port-file.ts'
 import type { CursorModel } from './proxy/models.ts'
 
 const PORT_FILE = join(homedir(), '.pi', 'agent', 'cursor-proxy.json')
@@ -51,14 +54,16 @@ const PROXY_LOCK_MAX_WAIT_MS =
   MODEL_REFRESH_TIMEOUT_MS +
   LIFECYCLE_LOCK_STALE_MS
 
-interface ProxyInfo {
+export interface ProxyInfo {
   port: number
   pid: number
+  generation: string
 }
 
 interface ProxyConnection {
   port: number
   pid: number
+  generation: string
   heartbeatTimer: NodeJS.Timeout
 }
 
@@ -67,6 +72,7 @@ type StartupOutcome = { ready: true; line: string } | { ready: false; message: s
 export interface ProxyExitEvent {
   port: number
   childPid: number
+  generation: string
   exitCode: number | null
   exitSignal: NodeJS.Signals | null
 }
@@ -91,18 +97,14 @@ interface SharedLockOwner {
   processIdentity: string | null
 }
 
-interface SharedLockSnapshot {
-  device: number
-  inode: number
+interface SharedLockEntry {
   modifiedAt: number
-  size: number
   owner: SharedLockOwner | null
 }
 
 interface AcquiredSharedLock {
-  device: number
-  inode: number
-  owner: SharedLockOwner
+  ticketName: string
+  ticketPath: string
 }
 
 type ProcessIdentity = { status: 'running'; identity: string } | { status: 'stopped' } | { status: 'unknown' }
@@ -123,7 +125,7 @@ export interface ProxyConnectOptions {
 let activeConnection: ProxyConnection | null = null
 const proxyExitListeners = new Set<(event: ProxyExitEvent) => void>()
 const pendingProxyExits = new Map<string, PendingProxyExit>()
-const processIdentityCache = new Map<number, { observedAt: number; identity: ProcessIdentity }>()
+const processIdentityCache = new Map<string, { observedAt: number; identity: ProcessIdentity }>()
 let currentProcessIdentity: string | null | undefined
 
 function isProcessAlive(pid: number): boolean {
@@ -164,10 +166,19 @@ function queryLinuxProcessIdentity(pid: number): ProcessIdentity {
   }
 }
 
-function queryPsProcessIdentity(pid: number): ProcessIdentity {
+function getProbeTimeout(maxProbeMs: number, defaultTimeoutMs: number): number | null {
+  const timeout = Math.min(defaultTimeoutMs, Math.floor(maxProbeMs))
+  return timeout >= 1 ? timeout : null
+}
+
+function queryPsProcessIdentity(pid: number, maxProbeMs: number): ProcessIdentity {
+  const timeout = getProbeTimeout(maxProbeMs, 1_000)
+  if (timeout === null) {
+    return { status: 'unknown' }
+  }
   const result = spawnSync('ps', ['-o', 'lstart=', '-o', 'state=', '-p', String(pid)], {
     encoding: 'utf8',
-    timeout: 1_000,
+    timeout,
     windowsHide: true,
   })
   const output = result.stdout.trim()
@@ -185,13 +196,17 @@ function queryPsProcessIdentity(pid: number): ProcessIdentity {
   return { status: 'running', identity: `ps:${fields.join(' ')}` }
 }
 
-function queryWindowsProcessIdentity(pid: number): ProcessIdentity {
+function queryWindowsProcessIdentity(pid: number, maxProbeMs: number): ProcessIdentity {
+  const timeout = getProbeTimeout(maxProbeMs, 2_000)
+  if (timeout === null) {
+    return { status: 'unknown' }
+  }
   const command =
     `$p = Get-Process -Id ${String(pid)} -ErrorAction SilentlyContinue; ` +
     'if ($null -ne $p) { $p.StartTime.ToUniversalTime().Ticks }'
   const result = spawnSync('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', command], {
     encoding: 'utf8',
-    timeout: 2_000,
+    timeout,
     windowsHide: true,
   })
   const output = result.stdout.trim()
@@ -201,40 +216,43 @@ function queryWindowsProcessIdentity(pid: number): ProcessIdentity {
   return isProcessAlive(pid) ? { status: 'unknown' } : { status: 'stopped' }
 }
 
-function queryProcessIdentity(pid: number): ProcessIdentity {
+function queryProcessIdentity(pid: number, maxProbeMs: number): ProcessIdentity {
   if (process.platform === 'linux') {
     return queryLinuxProcessIdentity(pid)
   }
   if (process.platform === 'darwin' || process.platform === 'freebsd' || process.platform === 'openbsd') {
-    return queryPsProcessIdentity(pid)
+    return queryPsProcessIdentity(pid, maxProbeMs)
   }
   if (process.platform === 'win32') {
-    return queryWindowsProcessIdentity(pid)
+    return queryWindowsProcessIdentity(pid, maxProbeMs)
   }
   return isProcessAlive(pid) ? { status: 'unknown' } : { status: 'stopped' }
 }
 
-function getCurrentProcessIdentity(): string | null {
+function getCurrentProcessIdentity(maxProbeMs: number): string | null {
   if (currentProcessIdentity !== undefined) {
     return currentProcessIdentity
   }
-  const observed = queryProcessIdentity(process.pid)
-  currentProcessIdentity = observed.status === 'running' ? observed.identity : null
-  return currentProcessIdentity
+  const observed = queryProcessIdentity(process.pid, maxProbeMs)
+  if (observed.status === 'running') {
+    currentProcessIdentity = observed.identity
+    return currentProcessIdentity
+  }
+  return null
 }
 
-function observeProcessIdentity(pid: number): ProcessIdentity {
+function observeProcessIdentity(pid: number, expectedIdentity: string | null, maxProbeMs: number): ProcessIdentity {
   if (pid === process.pid) {
-    const identity = getCurrentProcessIdentity()
+    const identity = getCurrentProcessIdentity(maxProbeMs)
     return identity === null ? { status: 'unknown' } : { status: 'running', identity }
   }
-  const now = Date.now()
-  const cached = processIdentityCache.get(pid)
-  if (cached && now - cached.observedAt < PROCESS_IDENTITY_CACHE_MS) {
+  const cacheKey = `${String(pid)}:${expectedIdentity ?? ''}`
+  const cached = processIdentityCache.get(cacheKey)
+  if (cached && performance.now() - cached.observedAt < PROCESS_IDENTITY_CACHE_MS) {
     return cached.identity
   }
-  const identity = queryProcessIdentity(pid)
-  processIdentityCache.set(pid, { observedAt: now, identity })
+  const identity = queryProcessIdentity(pid, maxProbeMs)
+  processIdentityCache.set(cacheKey, { observedAt: performance.now(), identity })
   return identity
 }
 
@@ -243,11 +261,12 @@ function parsePortFile(portFilePath: string): ParsedPortFile {
     if (!existsSync(portFilePath)) {
       return { info: null, exists: false }
     }
+    const stats = lstatSync(portFilePath)
     const value: unknown = JSON.parse(readFileSync(portFilePath, 'utf8'))
     if (typeof value !== 'object' || value === null) {
       return { info: null, exists: true }
     }
-    const { port, pid } = value as Record<string, unknown>
+    const { port, pid, generation } = value as Record<string, unknown>
     if (
       typeof port !== 'number' ||
       !Number.isSafeInteger(port) ||
@@ -255,11 +274,21 @@ function parsePortFile(portFilePath: string): ParsedPortFile {
       port > 65_535 ||
       typeof pid !== 'number' ||
       !Number.isSafeInteger(pid) ||
-      pid <= 0
+      pid <= 0 ||
+      (generation !== undefined &&
+        (typeof generation !== 'string' || generation.length === 0 || !Number.isFinite(Date.parse(generation))))
     ) {
       return { info: null, exists: true }
     }
-    return { info: { port, pid }, exists: true }
+    const legacyTimestamp = stats.birthtimeMs > 0 ? stats.birthtimeMs : stats.mtimeMs
+    return {
+      info: {
+        port,
+        pid,
+        generation: typeof generation === 'string' ? generation : new Date(legacyTimestamp).toISOString(),
+      },
+      exists: true,
+    }
   } catch {
     return { info: null, exists: existsSync(portFilePath) }
   }
@@ -305,142 +334,160 @@ function persistLifecycleRecord(record: ProxyLifecycleRecord, lifecycleFilePath:
   }
 }
 
-function readSharedLockSnapshot(lockPath: string): SharedLockSnapshot | null {
+function parseSharedLockOwner(value: unknown): SharedLockOwner | null {
+  if (typeof value !== 'object' || value === null) {
+    return null
+  }
+  const record = value as Record<string, unknown>
+  const { ownerPid, ownerId, acquiredAt, processIdentity } = record
+  if (
+    typeof ownerPid !== 'number' ||
+    !Number.isSafeInteger(ownerPid) ||
+    ownerPid <= 0 ||
+    typeof ownerId !== 'string' ||
+    ownerId.length === 0 ||
+    typeof acquiredAt !== 'number' ||
+    !Number.isFinite(acquiredAt) ||
+    acquiredAt <= 0 ||
+    (typeof processIdentity !== 'string' && processIdentity !== null && processIdentity !== undefined)
+  ) {
+    return null
+  }
+  return {
+    ownerPid,
+    ownerId,
+    acquiredAt,
+    processIdentity: typeof processIdentity === 'string' ? processIdentity : null,
+  }
+}
+
+function readSharedLockEntry(path: string): SharedLockEntry | null {
   try {
-    const stats = lstatSync(lockPath)
+    const stats = lstatSync(path)
     let owner: SharedLockOwner | null = null
     if (stats.isFile()) {
       try {
-        const value: unknown = JSON.parse(readFileSync(lockPath, 'utf8'))
-        if (typeof value === 'object' && value !== null) {
-          const record = value as Record<string, unknown>
-          const { ownerPid, ownerId, acquiredAt, processIdentity } = record
-          if (
-            typeof ownerPid === 'number' &&
-            Number.isSafeInteger(ownerPid) &&
-            ownerPid > 0 &&
-            typeof ownerId === 'string' &&
-            ownerId.length > 0 &&
-            typeof acquiredAt === 'number' &&
-            Number.isFinite(acquiredAt) &&
-            acquiredAt > 0 &&
-            (typeof processIdentity === 'string' || processIdentity === null || processIdentity === undefined)
-          ) {
-            owner = {
-              ownerPid,
-              ownerId,
-              acquiredAt,
-              processIdentity: typeof processIdentity === 'string' ? processIdentity : null,
-            }
-          }
-        }
+        owner = parseSharedLockOwner(JSON.parse(readFileSync(path, 'utf8')) as unknown)
       } catch {}
     }
-    return {
-      device: stats.dev,
-      inode: stats.ino,
-      modifiedAt: stats.mtimeMs,
-      size: stats.size,
-      owner,
-    }
+    return { modifiedAt: stats.mtimeMs, owner }
   } catch {
     return null
   }
 }
 
-function hasSameSharedLockSnapshot(left: SharedLockSnapshot, right: SharedLockSnapshot): boolean {
-  return (
-    left.device === right.device &&
-    left.inode === right.inode &&
-    left.modifiedAt === right.modifiedAt &&
-    left.size === right.size &&
-    left.owner?.ownerPid === right.owner?.ownerPid &&
-    left.owner?.ownerId === right.owner?.ownerId &&
-    left.owner?.acquiredAt === right.owner?.acquiredAt &&
-    left.owner?.processIdentity === right.owner?.processIdentity
-  )
-}
-
-function isSharedLockStale(snapshot: SharedLockSnapshot): boolean {
-  if (snapshot.owner) {
-    const observed = observeProcessIdentity(snapshot.owner.ownerPid)
+function isSharedLockEntryStale(entry: SharedLockEntry, maxProbeMs: number): boolean {
+  if (entry.owner) {
+    const observed = observeProcessIdentity(entry.owner.ownerPid, entry.owner.processIdentity, maxProbeMs)
     if (observed.status === 'stopped') {
       return true
     }
-    if (observed.status === 'unknown' || snapshot.owner.processIdentity === null) {
-      return !isProcessAlive(snapshot.owner.ownerPid)
+    if (observed.status === 'unknown') {
+      return !isProcessAlive(entry.owner.ownerPid)
     }
-    return observed.identity !== snapshot.owner.processIdentity
+    return entry.owner.processIdentity !== null && observed.identity !== entry.owner.processIdentity
   }
   const now = Date.now()
-  return snapshot.modifiedAt > now + LIFECYCLE_LOCK_STALE_MS || now - snapshot.modifiedAt >= LIFECYCLE_LOCK_STALE_MS
+  return entry.modifiedAt > now + LIFECYCLE_LOCK_STALE_MS || now - entry.modifiedAt >= LIFECYCLE_LOCK_STALE_MS
 }
 
-function removeStaleSharedLock(lockPath: string): void {
-  const observed = readSharedLockSnapshot(lockPath)
-  if (!observed || !isSharedLockStale(observed)) {
-    return
+function ensureSharedLockDirectory(lockPath: string, maxProbeMs: number): boolean {
+  try {
+    mkdirSync(lockPath, { mode: 0o700 })
+    return true
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') {
+      return false
+    }
   }
-  const current = readSharedLockSnapshot(lockPath)
-  if (!current || !hasSameSharedLockSnapshot(observed, current)) {
-    return
+
+  try {
+    if (lstatSync(lockPath).isDirectory()) {
+      return true
+    }
+  } catch {
+    return false
+  }
+
+  const legacyEntry = readSharedLockEntry(lockPath)
+  if (!legacyEntry || !isSharedLockEntryStale(legacyEntry, maxProbeMs)) {
+    return false
   }
   try {
     unlinkSync(lockPath)
   } catch {}
+  return false
 }
 
-function acquireSharedLock(lockPath: string): AcquiredSharedLock | null {
+function createSharedLockTicket(lockPath: string, maxProbeMs: number): AcquiredSharedLock | null {
+  if (!ensureSharedLockDirectory(lockPath, maxProbeMs)) {
+    return null
+  }
+  const processIdentity = getCurrentProcessIdentity(maxProbeMs)
+  if (
+    processIdentity === null &&
+    (process.platform === 'linux' ||
+      process.platform === 'darwin' ||
+      process.platform === 'freebsd' ||
+      process.platform === 'openbsd' ||
+      process.platform === 'win32')
+  ) {
+    return null
+  }
   const owner: SharedLockOwner = {
     ownerPid: process.pid,
     ownerId: randomUUID(),
     acquiredAt: Date.now(),
-    processIdentity: getCurrentProcessIdentity(),
+    processIdentity,
   }
-  const ownerPath = `${lockPath}.${owner.ownerId}.owner`
+  const sequence = process.hrtime.bigint().toString().padStart(24, '0')
+  const ticketName = `${sequence}-${String(owner.ownerPid)}-${owner.ownerId}.ticket`
+  const ticketPath = join(lockPath, ticketName)
   try {
-    writeFileSync(ownerPath, JSON.stringify(owner), { flag: 'wx', mode: 0o600 })
-    linkSync(ownerPath, lockPath)
-    const snapshot = readSharedLockSnapshot(lockPath)
-    if (
-      !snapshot ||
-      snapshot.owner?.ownerId !== owner.ownerId ||
-      snapshot.owner.ownerPid !== owner.ownerPid ||
-      snapshot.owner.processIdentity !== owner.processIdentity
-    ) {
-      return null
-    }
-    return { device: snapshot.device, inode: snapshot.inode, owner }
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
-      removeStaleSharedLock(lockPath)
-    }
+    writeFileSync(ticketPath, JSON.stringify(owner), { flag: 'wx', mode: 0o600 })
+    return { ticketName, ticketPath }
+  } catch {
     return null
-  } finally {
-    try {
-      unlinkSync(ownerPath)
-    } catch {}
   }
 }
 
-function ownsSharedLock(lockPath: string, lock: AcquiredSharedLock): boolean {
-  const snapshot = readSharedLockSnapshot(lockPath)
-  return (
-    snapshot?.device === lock.device &&
-    snapshot.inode === lock.inode &&
-    snapshot.owner?.ownerPid === lock.owner.ownerPid &&
-    snapshot.owner.ownerId === lock.owner.ownerId &&
-    snapshot.owner.acquiredAt === lock.owner.acquiredAt &&
-    snapshot.owner.processIdentity === lock.owner.processIdentity
-  )
+function getFirstSharedLockTicket(lockPath: string, maxProbeMs: number): string | null {
+  const startedAt = performance.now()
+  let ticketNames: string[]
+  try {
+    ticketNames = readdirSync(lockPath)
+      .filter((name) => name.endsWith('.ticket'))
+      .sort()
+  } catch {
+    return null
+  }
+  for (const ticketName of ticketNames) {
+    const ticketPath = join(lockPath, ticketName)
+    const entry = readSharedLockEntry(ticketPath)
+    if (!entry) {
+      continue
+    }
+    const remainingProbeMs = Math.max(0, maxProbeMs - (performance.now() - startedAt))
+    if (!isSharedLockEntryStale(entry, remainingProbeMs)) {
+      return ticketName
+    }
+    try {
+      unlinkSync(ticketPath)
+    } catch {}
+  }
+  return null
+}
+
+function ownsSharedLock(lockPath: string, lock: AcquiredSharedLock, maxProbeMs: number): boolean {
+  return existsSync(lock.ticketPath) && getFirstSharedLockTicket(lockPath, maxProbeMs) === lock.ticketName
 }
 
 function releaseSharedLock(lockPath: string, lock: AcquiredSharedLock): void {
-  if (!ownsSharedLock(lockPath, lock)) {
-    return
-  }
   try {
-    unlinkSync(lockPath)
+    unlinkSync(lock.ticketPath)
+  } catch {}
+  try {
+    rmdirSync(lockPath)
   } catch {}
 }
 
@@ -455,32 +502,36 @@ async function withSharedLock<T>(
     return { acquired: false }
   }
 
-  const maxAttempts = Math.ceil(maxWaitMs / LIFECYCLE_LOCK_RETRY_MS) + 1
-  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-    const lock = acquireSharedLock(lockPath)
-    if (!lock) {
-      if (attempt + 1 < maxAttempts) {
+  const deadline = performance.now() + maxWaitMs
+  let lock: AcquiredSharedLock | null = null
+  try {
+    while (performance.now() < deadline) {
+      const remainingMs = Math.max(0, deadline - performance.now())
+      lock ??= createSharedLockTicket(lockPath, remainingMs)
+      const ownershipRemainingMs = Math.max(0, deadline - performance.now())
+      if (lock && ownsSharedLock(lockPath, lock, ownershipRemainingMs) && performance.now() < deadline) {
+        const value = await operation()
+        if (!ownsSharedLock(lockPath, lock, LIFECYCLE_LOCK_STALE_MS)) {
+          throw new Error(`Lost shared lock ${lockPath}`)
+        }
+        return { acquired: true, value }
+      }
+      if (lock && !existsSync(lock.ticketPath)) {
+        lock = null
+      }
+      const waitMs = Math.min(LIFECYCLE_LOCK_RETRY_MS, Math.max(0, deadline - performance.now()))
+      if (waitMs > 0) {
         await new Promise<void>((resolveWait) => {
-          setTimeout(resolveWait, LIFECYCLE_LOCK_RETRY_MS)
+          setTimeout(resolveWait, waitMs)
         })
       }
-      continue
     }
-
-    try {
-      if (!ownsSharedLock(lockPath, lock)) {
-        continue
-      }
-      const value = await operation()
-      if (!ownsSharedLock(lockPath, lock)) {
-        throw new Error(`Lost shared lock ${lockPath}`)
-      }
-      return { acquired: true, value }
-    } finally {
+    return { acquired: false }
+  } finally {
+    if (lock) {
       releaseSharedLock(lockPath, lock)
     }
   }
-  return { acquired: false }
 }
 
 async function withLifecycleRecordLock(lifecycleFilePath: string, update: () => void): Promise<void> {
@@ -521,12 +572,7 @@ function readLifecycleRecord(lifecycleFilePath: string): ProxyLifecycleRecord | 
 }
 
 function hasSameLifecycleIdentity(left: ProxyLifecycleRecord, right: ProxyLifecycleRecord): boolean {
-  return (
-    left.timestamp === right.timestamp &&
-    left.childPid === right.childPid &&
-    left.exitCode === right.exitCode &&
-    left.exitSignal === right.exitSignal
-  )
+  return left.timestamp === right.timestamp && left.childPid === right.childPid
 }
 
 function mergeRestartOutcome(
@@ -598,15 +644,8 @@ async function completePendingRestart(
   return connectionCurrent && (isConnectionCurrent?.() ?? true)
 }
 
-function removeOwnedPortFile(portFilePath: string, childPid: number): void {
-  try {
-    const info = JSON.parse(readFileSync(portFilePath, 'utf8')) as ProxyInfo
-    if (info.pid === childPid) {
-      unlinkSync(portFilePath)
-    }
-  } catch {
-    // The file may already be absent or may belong to a replacement proxy.
-  }
+function hasSameProxyGeneration(info: ProxyInfo, record: ProxyLifecycleRecord): boolean {
+  return info.pid === record.childPid && info.generation === record.timestamp
 }
 
 async function persistProxyExit(
@@ -618,14 +657,15 @@ async function persistProxyExit(
     const persistedRecord = readLifecycleRecord(lifecycleFilePath)
     if (
       persistedRecord &&
-      persistedRecord.childPid !== record.childPid &&
+      !hasSameLifecycleIdentity(persistedRecord, record) &&
       isLifecycleRecordLater(persistedRecord, record)
     ) {
       return
     }
     const replacement = readPortFile(portFilePath)
-    const observedOutcome = replacement && replacement.pid !== record.childPid ? 'succeeded' : record.restartOutcome
-    if (persistedRecord?.childPid === record.childPid) {
+    const observedOutcome =
+      replacement && !hasSameProxyGeneration(replacement, record) ? 'succeeded' : record.restartOutcome
+    if (persistedRecord && hasSameLifecycleIdentity(persistedRecord, record)) {
       const persistedHasExitDetail = persistedRecord.exitCode !== null || persistedRecord.exitSignal !== null
       const recordHasExitDetail = record.exitCode !== null || record.exitSignal !== null
       const baseRecord =
@@ -650,14 +690,14 @@ async function persistProxyExit(
 }
 
 async function persistObservedProxyExit(
-  childPid: number,
+  proxy: ProxyInfo,
   portFilePath: string,
   lifecycleFilePath: string,
 ): Promise<void> {
   await persistProxyExit(
     {
-      timestamp: new Date().toISOString(),
-      childPid,
+      timestamp: proxy.generation,
+      childPid: proxy.pid,
       exitCode: null,
       exitSignal: null,
       restartOutcome: 'not-attempted',
@@ -669,18 +709,19 @@ async function persistObservedProxyExit(
 
 async function persistProxyExitWithCoordination(
   record: ProxyLifecycleRecord,
+  proxy: ProxyInfo,
   portFilePath: string,
   lifecycleFilePath: string,
 ): Promise<void> {
   await withSharedLock(`${portFilePath}.lock`, PROXY_LOCK_MAX_WAIT_MS, async () => {
     await persistProxyExit(record, portFilePath, lifecycleFilePath)
-    removeOwnedPortFile(portFilePath, record.childPid)
+    removeOwnedProxyPortFile(portFilePath, proxy)
   })
 }
 
 function handleProxyExit(event: ProxyExitEvent, portFilePath: string, lifecycleFilePath: string): void {
   const record: ProxyLifecycleRecord = {
-    timestamp: new Date().toISOString(),
+    timestamp: event.generation,
     childPid: event.childPid,
     exitCode: event.exitCode,
     exitSignal: event.exitSignal,
@@ -688,7 +729,12 @@ function handleProxyExit(event: ProxyExitEvent, portFilePath: string, lifecycleF
   }
   const pendingExit: PendingProxyExit = { record, persistence: null }
   pendingProxyExits.set(lifecycleFilePath, pendingExit)
-  const persistence = persistProxyExitWithCoordination(record, portFilePath, lifecycleFilePath)
+  const persistence = persistProxyExitWithCoordination(
+    record,
+    { port: event.port, pid: event.childPid, generation: event.generation },
+    portFilePath,
+    lifecycleFilePath,
+  )
   pendingExit.persistence = persistence
   const clearPendingExit = (): void => {
     if (pendingProxyExits.get(lifecycleFilePath) === pendingExit) {
@@ -697,7 +743,11 @@ function handleProxyExit(event: ProxyExitEvent, portFilePath: string, lifecycleF
   }
   void persistence.then(clearPendingExit, clearPendingExit)
 
-  if (activeConnection?.pid !== event.childPid || activeConnection.port !== event.port) {
+  if (
+    activeConnection?.pid !== event.childPid ||
+    activeConnection.port !== event.port ||
+    activeConnection.generation !== event.generation
+  ) {
     return
   }
   stopHeartbeat()
@@ -753,6 +803,7 @@ function isActiveProxyConnection(connection: ProxyInfo): boolean {
   return (
     activeConnection?.port === connection.port &&
     activeConnection.pid === connection.pid &&
+    activeConnection.generation === connection.generation &&
     isProcessAlive(connection.pid)
   )
 }
@@ -769,10 +820,14 @@ async function finalizeProxyConnection<T extends ProxyInfo & { models: CursorMod
     false,
   )
   if (!connectionCurrent) {
-    if (activeConnection?.port === connection.port && activeConnection.pid === connection.pid) {
+    if (
+      activeConnection?.port === connection.port &&
+      activeConnection.pid === connection.pid &&
+      activeConnection.generation === connection.generation
+    ) {
       stopHeartbeat()
     }
-    removeOwnedPortFile(portFilePath, connection.pid)
+    removeOwnedProxyPortFile(portFilePath, connection)
     throw new Error(`Proxy ${String(connection.pid)} exited before connection completed`)
   }
   return connection
@@ -789,7 +844,7 @@ export async function connectToProxy(
   sessionId: string | (() => string),
   accessToken: string | null,
   options: ProxyConnectOptions = {},
-): Promise<{ port: number; pid: number; models: CursorModel[] }> {
+): Promise<{ port: number; pid: number; generation: string; models: CursorModel[] }> {
   const getSessionId = typeof sessionId === 'function' ? sessionId : () => sessionId
   const portFilePath = options.portFilePath ?? PORT_FILE
   const lifecycleFilePath = options.lifecycleFilePath ?? LIFECYCLE_FILE
@@ -801,19 +856,19 @@ export async function connectToProxy(
         if (accessToken) {
           await pushToken(existing.port, accessToken)
         }
-        startHeartbeat(existing.port, existing.pid, getSessionId)
+        startHeartbeat(existing.port, existing.pid, existing.generation, getSessionId)
         const models = await getModels(existing.port)
         return await finalizeProxyConnection(
-          { port: existing.port, pid: existing.pid, models },
+          { port: existing.port, pid: existing.pid, generation: existing.generation, models },
           portFilePath,
           lifecycleFilePath,
         )
       }
       if (existing && !isProcessAlive(existing.pid)) {
-        await persistObservedProxyExit(existing.pid, portFilePath, lifecycleFilePath)
+        await persistObservedProxyExit(existing, portFilePath, lifecycleFilePath)
       }
       if (existing) {
-        removeOwnedPortFile(portFilePath, existing.pid)
+        removeOwnedProxyPortFile(portFilePath, existing)
       } else if (parsedPortFile.exists) {
         try {
           unlinkSync(portFilePath)
@@ -844,7 +899,8 @@ async function spawnProxy(
   getSessionId: () => string,
   accessToken: string,
   options: Required<ProxyConnectOptions>,
-): Promise<{ port: number; pid: number; models: CursorModel[] }> {
+): Promise<{ port: number; pid: number; generation: string; models: CursorModel[] }> {
+  const generation = new Date().toISOString()
   const child = spawn('node', [options.proxyEntry], {
     stdio: ['pipe', 'pipe', 'pipe'],
     detached: false,
@@ -874,7 +930,7 @@ async function spawnProxy(
   const stderrCapture = captureProxyStderr(stderr, {
     onOutput: isDebugLoggingEnabled() ? (output) => logProxyStderr(getSessionId(), output) : undefined,
   })
-  stdin.write(`${JSON.stringify({ accessToken })}\n`)
+  stdin.write(`${JSON.stringify({ accessToken, generation, portFilePath: options.portFilePath })}\n`)
   stdin.end()
 
   // kill() only confirms signal delivery and child.killed only records the
@@ -1072,7 +1128,7 @@ async function spawnProxy(
 
   child.once('exit', (code, signal) => {
     handleProxyExit(
-      { port: ready.port, childPid, exitCode: code, exitSignal: signal },
+      { port: ready.port, childPid, generation, exitCode: code, exitSignal: signal },
       options.portFilePath,
       options.lifecycleFilePath,
     )
@@ -1084,18 +1140,18 @@ async function spawnProxy(
   }
 
   // Write port file for other sessions to discover
-  writePortFile({ port: ready.port, pid: childPid }, options.portFilePath)
+  writePortFile({ port: ready.port, pid: childPid, generation }, options.portFilePath)
 
   // Start heartbeat
-  startHeartbeat(ready.port, childPid, getSessionId)
+  startHeartbeat(ready.port, childPid, generation, getSessionId)
 
   // Don't let the child keep the parent alive
   child.unref()
 
-  return { port: ready.port, pid: childPid, models: ready.models ?? [] }
+  return { port: ready.port, pid: childPid, generation, models: ready.models ?? [] }
 }
 
-function startHeartbeat(port: number, pid: number, getSessionId: () => string): void {
+function startHeartbeat(port: number, pid: number, generation: string, getSessionId: () => string): void {
   stopHeartbeat()
   // Resolve the session ID at each send so heartbeats follow session_start updates.
   void sendHeartbeat(port, getSessionId()) // immediate first heartbeat
@@ -1105,7 +1161,7 @@ function startHeartbeat(port: number, pid: number, getSessionId: () => string): 
   if (typeof timer === 'object' && 'unref' in timer) {
     timer.unref()
   }
-  activeConnection = { port, pid, heartbeatTimer: timer }
+  activeConnection = { port, pid, generation, heartbeatTimer: timer }
 }
 
 export function stopHeartbeat(): void {

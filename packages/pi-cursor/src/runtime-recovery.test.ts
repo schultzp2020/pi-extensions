@@ -1,4 +1,4 @@
-import type { Model } from '@earendil-works/pi-ai'
+import { clampThinkingLevel, type Model } from '@earendil-works/pi-ai'
 import type { ExtensionAPI, ProviderConfig } from '@earendil-works/pi-coding-agent'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -57,11 +57,11 @@ describe('request-time proxy recovery', () => {
     }
     await cursorExtension(pi as unknown as ExtensionAPI)
 
-    const model: Model<'openai-completions'> = {
+    const model: Model<'cursor-openai-completions'> = {
       id: 'cursor-test',
       name: 'Cursor Test',
       provider: 'cursor',
-      api: 'openai-completions',
+      api: 'cursor-openai-completions',
       baseUrl: 'http://localhost:4100/v1',
       reasoning: false,
       input: ['text'],
@@ -70,6 +70,7 @@ describe('request-time proxy recovery', () => {
       maxTokens: 100,
     }
     const initialProvider = registrations.at(-1)
+    expect(initialProvider?.api).toBe('cursor-openai-completions')
     expect(initialProvider?.baseUrl).toBe('http://localhost:4100/v1')
     initialProvider?.streamSimple?.(model, { systemPrompt: '', messages: [], tools: [] }, { apiKey: 'stale-access' })
     await vi.waitFor(() => expect(delegatedStream).toHaveBeenCalledOnce())
@@ -84,7 +85,10 @@ describe('request-time proxy recovery', () => {
     await vi.waitFor(() => expect(delegatedStream).toHaveBeenCalledTimes(2))
     expect(lifecycle.connectToProxy).toHaveBeenLastCalledWith(expect.any(String), 'fresh-access')
     expect(registrations.at(-1)?.baseUrl).toBe('http://localhost:4200/v1')
-    expect(delegatedStream.mock.calls[1]?.[0]).toMatchObject({ baseUrl: 'http://localhost:4200/v1' })
+    expect(delegatedStream.mock.calls[1]?.[0]).toMatchObject({
+      api: 'openai-completions',
+      baseUrl: 'http://localhost:4200/v1',
+    })
 
     lifecycle.exitListener?.({ port: 4200, childPid: 42 })
     lifecycle.connectToProxy.mockResolvedValueOnce({ port: 4300, pid: 43, models: [] })
@@ -110,11 +114,11 @@ describe('request-time proxy recovery', () => {
 
     lifecycle.isProxyHealthy.mockReset().mockResolvedValue(false)
     lifecycle.connectToProxy.mockResolvedValueOnce({ port: 4300, pid: 43, models: [] })
-    const model: Model<'openai-completions'> = {
+    const model: Model<'cursor-openai-completions'> = {
       id: 'cursor-test',
       name: 'Cursor Test',
       provider: 'cursor',
-      api: 'openai-completions',
+      api: 'cursor-openai-completions',
       baseUrl: 'http://localhost:4100/v1',
       reasoning: false,
       input: ['text'],
@@ -166,11 +170,11 @@ describe('request-time proxy recovery', () => {
     expect(registrations.at(-1)?.baseUrl).toBe('http://localhost:0/v1')
 
     lifecycle.connectToProxy.mockResolvedValueOnce({ port: 4400, pid: 44, models: [] })
-    const model: Model<'openai-completions'> = {
+    const model: Model<'cursor-openai-completions'> = {
       id: 'cursor-test',
       name: 'Cursor Test',
       provider: 'cursor',
-      api: 'openai-completions',
+      api: 'cursor-openai-completions',
       baseUrl: 'http://localhost:4100/v1',
       reasoning: false,
       input: ['text'],
@@ -187,5 +191,45 @@ describe('request-time proxy recovery', () => {
     await vi.waitFor(() => expect(delegatedStream).toHaveBeenCalledOnce())
     expect(lifecycle.connectToProxy).toHaveBeenCalledTimes(2)
     expect(registrations.at(-1)?.baseUrl).toBe('http://localhost:4400/v1')
+  })
+
+  it('preserves legacy xhigh support when Pi omits model thinking metadata', async () => {
+    const registrations: ProviderConfig[] = []
+    const pi = {
+      on: vi.fn<(event: string, handler: (...args: unknown[]) => unknown) => void>(),
+      registerCommand: vi.fn<(name: string, command: unknown) => void>(),
+      registerProvider: vi.fn<(name: string, config: ProviderConfig) => void>((_name, config) => {
+        registrations.push(config)
+      }),
+    }
+    await cursorExtension(pi as unknown as ExtensionAPI)
+
+    const model: Model<'cursor-openai-completions'> = {
+      id: 'gpt-5.4',
+      name: 'GPT-5.4',
+      provider: 'cursor',
+      api: 'cursor-openai-completions',
+      baseUrl: 'http://localhost:4100/v1',
+      reasoning: true,
+      input: ['text'],
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: 200_000,
+      maxTokens: 64_000,
+    }
+    registrations
+      .at(-1)
+      ?.streamSimple?.(
+        model,
+        { systemPrompt: '', messages: [], tools: [] },
+        { apiKey: 'cursor-proxy', reasoning: 'xhigh' },
+      )
+
+    await vi.waitFor(() => expect(delegatedStream).toHaveBeenCalledOnce())
+    const delegatedModel = delegatedStream.mock.calls[0]?.[0]
+    expect(delegatedModel).toMatchObject({
+      api: 'openai-completions',
+      thinkingLevelMap: { xhigh: 'xhigh' },
+    })
+    expect(delegatedModel && clampThinkingLevel(delegatedModel, 'xhigh')).toBe('xhigh')
   })
 })
