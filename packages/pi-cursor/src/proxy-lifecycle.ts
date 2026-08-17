@@ -75,6 +75,11 @@ interface ProxyLifecycleRecord {
   restartOutcome: 'not-attempted' | 'succeeded' | 'failed'
 }
 
+interface PendingProxyExit {
+  record: ProxyLifecycleRecord
+  persistence: Promise<void> | null
+}
+
 interface LifecycleLockOwner {
   ownerPid: number
   ownerId: string
@@ -104,6 +109,7 @@ export interface ProxyConnectOptions {
 
 let activeConnection: ProxyConnection | null = null
 const proxyExitListeners = new Set<(event: ProxyExitEvent) => void>()
+const pendingProxyExits = new Map<string, PendingProxyExit>()
 
 function isProcessAlive(pid: number): boolean {
   try {
@@ -220,12 +226,11 @@ function hasSameLifecycleLockSnapshot(left: LifecycleLockSnapshot, right: Lifecy
 }
 
 function isLifecycleLockStale(snapshot: LifecycleLockSnapshot): boolean {
-  if (snapshot.owner && !isProcessAlive(snapshot.owner.ownerPid)) {
-    return true
+  if (snapshot.owner) {
+    return !isProcessAlive(snapshot.owner.ownerPid)
   }
-  const lastActivity = Math.min(snapshot.modifiedAt, snapshot.owner?.acquiredAt ?? snapshot.modifiedAt)
   const now = Date.now()
-  return lastActivity > now + LIFECYCLE_LOCK_STALE_MS || now - lastActivity >= LIFECYCLE_LOCK_STALE_MS
+  return snapshot.modifiedAt > now + LIFECYCLE_LOCK_STALE_MS || now - snapshot.modifiedAt >= LIFECYCLE_LOCK_STALE_MS
 }
 
 function removeStaleLifecycleLock(lockPath: string): void {
@@ -407,12 +412,31 @@ function isLifecycleRecordLater(left: ProxyLifecycleRecord, right: ProxyLifecycl
 async function completePendingRestart(
   restartOutcome: 'succeeded' | 'failed',
   lifecycleFilePath: string,
-): Promise<void> {
+  isConnectionCurrent?: () => boolean,
+): Promise<boolean> {
+  if (isConnectionCurrent && !isConnectionCurrent()) {
+    return false
+  }
+  const pendingExit = pendingProxyExits.get(lifecycleFilePath)
+  if (pendingExit) {
+    pendingExit.record.restartOutcome = mergeRestartOutcome(pendingExit.record.restartOutcome, restartOutcome)
+    if (pendingExit.persistence) {
+      await pendingExit.persistence
+    }
+  }
+  if (isConnectionCurrent && !isConnectionCurrent()) {
+    return false
+  }
   const expectedRecord = readLifecycleRecord(lifecycleFilePath)
   if (!expectedRecord) {
-    return
+    return isConnectionCurrent?.() ?? true
   }
+  let connectionCurrent = true
   await withLifecycleRecordLock(lifecycleFilePath, () => {
+    if (isConnectionCurrent && !isConnectionCurrent()) {
+      connectionCurrent = false
+      return
+    }
     const persistedRecord = readLifecycleRecord(lifecycleFilePath)
     if (!persistedRecord || !hasSameLifecycleIdentity(expectedRecord, persistedRecord)) {
       return
@@ -422,6 +446,7 @@ async function completePendingRestart(
       persistLifecycleRecord({ ...persistedRecord, restartOutcome: nextOutcome }, lifecycleFilePath)
     }
   })
+  return connectionCurrent && (isConnectionCurrent?.() ?? true)
 }
 
 function removeOwnedPortFile(portFilePath: string, childPid: number): void {
@@ -468,7 +493,16 @@ function handleProxyExit(event: ProxyExitEvent, portFilePath: string, lifecycleF
     restartOutcome: 'not-attempted',
   }
   removeOwnedPortFile(portFilePath, event.childPid)
-  void persistProxyExit(record, portFilePath, lifecycleFilePath)
+  const pendingExit: PendingProxyExit = { record, persistence: null }
+  pendingProxyExits.set(lifecycleFilePath, pendingExit)
+  const persistence = persistProxyExit(record, portFilePath, lifecycleFilePath)
+  pendingExit.persistence = persistence
+  const clearPendingExit = (): void => {
+    if (pendingProxyExits.get(lifecycleFilePath) === pendingExit) {
+      pendingProxyExits.delete(lifecycleFilePath)
+    }
+  }
+  void persistence.then(clearPendingExit, clearPendingExit)
 
   if (activeConnection?.pid !== event.childPid || activeConnection.port !== event.port) {
     return
@@ -522,6 +556,32 @@ async function getModels(port: number): Promise<CursorModel[]> {
   return data.models
 }
 
+function isActiveProxyConnection(connection: ProxyInfo): boolean {
+  return (
+    activeConnection?.port === connection.port &&
+    activeConnection.pid === connection.pid &&
+    isProcessAlive(connection.pid)
+  )
+}
+
+async function finalizeProxyConnection<T extends ProxyInfo & { models: CursorModel[] }>(
+  connection: T,
+  portFilePath: string,
+  lifecycleFilePath: string,
+): Promise<T> {
+  const connectionCurrent = await completePendingRestart('succeeded', lifecycleFilePath, () =>
+    isActiveProxyConnection(connection),
+  )
+  if (!connectionCurrent) {
+    if (activeConnection?.port === connection.port && activeConnection.pid === connection.pid) {
+      stopHeartbeat()
+    }
+    removeOwnedPortFile(portFilePath, connection.pid)
+    throw new Error(`Proxy ${String(connection.pid)} exited before connection completed`)
+  }
+  return connection
+}
+
 /**
  * Connect to an existing proxy or spawn a new one.
  *
@@ -546,8 +606,11 @@ export async function connectToProxy(
       }
       startHeartbeat(existing.port, existing.pid, getSessionId)
       const models = await getModels(existing.port)
-      await completePendingRestart('succeeded', lifecycleFilePath)
-      return { port: existing.port, pid: existing.pid, models }
+      return await finalizeProxyConnection(
+        { port: existing.port, pid: existing.pid, models },
+        portFilePath,
+        lifecycleFilePath,
+      )
     }
     // 2. No existing proxy — need to spawn
     if (!accessToken) {
@@ -558,8 +621,7 @@ export async function connectToProxy(
       lifecycleFilePath,
       proxyEntry: options.proxyEntry ?? PROXY_ENTRY,
     })
-    await completePendingRestart('succeeded', lifecycleFilePath)
-    return result
+    return await finalizeProxyConnection(result, portFilePath, lifecycleFilePath)
   } catch (error) {
     await completePendingRestart('failed', lifecycleFilePath)
     throw error

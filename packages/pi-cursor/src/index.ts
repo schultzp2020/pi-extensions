@@ -2,7 +2,8 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
-import { lazyStream, type OAuthCredentials, type OAuthLoginCallbacks } from '@earendil-works/pi-ai'
+import type { OAuthCredentials, OAuthLoginCallbacks } from '@earendil-works/pi-ai'
+import { lazyStream } from '@earendil-works/pi-ai/api/lazy'
 import { streamSimple as streamOpenAICompletions } from '@earendil-works/pi-ai/api/openai-completions'
 import type { ExtensionAPI, ProviderModelConfig } from '@earendil-works/pi-coding-agent'
 

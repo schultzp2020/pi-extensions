@@ -5,7 +5,7 @@ import { loadConfig } from 'rolldown/config'
 import { describe, expect, it } from 'vitest'
 
 describe('published extension bundle', () => {
-  it('bundles the OpenAI completions adapter required at runtime', async () => {
+  it('bundles the Pi API helpers required at runtime', async () => {
     const configPath = fileURLToPath(new URL('../rolldown.config.ts', import.meta.url))
     const loadedConfig = await loadConfig(configPath)
     if (typeof loadedConfig === 'function' || Array.isArray(loadedConfig)) {
@@ -21,8 +21,9 @@ describe('published extension bundle', () => {
     const imports = chunks.flatMap((chunk) => chunk.imports)
     const moduleIds = chunks.flatMap((chunk) => chunk.moduleIds.map((id) => id.replaceAll('\\', '/')))
 
-    expect(imports).toContain('@earendil-works/pi-ai')
+    expect(imports).not.toContain('@earendil-works/pi-ai/api/lazy')
     expect(imports).not.toContain('@earendil-works/pi-ai/api/openai-completions')
+    expect(moduleIds.some((id) => id.endsWith('/dist/api/lazy.js'))).toBe(true)
     expect(moduleIds.some((id) => id.endsWith('/dist/api/openai-completions.js'))).toBe(true)
   })
 })
