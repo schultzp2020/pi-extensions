@@ -9,15 +9,13 @@
  * the proxy self-exits once heartbeats stop (timeout and sleep-resume
  * grace rules live in proxy/internal-api.ts).
  */
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import {
-  closeSync,
   existsSync,
-  fstatSync,
+  linkSync,
   lstatSync,
   mkdirSync,
-  openSync,
   readFileSync,
   renameSync,
   unlinkSync,
@@ -45,7 +43,13 @@ const TOKEN_PUSH_TIMEOUT_MS = 2_000
 const MODEL_REFRESH_TIMEOUT_MS = 10_000
 const LIFECYCLE_LOCK_RETRY_MS = 5
 const LIFECYCLE_LOCK_STALE_MS = 2_000
-const LIFECYCLE_LOCK_MAX_ATTEMPTS = Math.ceil(LIFECYCLE_LOCK_STALE_MS / LIFECYCLE_LOCK_RETRY_MS) + 10
+const PROCESS_IDENTITY_CACHE_MS = 250
+const PROXY_LOCK_MAX_WAIT_MS =
+  PROXY_STARTUP_TIMEOUT_MS +
+  HEALTH_CHECK_TIMEOUT_MS +
+  TOKEN_PUSH_TIMEOUT_MS +
+  MODEL_REFRESH_TIMEOUT_MS +
+  LIFECYCLE_LOCK_STALE_MS
 
 interface ProxyInfo {
   port: number
@@ -80,25 +84,34 @@ interface PendingProxyExit {
   persistence: Promise<void> | null
 }
 
-interface LifecycleLockOwner {
+interface SharedLockOwner {
   ownerPid: number
   ownerId: string
   acquiredAt: number
+  processIdentity: string | null
 }
 
-interface LifecycleLockSnapshot {
+interface SharedLockSnapshot {
   device: number
   inode: number
   modifiedAt: number
   size: number
-  owner: LifecycleLockOwner | null
+  owner: SharedLockOwner | null
 }
 
-interface AcquiredLifecycleLock {
-  handle: number
+interface AcquiredSharedLock {
   device: number
   inode: number
-  owner: LifecycleLockOwner
+  owner: SharedLockOwner
+}
+
+type ProcessIdentity = { status: 'running'; identity: string } | { status: 'stopped' } | { status: 'unknown' }
+
+type SharedLockResult<T> = { acquired: true; value: T } | { acquired: false }
+
+interface ParsedPortFile {
+  info: ProxyInfo | null
+  exists: boolean
 }
 
 export interface ProxyConnectOptions {
@@ -110,6 +123,8 @@ export interface ProxyConnectOptions {
 let activeConnection: ProxyConnection | null = null
 const proxyExitListeners = new Set<(event: ProxyExitEvent) => void>()
 const pendingProxyExits = new Map<string, PendingProxyExit>()
+const processIdentityCache = new Map<number, { observedAt: number; identity: ProcessIdentity }>()
+let currentProcessIdentity: string | null | undefined
 
 function isProcessAlive(pid: number): boolean {
   try {
@@ -120,29 +135,143 @@ function isProcessAlive(pid: number): boolean {
   }
 }
 
-/**
- * Read the port file. Returns proxy info if the file exists and the
- * process is still alive, otherwise cleans up the stale file.
- */
-export function readPortFile(portFilePath = PORT_FILE): ProxyInfo | null {
+function queryLinuxProcessIdentity(pid: number): ProcessIdentity {
+  try {
+    const stat = readFileSync(`/proc/${String(pid)}/stat`, 'utf8')
+    const commandEnd = stat.lastIndexOf(')')
+    if (commandEnd < 0) {
+      return { status: 'unknown' }
+    }
+    const fields = stat
+      .slice(commandEnd + 2)
+      .trim()
+      .split(/\s+/)
+    const state = fields[0]
+    const startTime = fields[19]
+    if (state === 'Z') {
+      return { status: 'stopped' }
+    }
+    if (!startTime) {
+      return { status: 'unknown' }
+    }
+    let bootId = ''
+    try {
+      bootId = readFileSync('/proc/sys/kernel/random/boot_id', 'utf8').trim()
+    } catch {}
+    return { status: 'running', identity: `linux:${bootId}:${startTime}` }
+  } catch {
+    return isProcessAlive(pid) ? { status: 'unknown' } : { status: 'stopped' }
+  }
+}
+
+function queryPsProcessIdentity(pid: number): ProcessIdentity {
+  const result = spawnSync('ps', ['-o', 'lstart=', '-o', 'state=', '-p', String(pid)], {
+    encoding: 'utf8',
+    timeout: 1_000,
+    windowsHide: true,
+  })
+  const output = result.stdout.trim()
+  if (result.status !== 0 || !output) {
+    return isProcessAlive(pid) ? { status: 'unknown' } : { status: 'stopped' }
+  }
+  const fields = output.split(/\s+/)
+  const state = fields.pop()
+  if (!state || fields.length === 0) {
+    return { status: 'unknown' }
+  }
+  if (state.startsWith('Z')) {
+    return { status: 'stopped' }
+  }
+  return { status: 'running', identity: `ps:${fields.join(' ')}` }
+}
+
+function queryWindowsProcessIdentity(pid: number): ProcessIdentity {
+  const command =
+    `$p = Get-Process -Id ${String(pid)} -ErrorAction SilentlyContinue; ` +
+    'if ($null -ne $p) { $p.StartTime.ToUniversalTime().Ticks }'
+  const result = spawnSync('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', command], {
+    encoding: 'utf8',
+    timeout: 2_000,
+    windowsHide: true,
+  })
+  const output = result.stdout.trim()
+  if (result.status === 0 && /^\d+$/.test(output)) {
+    return { status: 'running', identity: `windows:${output}` }
+  }
+  return isProcessAlive(pid) ? { status: 'unknown' } : { status: 'stopped' }
+}
+
+function queryProcessIdentity(pid: number): ProcessIdentity {
+  if (process.platform === 'linux') {
+    return queryLinuxProcessIdentity(pid)
+  }
+  if (process.platform === 'darwin' || process.platform === 'freebsd' || process.platform === 'openbsd') {
+    return queryPsProcessIdentity(pid)
+  }
+  if (process.platform === 'win32') {
+    return queryWindowsProcessIdentity(pid)
+  }
+  return isProcessAlive(pid) ? { status: 'unknown' } : { status: 'stopped' }
+}
+
+function getCurrentProcessIdentity(): string | null {
+  if (currentProcessIdentity !== undefined) {
+    return currentProcessIdentity
+  }
+  const observed = queryProcessIdentity(process.pid)
+  currentProcessIdentity = observed.status === 'running' ? observed.identity : null
+  return currentProcessIdentity
+}
+
+function observeProcessIdentity(pid: number): ProcessIdentity {
+  if (pid === process.pid) {
+    const identity = getCurrentProcessIdentity()
+    return identity === null ? { status: 'unknown' } : { status: 'running', identity }
+  }
+  const now = Date.now()
+  const cached = processIdentityCache.get(pid)
+  if (cached && now - cached.observedAt < PROCESS_IDENTITY_CACHE_MS) {
+    return cached.identity
+  }
+  const identity = queryProcessIdentity(pid)
+  processIdentityCache.set(pid, { observedAt: now, identity })
+  return identity
+}
+
+function parsePortFile(portFilePath: string): ParsedPortFile {
   try {
     if (!existsSync(portFilePath)) {
-      return null
+      return { info: null, exists: false }
     }
-    const data = JSON.parse(readFileSync(portFilePath, 'utf8')) as ProxyInfo
-    if (data.port && data.pid && isProcessAlive(data.pid)) {
-      return data
+    const value: unknown = JSON.parse(readFileSync(portFilePath, 'utf8'))
+    if (typeof value !== 'object' || value === null) {
+      return { info: null, exists: true }
     }
-    // Stale port file — clean up
-    try {
-      unlinkSync(portFilePath)
-    } catch {
-      // ignore cleanup errors
+    const { port, pid } = value as Record<string, unknown>
+    if (
+      typeof port !== 'number' ||
+      !Number.isSafeInteger(port) ||
+      port <= 0 ||
+      port > 65_535 ||
+      typeof pid !== 'number' ||
+      !Number.isSafeInteger(pid) ||
+      pid <= 0
+    ) {
+      return { info: null, exists: true }
     }
-    return null
+    return { info: { port, pid }, exists: true }
   } catch {
-    return null
+    return { info: null, exists: existsSync(portFilePath) }
   }
+}
+
+/**
+ * Read the port file. Returns proxy info if the file exists and the
+ * process is still alive.
+ */
+export function readPortFile(portFilePath = PORT_FILE): ProxyInfo | null {
+  const parsed = parsePortFile(portFilePath)
+  return parsed.info && isProcessAlive(parsed.info.pid) ? parsed.info : null
 }
 
 function writePortFile(info: ProxyInfo, portFilePath: string): void {
@@ -176,16 +305,16 @@ function persistLifecycleRecord(record: ProxyLifecycleRecord, lifecycleFilePath:
   }
 }
 
-function readLifecycleLockSnapshot(lockPath: string): LifecycleLockSnapshot | null {
+function readSharedLockSnapshot(lockPath: string): SharedLockSnapshot | null {
   try {
     const stats = lstatSync(lockPath)
-    let owner: LifecycleLockOwner | null = null
+    let owner: SharedLockOwner | null = null
     if (stats.isFile()) {
       try {
         const value: unknown = JSON.parse(readFileSync(lockPath, 'utf8'))
         if (typeof value === 'object' && value !== null) {
           const record = value as Record<string, unknown>
-          const { ownerPid, ownerId, acquiredAt } = record
+          const { ownerPid, ownerId, acquiredAt, processIdentity } = record
           if (
             typeof ownerPid === 'number' &&
             Number.isSafeInteger(ownerPid) &&
@@ -194,9 +323,15 @@ function readLifecycleLockSnapshot(lockPath: string): LifecycleLockSnapshot | nu
             ownerId.length > 0 &&
             typeof acquiredAt === 'number' &&
             Number.isFinite(acquiredAt) &&
-            acquiredAt > 0
+            acquiredAt > 0 &&
+            (typeof processIdentity === 'string' || processIdentity === null || processIdentity === undefined)
           ) {
-            owner = { ownerPid, ownerId, acquiredAt }
+            owner = {
+              ownerPid,
+              ownerId,
+              acquiredAt,
+              processIdentity: typeof processIdentity === 'string' ? processIdentity : null,
+            }
           }
         }
       } catch {}
@@ -213,7 +348,7 @@ function readLifecycleLockSnapshot(lockPath: string): LifecycleLockSnapshot | nu
   }
 }
 
-function hasSameLifecycleLockSnapshot(left: LifecycleLockSnapshot, right: LifecycleLockSnapshot): boolean {
+function hasSameSharedLockSnapshot(left: SharedLockSnapshot, right: SharedLockSnapshot): boolean {
   return (
     left.device === right.device &&
     left.inode === right.inode &&
@@ -221,25 +356,33 @@ function hasSameLifecycleLockSnapshot(left: LifecycleLockSnapshot, right: Lifecy
     left.size === right.size &&
     left.owner?.ownerPid === right.owner?.ownerPid &&
     left.owner?.ownerId === right.owner?.ownerId &&
-    left.owner?.acquiredAt === right.owner?.acquiredAt
+    left.owner?.acquiredAt === right.owner?.acquiredAt &&
+    left.owner?.processIdentity === right.owner?.processIdentity
   )
 }
 
-function isLifecycleLockStale(snapshot: LifecycleLockSnapshot): boolean {
+function isSharedLockStale(snapshot: SharedLockSnapshot): boolean {
   if (snapshot.owner) {
-    return !isProcessAlive(snapshot.owner.ownerPid)
+    const observed = observeProcessIdentity(snapshot.owner.ownerPid)
+    if (observed.status === 'stopped') {
+      return true
+    }
+    if (observed.status === 'unknown' || snapshot.owner.processIdentity === null) {
+      return !isProcessAlive(snapshot.owner.ownerPid)
+    }
+    return observed.identity !== snapshot.owner.processIdentity
   }
   const now = Date.now()
   return snapshot.modifiedAt > now + LIFECYCLE_LOCK_STALE_MS || now - snapshot.modifiedAt >= LIFECYCLE_LOCK_STALE_MS
 }
 
-function removeStaleLifecycleLock(lockPath: string): void {
-  const observed = readLifecycleLockSnapshot(lockPath)
-  if (!observed || !isLifecycleLockStale(observed)) {
+function removeStaleSharedLock(lockPath: string): void {
+  const observed = readSharedLockSnapshot(lockPath)
+  if (!observed || !isSharedLockStale(observed)) {
     return
   }
-  const current = readLifecycleLockSnapshot(lockPath)
-  if (!current || !hasSameLifecycleLockSnapshot(observed, current)) {
+  const current = readSharedLockSnapshot(lockPath)
+  if (!current || !hasSameSharedLockSnapshot(observed, current)) {
     return
   }
   try {
@@ -247,56 +390,53 @@ function removeStaleLifecycleLock(lockPath: string): void {
   } catch {}
 }
 
-function acquireLifecycleLock(lockPath: string): AcquiredLifecycleLock | null {
-  const owner: LifecycleLockOwner = {
+function acquireSharedLock(lockPath: string): AcquiredSharedLock | null {
+  const owner: SharedLockOwner = {
     ownerPid: process.pid,
     ownerId: randomUUID(),
     acquiredAt: Date.now(),
+    processIdentity: getCurrentProcessIdentity(),
   }
-  let handle: number | null = null
-  let device: number | null = null
-  let inode: number | null = null
+  const ownerPath = `${lockPath}.${owner.ownerId}.owner`
   try {
-    handle = openSync(lockPath, 'wx', 0o600)
-    const stats = fstatSync(handle)
-    device = stats.dev
-    inode = stats.ino
-    writeFileSync(handle, JSON.stringify(owner))
-    return { handle, device, inode, owner }
+    writeFileSync(ownerPath, JSON.stringify(owner), { flag: 'wx', mode: 0o600 })
+    linkSync(ownerPath, lockPath)
+    const snapshot = readSharedLockSnapshot(lockPath)
+    if (
+      !snapshot ||
+      snapshot.owner?.ownerId !== owner.ownerId ||
+      snapshot.owner.ownerPid !== owner.ownerPid ||
+      snapshot.owner.processIdentity !== owner.processIdentity
+    ) {
+      return null
+    }
+    return { device: snapshot.device, inode: snapshot.inode, owner }
   } catch (error) {
-    if (handle !== null) {
-      try {
-        closeSync(handle)
-      } catch {}
-      const snapshot = readLifecycleLockSnapshot(lockPath)
-      if (snapshot && snapshot.device === device && snapshot.inode === inode) {
-        try {
-          unlinkSync(lockPath)
-        } catch {}
-      }
-    } else if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
-      removeStaleLifecycleLock(lockPath)
+    if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
+      removeStaleSharedLock(lockPath)
     }
     return null
+  } finally {
+    try {
+      unlinkSync(ownerPath)
+    } catch {}
   }
 }
 
-function ownsLifecycleLock(lockPath: string, lock: AcquiredLifecycleLock): boolean {
-  const snapshot = readLifecycleLockSnapshot(lockPath)
+function ownsSharedLock(lockPath: string, lock: AcquiredSharedLock): boolean {
+  const snapshot = readSharedLockSnapshot(lockPath)
   return (
     snapshot?.device === lock.device &&
     snapshot.inode === lock.inode &&
     snapshot.owner?.ownerPid === lock.owner.ownerPid &&
     snapshot.owner.ownerId === lock.owner.ownerId &&
-    snapshot.owner.acquiredAt === lock.owner.acquiredAt
+    snapshot.owner.acquiredAt === lock.owner.acquiredAt &&
+    snapshot.owner.processIdentity === lock.owner.processIdentity
   )
 }
 
-function releaseLifecycleLock(lockPath: string, lock: AcquiredLifecycleLock): void {
-  try {
-    closeSync(lock.handle)
-  } catch {}
-  if (!ownsLifecycleLock(lockPath, lock)) {
+function releaseSharedLock(lockPath: string, lock: AcquiredSharedLock): void {
+  if (!ownsSharedLock(lockPath, lock)) {
     return
   }
   try {
@@ -304,18 +444,22 @@ function releaseLifecycleLock(lockPath: string, lock: AcquiredLifecycleLock): vo
   } catch {}
 }
 
-async function withLifecycleRecordLock(lifecycleFilePath: string, update: () => void): Promise<void> {
-  const lockPath = `${lifecycleFilePath}.lock`
+async function withSharedLock<T>(
+  lockPath: string,
+  maxWaitMs: number,
+  operation: () => T | Promise<T>,
+): Promise<SharedLockResult<T>> {
   try {
-    mkdirSync(resolve(lifecycleFilePath, '..'), { recursive: true })
+    mkdirSync(resolve(lockPath, '..'), { recursive: true })
   } catch {
-    return
+    return { acquired: false }
   }
 
-  for (let attempt = 0; attempt < LIFECYCLE_LOCK_MAX_ATTEMPTS; attempt += 1) {
-    const lock = acquireLifecycleLock(lockPath)
+  const maxAttempts = Math.ceil(maxWaitMs / LIFECYCLE_LOCK_RETRY_MS) + 1
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    const lock = acquireSharedLock(lockPath)
     if (!lock) {
-      if (attempt + 1 < LIFECYCLE_LOCK_MAX_ATTEMPTS) {
+      if (attempt + 1 < maxAttempts) {
         await new Promise<void>((resolveWait) => {
           setTimeout(resolveWait, LIFECYCLE_LOCK_RETRY_MS)
         })
@@ -323,22 +467,26 @@ async function withLifecycleRecordLock(lifecycleFilePath: string, update: () => 
       continue
     }
 
-    let retry = false
     try {
-      if (!ownsLifecycleLock(lockPath, lock)) {
-        retry = true
-      } else {
-        update()
-        retry = !ownsLifecycleLock(lockPath, lock)
+      if (!ownsSharedLock(lockPath, lock)) {
+        continue
       }
-    } catch {
+      const value = await operation()
+      if (!ownsSharedLock(lockPath, lock)) {
+        throw new Error(`Lost shared lock ${lockPath}`)
+      }
+      return { acquired: true, value }
     } finally {
-      releaseLifecycleLock(lockPath, lock)
-    }
-    if (!retry) {
-      return
+      releaseSharedLock(lockPath, lock)
     }
   }
+  return { acquired: false }
+}
+
+async function withLifecycleRecordLock(lifecycleFilePath: string, update: () => void): Promise<void> {
+  try {
+    await withSharedLock(`${lifecycleFilePath}.lock`, LIFECYCLE_LOCK_STALE_MS, update)
+  } catch {}
 }
 
 function readLifecycleRecord(lifecycleFilePath: string): ProxyLifecycleRecord | null {
@@ -413,6 +561,7 @@ async function completePendingRestart(
   restartOutcome: 'succeeded' | 'failed',
   lifecycleFilePath: string,
   isConnectionCurrent?: () => boolean,
+  awaitPendingPersistence = true,
 ): Promise<boolean> {
   if (isConnectionCurrent && !isConnectionCurrent()) {
     return false
@@ -420,7 +569,7 @@ async function completePendingRestart(
   const pendingExit = pendingProxyExits.get(lifecycleFilePath)
   if (pendingExit) {
     pendingExit.record.restartOutcome = mergeRestartOutcome(pendingExit.record.restartOutcome, restartOutcome)
-    if (pendingExit.persistence) {
+    if (awaitPendingPersistence && pendingExit.persistence) {
       await pendingExit.persistence
     }
   }
@@ -469,18 +618,63 @@ async function persistProxyExit(
     const persistedRecord = readLifecycleRecord(lifecycleFilePath)
     if (
       persistedRecord &&
-      !hasSameLifecycleIdentity(record, persistedRecord) &&
+      persistedRecord.childPid !== record.childPid &&
       isLifecycleRecordLater(persistedRecord, record)
     ) {
       return
     }
     const replacement = readPortFile(portFilePath)
     const observedOutcome = replacement && replacement.pid !== record.childPid ? 'succeeded' : record.restartOutcome
-    const restartOutcome =
-      persistedRecord && hasSameLifecycleIdentity(record, persistedRecord)
-        ? mergeRestartOutcome(persistedRecord.restartOutcome, observedOutcome)
-        : observedOutcome
-    persistLifecycleRecord({ ...record, restartOutcome }, lifecycleFilePath)
+    if (persistedRecord?.childPid === record.childPid) {
+      const persistedHasExitDetail = persistedRecord.exitCode !== null || persistedRecord.exitSignal !== null
+      const recordHasExitDetail = record.exitCode !== null || record.exitSignal !== null
+      const baseRecord =
+        recordHasExitDetail && !persistedHasExitDetail
+          ? record
+          : persistedHasExitDetail && !recordHasExitDetail
+            ? persistedRecord
+            : isLifecycleRecordLater(record, persistedRecord)
+              ? record
+              : persistedRecord
+      persistLifecycleRecord(
+        {
+          ...baseRecord,
+          restartOutcome: mergeRestartOutcome(persistedRecord.restartOutcome, observedOutcome),
+        },
+        lifecycleFilePath,
+      )
+      return
+    }
+    persistLifecycleRecord({ ...record, restartOutcome: observedOutcome }, lifecycleFilePath)
+  })
+}
+
+async function persistObservedProxyExit(
+  childPid: number,
+  portFilePath: string,
+  lifecycleFilePath: string,
+): Promise<void> {
+  await persistProxyExit(
+    {
+      timestamp: new Date().toISOString(),
+      childPid,
+      exitCode: null,
+      exitSignal: null,
+      restartOutcome: 'not-attempted',
+    },
+    portFilePath,
+    lifecycleFilePath,
+  )
+}
+
+async function persistProxyExitWithCoordination(
+  record: ProxyLifecycleRecord,
+  portFilePath: string,
+  lifecycleFilePath: string,
+): Promise<void> {
+  await withSharedLock(`${portFilePath}.lock`, PROXY_LOCK_MAX_WAIT_MS, async () => {
+    await persistProxyExit(record, portFilePath, lifecycleFilePath)
+    removeOwnedPortFile(portFilePath, record.childPid)
   })
 }
 
@@ -492,10 +686,9 @@ function handleProxyExit(event: ProxyExitEvent, portFilePath: string, lifecycleF
     exitSignal: event.exitSignal,
     restartOutcome: 'not-attempted',
   }
-  removeOwnedPortFile(portFilePath, event.childPid)
   const pendingExit: PendingProxyExit = { record, persistence: null }
   pendingProxyExits.set(lifecycleFilePath, pendingExit)
-  const persistence = persistProxyExit(record, portFilePath, lifecycleFilePath)
+  const persistence = persistProxyExitWithCoordination(record, portFilePath, lifecycleFilePath)
   pendingExit.persistence = persistence
   const clearPendingExit = (): void => {
     if (pendingProxyExits.get(lifecycleFilePath) === pendingExit) {
@@ -569,8 +762,11 @@ async function finalizeProxyConnection<T extends ProxyInfo & { models: CursorMod
   portFilePath: string,
   lifecycleFilePath: string,
 ): Promise<T> {
-  const connectionCurrent = await completePendingRestart('succeeded', lifecycleFilePath, () =>
-    isActiveProxyConnection(connection),
+  const connectionCurrent = await completePendingRestart(
+    'succeeded',
+    lifecycleFilePath,
+    () => isActiveProxyConnection(connection),
+    false,
   )
   if (!connectionCurrent) {
     if (activeConnection?.port === connection.port && activeConnection.pid === connection.pid) {
@@ -597,35 +793,51 @@ export async function connectToProxy(
   const getSessionId = typeof sessionId === 'function' ? sessionId : () => sessionId
   const portFilePath = options.portFilePath ?? PORT_FILE
   const lifecycleFilePath = options.lifecycleFilePath ?? LIFECYCLE_FILE
-  try {
-    // 1. Try existing proxy via port file
-    const existing = readPortFile(portFilePath)
-    if (existing && (await isProxyHealthy(existing.port))) {
-      if (accessToken) {
-        await pushToken(existing.port, accessToken)
+  const lockResult = await withSharedLock(`${portFilePath}.lock`, PROXY_LOCK_MAX_WAIT_MS, async () => {
+    try {
+      const parsedPortFile = parsePortFile(portFilePath)
+      const existing = parsedPortFile.info
+      if (existing && isProcessAlive(existing.pid) && (await isProxyHealthy(existing.port))) {
+        if (accessToken) {
+          await pushToken(existing.port, accessToken)
+        }
+        startHeartbeat(existing.port, existing.pid, getSessionId)
+        const models = await getModels(existing.port)
+        return await finalizeProxyConnection(
+          { port: existing.port, pid: existing.pid, models },
+          portFilePath,
+          lifecycleFilePath,
+        )
       }
-      startHeartbeat(existing.port, existing.pid, getSessionId)
-      const models = await getModels(existing.port)
-      return await finalizeProxyConnection(
-        { port: existing.port, pid: existing.pid, models },
+      if (existing && !isProcessAlive(existing.pid)) {
+        await persistObservedProxyExit(existing.pid, portFilePath, lifecycleFilePath)
+      }
+      if (existing) {
+        removeOwnedPortFile(portFilePath, existing.pid)
+      } else if (parsedPortFile.exists) {
+        try {
+          unlinkSync(portFilePath)
+        } catch {}
+      }
+
+      if (!accessToken) {
+        throw new Error('No access token and no existing proxy')
+      }
+      const result = await spawnProxy(getSessionId, accessToken, {
         portFilePath,
         lifecycleFilePath,
-      )
+        proxyEntry: options.proxyEntry ?? PROXY_ENTRY,
+      })
+      return await finalizeProxyConnection(result, portFilePath, lifecycleFilePath)
+    } catch (error) {
+      await completePendingRestart('failed', lifecycleFilePath, undefined, false)
+      throw error
     }
-    // 2. No existing proxy — need to spawn
-    if (!accessToken) {
-      throw new Error('No access token and no existing proxy')
-    }
-    const result = await spawnProxy(getSessionId, accessToken, {
-      portFilePath,
-      lifecycleFilePath,
-      proxyEntry: options.proxyEntry ?? PROXY_ENTRY,
-    })
-    return await finalizeProxyConnection(result, portFilePath, lifecycleFilePath)
-  } catch (error) {
-    await completePendingRestart('failed', lifecycleFilePath)
-    throw error
+  })
+  if (!lockResult.acquired) {
+    throw new Error('Timed out waiting for shared proxy recovery')
   }
+  return lockResult.value
 }
 
 async function spawnProxy(
