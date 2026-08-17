@@ -53,6 +53,29 @@ async function resolveHostStreamSimple(): Promise<HostStreamSimple> {
   return hostStreamSimple
 }
 
+async function waitForSharedRecovery<T>(recovery: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) {
+    return recovery
+  }
+  signal.throwIfAborted()
+  return await new Promise<T>((resolve, reject) => {
+    const onAbort = (): void => {
+      reject(signal.reason ?? new Error('Request aborted'))
+    }
+    signal.addEventListener('abort', onAbort, { once: true })
+    void recovery.then(
+      (value) => {
+        signal.removeEventListener('abort', onAbort)
+        resolve(value)
+      },
+      (error: unknown) => {
+        signal.removeEventListener('abort', onAbort)
+        reject(error)
+      },
+    )
+  })
+}
+
 function supportsLegacyXhigh(modelId: string): boolean {
   return (
     modelId.includes('gpt-5.2') ||
@@ -211,27 +234,33 @@ export default async function (pi: ExtensionAPI): Promise<void> {
     register()
   }
 
-  async function ensureProxyForRequest(accessToken: string | null): Promise<boolean> {
+  async function ensureProxyForRequest(accessToken: string | null, signal?: AbortSignal): Promise<boolean> {
+    signal?.throwIfAborted()
     if (accessToken) {
       currentAccessToken = accessToken
     }
 
     const port = currentPort
-    if (port && (await isProxyHealthy(port))) {
+    if (port && (await isProxyHealthy(port, signal))) {
+      signal?.throwIfAborted()
+      let tokenAccepted = true
       if (currentAccessToken) {
-        await pushToken(port, currentAccessToken)
+        tokenAccepted = await pushToken(port, currentAccessToken, signal)
       }
-      if (currentPort === port) {
+      signal?.throwIfAborted()
+      if (tokenAccepted && currentPort === port) {
         return true
       }
     }
+    signal?.throwIfAborted()
     if (port) {
       clearCurrentProxy(port)
     }
 
-    const reconnect =
-      reconnectPromise ??
-      (reconnectPromise = (async () => {
+    let reconnect = reconnectPromise
+    if (!reconnect) {
+      signal?.throwIfAborted()
+      reconnect = (async () => {
         try {
           // Resolve the live session ID for heartbeats and debug logging.
           const result = await connectToProxy(() => sessionId, currentAccessToken)
@@ -247,22 +276,37 @@ export default async function (pi: ExtensionAPI): Promise<void> {
         } catch {
           return null
         }
-      })())
-
-    try {
-      const connectedPort = await reconnect
-      if (connectedPort === null || currentPort !== connectedPort) {
-        return false
-      }
-      if (currentAccessToken) {
-        await pushToken(connectedPort, currentAccessToken)
-      }
-      return currentPort === connectedPort
-    } finally {
-      if (reconnectPromise === reconnect) {
-        reconnectPromise = null
-      }
+      })()
+      reconnectPromise = reconnect
+      void reconnect.then(
+        () => {
+          if (reconnectPromise === reconnect) {
+            reconnectPromise = null
+          }
+        },
+        () => {
+          if (reconnectPromise === reconnect) {
+            reconnectPromise = null
+          }
+        },
+      )
     }
+
+    const connectedPort = await waitForSharedRecovery(reconnect, signal)
+    signal?.throwIfAborted()
+    if (connectedPort === null || currentPort !== connectedPort) {
+      return false
+    }
+    let tokenAccepted = true
+    if (currentAccessToken) {
+      tokenAccepted = await pushToken(connectedPort, currentAccessToken, signal)
+    }
+    signal?.throwIfAborted()
+    if (!tokenAccepted || currentPort !== connectedPort) {
+      clearCurrentProxy(connectedPort)
+      return false
+    }
+    return true
   }
 
   function register(): void {
@@ -284,8 +328,10 @@ export default async function (pi: ExtensionAPI): Promise<void> {
         const requestAccessToken =
           options?.apiKey && options.apiKey !== PROXY_API_KEY ? options.apiKey : currentAccessToken
         return lazyStream(model, async () => {
-          const streamHostSimple = await resolveHostStreamSimple()
-          if (!(await ensureProxyForRequest(requestAccessToken)) || !currentPort) {
+          options?.signal?.throwIfAborted()
+          const streamHostSimple = await waitForSharedRecovery(resolveHostStreamSimple(), options?.signal)
+          options?.signal?.throwIfAborted()
+          if (!(await ensureProxyForRequest(requestAccessToken, options?.signal)) || !currentPort) {
             throw new Error('Cursor proxy is unavailable after one reconnect attempt')
           }
           const configuredModel = providerModels.find((candidate) => candidate.id === model.id)

@@ -21,6 +21,8 @@ describe('published extension bundle', () => {
     const imports = chunks.flatMap((chunk) => chunk.imports)
     const dynamicImports = chunks.flatMap((chunk) => chunk.dynamicImports)
     const moduleIds = chunks.flatMap((chunk) => chunk.moduleIds.map((id) => id.replaceAll('\\', '/')))
+    const indexEntry = chunks.find((chunk) => chunk.isEntry && chunk.fileName === 'index.js')
+    const proxyEntry = chunks.find((chunk) => chunk.isEntry && chunk.fileName === 'proxy/main.js')
 
     expect(imports).not.toContain('@earendil-works/pi-ai/api/lazy')
     expect(imports).not.toContain('@earendil-works/pi-ai/api/openai-completions')
@@ -28,5 +30,7 @@ describe('published extension bundle', () => {
     expect(dynamicImports).toContain('@earendil-works/pi-ai/compat')
     expect(moduleIds.some((id) => id.endsWith('/dist/api/lazy.js'))).toBe(true)
     expect(moduleIds.some((id) => id.endsWith('/dist/api/openai-completions.js'))).toBe(false)
+    expect(indexEntry?.moduleIds.some((id) => id.replaceAll('\\', '/').endsWith('/src/proxy-lifecycle.ts'))).toBe(true)
+    expect(proxyEntry?.moduleIds.some((id) => id.replaceAll('\\', '/').endsWith('/src/proxy-lifecycle.ts'))).toBe(false)
   })
 })

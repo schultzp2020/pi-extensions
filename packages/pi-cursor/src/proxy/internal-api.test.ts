@@ -1,9 +1,14 @@
-import type { IncomingMessage, ServerResponse } from 'node:http'
+import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import { PassThrough } from 'node:stream'
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { configureInternalApi, handleInternalRequest, startHeartbeatMonitor } from './internal-api.ts'
+import type {
+  configureInternalApi,
+  handleInternalRequest,
+  markProxyShuttingDown,
+  startHeartbeatMonitor,
+} from './internal-api.ts'
 
 const START_MS = Date.UTC(2026, 7, 13)
 const HEARTBEAT_MONITOR_INTERVAL_MS = 10_000
@@ -11,6 +16,7 @@ const HEARTBEAT_MONITOR_INTERVAL_MS = 10_000
 interface InternalApi {
   configureInternalApi: typeof configureInternalApi
   handleInternalRequest: typeof handleInternalRequest
+  markProxyShuttingDown: typeof markProxyShuttingDown
   startHeartbeatMonitor: typeof startHeartbeatMonitor
 }
 
@@ -133,5 +139,37 @@ describe('startHeartbeatMonitor', () => {
     await vi.advanceTimersByTimeAsync(10_000)
 
     expect(onShutdown).toHaveBeenCalledOnce()
+  })
+})
+
+describe('proxy shutdown availability', () => {
+  it('rejects health and management requests as soon as shutdown begins', async () => {
+    internalApi.configureInternalApi({ initialToken: 'token', initialModels: [] })
+    const server = createServer((req, res) => {
+      void internalApi.handleInternalRequest(req, res, new URL(req.url ?? '/', 'http://localhost').pathname)
+    })
+    await new Promise<void>((resolve) => {
+      server.listen(0, '127.0.0.1', resolve)
+    })
+    const address = server.address()
+    if (typeof address !== 'object' || address === null) {
+      throw new Error('Test server did not bind a TCP port')
+    }
+    const baseUrl = `http://127.0.0.1:${String(address.port)}`
+
+    try {
+      await expect(fetch(`${baseUrl}/internal/health`)).resolves.toMatchObject({ status: 200 })
+
+      internalApi.markProxyShuttingDown()
+
+      const health = await fetch(`${baseUrl}/internal/health`)
+      const heartbeat = await fetch(`${baseUrl}/internal/heartbeat`, { method: 'POST' })
+      expect(health.status).toBe(503)
+      expect(heartbeat.status).toBe(503)
+    } finally {
+      await new Promise<void>((resolve) => {
+        server.close(() => resolve())
+      })
+    }
   })
 })

@@ -3,7 +3,16 @@ import type { ChildProcess, SpawnOptions } from 'node:child_process'
 import { spawn } from 'node:child_process'
 import { EventEmitter, once } from 'node:events'
 import type * as FsModule from 'node:fs'
-import { existsSync, mkdtempSync, readFileSync, rmSync, unlinkSync, utimesSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  unlinkSync,
+  utimesSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { PassThrough } from 'node:stream'
@@ -72,10 +81,10 @@ import {
   getActivePort,
   onProxyExit,
   pushToken,
-  removeOwnedProxyPortFileWithLock,
   stopHeartbeat,
 } from './proxy-lifecycle.ts'
 import { logProxyStderr } from './proxy/debug-logger.ts'
+import { removeOwnedProxyPortFileWithLock } from './proxy-port-file.ts'
 
 const HEARTBEAT_INTERVAL_MS = 10_000
 const PROXY_STARTUP_TIMEOUT_MS = 15_000
@@ -862,8 +871,8 @@ describe('pushToken', () => {
     const controller = new AbortController()
     controller.abort()
 
-    await pushToken(3456, 'token', controller.signal)
-
+    const delivered = await pushToken(3456, 'token', controller.signal)
+    expect(delivered).toBeFalsy()
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
@@ -872,11 +881,19 @@ describe('pushToken', () => {
     vi.stubGlobal('fetch', fetchMock)
     const controller = new AbortController()
 
-    await pushToken(3456, 'token', controller.signal)
+    const delivered = await pushToken(3456, 'token', controller.signal)
 
+    expect(delivered).toBeTruthy()
     expect(fetchMock).toHaveBeenCalledOnce()
     expect(fetchMock.mock.calls[0]?.[1]?.signal).toBeInstanceOf(AbortSignal)
     expect(fetchMock.mock.calls[0]?.[1]?.signal?.aborted).toBeFalsy()
+  })
+
+  it('reports an unreachable token endpoint', async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockRejectedValue(new Error('connection lost'))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(pushToken(3456, 'token')).resolves.toBeFalsy()
   })
 })
 
@@ -945,6 +962,98 @@ describe('post-ready child exit recovery', () => {
           }
         }),
       )
+      rmSync(tempDir, { recursive: true, force: true })
+    }
+  })
+
+  it('waits for an earlier chooser to publish its lock ticket', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'pi-cursor-lifecycle-choosing-lock-'))
+    const portFilePath = join(tempDir, 'cursor-proxy.json')
+    const lifecycleFilePath = join(tempDir, 'cursor-proxy-lifecycle.json')
+    const proxyLockPath = `${portFilePath}.lock`
+    const choosingPath = join(proxyLockPath, 'paused-owner.choosing')
+    const proxyEntry = fileURLToPath(new URL('./test-fixtures/ready-proxy.mjs', import.meta.url))
+    let childPid: number | undefined
+
+    try {
+      mkdirSync(proxyLockPath)
+      writeFileSync(
+        choosingPath,
+        JSON.stringify({ ownerPid: process.pid, ownerId: 'paused-owner', acquiredAt: Date.now() }),
+      )
+      const connectionPromise = connectToProxy('test-session', 'test-secret', {
+        portFilePath,
+        lifecycleFilePath,
+        proxyEntry,
+      })
+      const state = await Promise.race([
+        connectionPromise.then(() => 'connected' as const),
+        new Promise<'waiting'>((resolve) => {
+          setTimeout(() => resolve('waiting'), 250)
+        }),
+      ])
+      expect(state).toBe('waiting')
+      expect(existsSync(portFilePath)).toBeFalsy()
+
+      unlinkSync(choosingPath)
+      const connection = await connectionPromise
+      childPid = connection.pid
+      expect(JSON.parse(readFileSync(portFilePath, 'utf8'))).toMatchObject({ pid: connection.pid })
+    } finally {
+      stopHeartbeat()
+      if (childPid !== undefined) {
+        const pid = childPid
+        try {
+          process.kill(pid, 'SIGKILL')
+        } catch {}
+        await waitFor(() => {
+          try {
+            process.kill(pid, 0)
+            return false
+          } catch {
+            return true
+          }
+        })
+      }
+      rmSync(tempDir, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects adoption when a proxy begins shutting down during the shared handshake', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'pi-cursor-lifecycle-shutdown-handshake-'))
+    const portFilePath = join(tempDir, 'cursor-proxy.json')
+    const lifecycleFilePath = join(tempDir, 'cursor-proxy-lifecycle.json')
+    const generation = new Date().toISOString()
+    let healthChecks = 0
+    const fetchMock = vi.fn<typeof fetch>().mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.endsWith('/internal/health')) {
+        healthChecks += 1
+        return new Response(JSON.stringify({ status: healthChecks === 1 ? 'ok' : 'shutting-down' }), {
+          status: healthChecks === 1 ? 200 : 503,
+        })
+      }
+      if (url.endsWith('/internal/heartbeat')) {
+        return new Response(JSON.stringify({ ok: true }), { status: 200 })
+      }
+      if (url.endsWith('/internal/models')) {
+        return new Response(JSON.stringify({ models: [] }), { status: 200 })
+      }
+      return new Response(null, { status: 404 })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    try {
+      writeFileSync(portFilePath, JSON.stringify({ port: 4500, pid: process.pid, generation }))
+
+      await expect(connectToProxy('test-session', null, { portFilePath, lifecycleFilePath })).rejects.toThrow(
+        'No access token and no existing proxy',
+      )
+      expect(healthChecks).toBe(2)
+      expect(getActivePort()).toBeNull()
+      expect(existsSync(portFilePath)).toBeFalsy()
+    } finally {
+      stopHeartbeat()
       rmSync(tempDir, { recursive: true, force: true })
     }
   })
