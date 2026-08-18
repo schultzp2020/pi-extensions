@@ -22,6 +22,51 @@ async function waitForFile(path: string, timeoutMs = 3_000): Promise<void> {
 }
 
 describe('withSharedLock', () => {
+  it('keeps queued owners out until fenced finalization completes', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'pi-cursor-shared-lock-finalize-'))
+    const lockPath = join(tempDir, 'shared.lock')
+    let releaseFinalization: (() => void) | undefined
+    let finalizationStarted: (() => void) | undefined
+    const finalizationReady = new Promise<void>((resolve) => {
+      finalizationStarted = resolve
+    })
+    const finalizationRelease = new Promise<void>((resolve) => {
+      releaseFinalization = resolve
+    })
+    let queuedOwnerEntered = false
+
+    try {
+      const first = withSharedLock(
+        lockPath,
+        1_000,
+        () => 'first',
+        undefined,
+        async () => {
+          finalizationStarted?.()
+          await finalizationRelease
+        },
+      )
+      await finalizationReady
+      const second = withSharedLock(lockPath, 1_000, () => {
+        queuedOwnerEntered = true
+        return 'second'
+      })
+
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, 50)
+      })
+      expect(queuedOwnerEntered).toBeFalsy()
+
+      releaseFinalization?.()
+      await expect(first).resolves.toEqual({ acquired: true, value: 'first' })
+      await expect(second).resolves.toEqual({ acquired: true, value: 'second' })
+      expect(queuedOwnerEntered).toBeTruthy()
+    } finally {
+      releaseFinalization?.()
+      rmSync(tempDir, { recursive: true, force: true })
+    }
+  })
+
   it('recognizes a live owner across process timezones', async () => {
     const tempDir = mkdtempSync(join(tmpdir(), 'pi-cursor-shared-lock-timezone-'))
     const lockPath = join(tempDir, 'shared.lock')

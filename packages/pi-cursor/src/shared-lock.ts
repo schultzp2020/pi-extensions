@@ -517,6 +517,7 @@ export async function withSharedLock<T>(
   maxWaitMs: number,
   operation: () => T | Promise<T>,
   signal?: AbortSignal,
+  afterFence?: (value: T) => void | Promise<void>,
 ): Promise<SharedLockResult<T>> {
   signal?.throwIfAborted()
   try {
@@ -537,6 +538,10 @@ export async function withSharedLock<T>(
         const value = await operation()
         if (!(await stillOwnsSharedLock(lockPath, lock, SHARED_LOCK_STALE_MS))) {
           throw new Error(`Lost shared lock ${lockPath}`)
+        }
+        const finalization = afterFence?.(value)
+        if (finalization) {
+          await finalization
         }
         return { acquired: true, value }
       }

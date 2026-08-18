@@ -57,8 +57,9 @@ export function withProxyPortLock<T>(
   path: string,
   operation: () => T | Promise<T>,
   signal?: AbortSignal,
+  afterFence?: (value: T) => void | Promise<void>,
 ): Promise<SharedLockResult<T>> {
-  return withSharedLock(`${path}.lock`, PROXY_PORT_LOCK_MAX_WAIT_MS, operation, signal)
+  return withSharedLock(`${path}.lock`, PROXY_PORT_LOCK_MAX_WAIT_MS, operation, signal, afterFence)
 }
 
 export async function removeOwnedProxyPortFileWithLock(path: string, expected: ProxyPortIdentity): Promise<boolean> {

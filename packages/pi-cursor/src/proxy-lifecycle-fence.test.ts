@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 const fence = vi.hoisted(() => ({
   lockPath: '',
   afterOperation: undefined as ((value: unknown) => void | Promise<void>) | undefined,
+  beforeRelease: undefined as ((value: unknown) => void | Promise<void>) | undefined,
 }))
 
 vi.mock('./shared-lock.ts', () => ({
@@ -17,13 +18,24 @@ vi.mock('./shared-lock.ts', () => ({
     _maxWaitMs: number,
     operation: () => T | Promise<T>,
     signal?: AbortSignal,
+    afterFence?: (value: T) => void | Promise<void>,
   ): Promise<{ acquired: true; value: T }> {
     signal?.throwIfAborted()
     const value = await operation()
-    if (lockPath === fence.lockPath) {
-      const afterOperation = fence.afterOperation
-      fence.afterOperation = undefined
-      await afterOperation?.(value)
+    try {
+      if (lockPath === fence.lockPath) {
+        const afterOperation = fence.afterOperation
+        fence.afterOperation = undefined
+        await afterOperation?.(value)
+      }
+      const finalization = afterFence?.(value)
+      if (finalization) {
+        await finalization
+      }
+    } finally {
+      if (lockPath === fence.lockPath) {
+        await fence.beforeRelease?.(value)
+      }
     }
     return { acquired: true, value }
   },
@@ -34,6 +46,7 @@ import { connectToProxy, getActivePort, stopHeartbeat } from './proxy-lifecycle.
 afterEach(() => {
   fence.lockPath = ''
   fence.afterOperation = undefined
+  fence.beforeRelease = undefined
   stopHeartbeat()
 })
 
@@ -97,6 +110,7 @@ describe('proxy connection fence', () => {
     const proxyEntry = fileURLToPath(new URL('./test-fixtures/ready-proxy.mjs', import.meta.url))
     const controller = new AbortController()
     let preparedConnection: { port: number; pid: number } | undefined
+    let portFilePresentAtRelease: boolean | undefined
 
     try {
       fence.lockPath = `${portFilePath}.lock`
@@ -105,6 +119,9 @@ describe('proxy connection fence', () => {
         expect(existsSync(portFilePath)).toBeTruthy()
         expect(getActivePort()).toBe(preparedConnection.port)
         controller.abort(new Error('Recovery cancelled at the connection fence'))
+      }
+      fence.beforeRelease = () => {
+        portFilePresentAtRelease = existsSync(portFilePath)
       }
 
       await expect(
@@ -117,6 +134,7 @@ describe('proxy connection fence', () => {
       ).rejects.toThrow('Recovery cancelled at the connection fence')
 
       expect(preparedConnection).toBeDefined()
+      expect(portFilePresentAtRelease).toBeFalsy()
       expect(getActivePort()).toBeNull()
       expect(existsSync(portFilePath)).toBeFalsy()
       if (preparedConnection) {

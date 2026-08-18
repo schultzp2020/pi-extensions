@@ -18,11 +18,7 @@ import { createInterface } from 'node:readline'
 
 import { captureProxyStderr } from './proxy-stderr.ts'
 import { isDebugLoggingEnabled, logProxyStderr } from './proxy/debug-logger.ts'
-import {
-  removeOwnedProxyPortFileUnderLock,
-  removeOwnedProxyPortFileWithLock,
-  withProxyPortLock,
-} from './proxy-port-file.ts'
+import { removeOwnedProxyPortFileUnderLock, withProxyPortLock } from './proxy-port-file.ts'
 import {
   HEALTH_CHECK_TIMEOUT_MS,
   HEARTBEAT_TIMEOUT_MS,
@@ -612,6 +608,34 @@ export async function connectToProxy(
   let restartIdentity: ProxyLifecycleIdentity | null = null
   let spawnedConnection: (ProxyInfo & { models: CursorModel[] }) | null = null
   let adoptedConnection: ProxyInfo | null = null
+  const rollbackPortLock = async (connection: ProxyInfo, connectionCurrent: boolean): Promise<void> => {
+    stopHeartbeatFor(connection)
+    const spawnedHere = Boolean(
+      spawnedConnection &&
+        spawnedConnection.port === connection.port &&
+        hasSameProxyGeneration(spawnedConnection, connection),
+    )
+    const adoptedHere = Boolean(
+      adoptedConnection &&
+        adoptedConnection.port === connection.port &&
+        hasSameProxyGeneration(adoptedConnection, connection),
+    )
+    if (spawnedHere || (!connectionCurrent && adoptedHere && !isProcessAlive(connection.pid))) {
+      removeOwnedProxyPortFileUnderLock(portFilePath, connection)
+    }
+    if (spawnedHere) {
+      try {
+        process.kill(connection.pid, 'SIGTERM')
+      } catch {}
+    }
+    await completePendingRestart('failed', lifecycleFilePath, restartIdentity, undefined, false)
+    signal?.throwIfAborted()
+    throw new Error(`Proxy ${String(connection.pid)} exited before connection completed`)
+  }
+  const finalizePortLock = (connection: ProxyInfo): void | Promise<void> => {
+    const connectionCurrent = isProxyConnectionCurrent(connection, portFilePath)
+    return !signal?.aborted && connectionCurrent ? undefined : rollbackPortLock(connection, connectionCurrent)
+  }
   signal?.throwIfAborted()
   const lockResult = await withProxyPortLock(
     portFilePath,
@@ -705,38 +729,21 @@ export async function connectToProxy(
       }
     },
     signal,
+    finalizePortLock,
   )
   if (!lockResult.acquired) {
     throw new Error('Timed out waiting for shared proxy recovery')
   }
   const connection = lockResult.value
-  const connectionCurrent = isProxyConnectionCurrent(connection, portFilePath)
-  if (!signal?.aborted && connectionCurrent) {
-    return connection
+  if (signal?.aborted) {
+    stopHeartbeatFor(connection)
+    signal.throwIfAborted()
   }
-
-  stopHeartbeatFor(connection)
-  const spawnedHere = Boolean(
-    spawnedConnection &&
-      spawnedConnection.port === connection.port &&
-      hasSameProxyGeneration(spawnedConnection, connection),
-  )
-  const adoptedHere = Boolean(
-    adoptedConnection &&
-      adoptedConnection.port === connection.port &&
-      hasSameProxyGeneration(adoptedConnection, connection),
-  )
-  if (spawnedHere || (!connectionCurrent && adoptedHere && !isProcessAlive(connection.pid))) {
-    await removeOwnedProxyPortFileWithLock(portFilePath, connection)
+  if (!isProxyConnectionCurrent(connection, portFilePath)) {
+    stopHeartbeatFor(connection)
+    throw new Error(`Proxy ${String(connection.pid)} exited before connection completed`)
   }
-  if (spawnedHere) {
-    try {
-      process.kill(connection.pid, 'SIGTERM')
-    } catch {}
-  }
-  await completePendingRestart('failed', lifecycleFilePath, restartIdentity, undefined, false)
-  signal?.throwIfAborted()
-  throw new Error(`Proxy ${String(connection.pid)} exited before connection completed`)
+  return connection
 }
 
 async function spawnProxy(
