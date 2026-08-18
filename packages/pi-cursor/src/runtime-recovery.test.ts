@@ -12,6 +12,7 @@ const lifecycle = vi.hoisted(() => ({
       ) => Promise<{ port: number; pid: number; models: [] }>
     >(),
   exitListener: undefined as ((event: { port: number; childPid: number }) => void) | undefined,
+  isProxyConnectionCurrent: vi.fn<(connection: { port: number; pid: number }) => boolean>(),
   isProxyHealthy: vi.fn<(port: number, signal?: AbortSignal) => Promise<boolean>>(),
   pushToken: vi.fn<(port: number, accessToken: string, signal?: AbortSignal) => Promise<boolean>>(),
 }))
@@ -32,6 +33,7 @@ vi.mock('@earendil-works/pi-ai', async (importOriginal) => ({
 vi.mock('./proxy-lifecycle.ts', () => ({
   connectToProxy: lifecycle.connectToProxy,
   getActivePort: () => null,
+  isProxyConnectionCurrent: lifecycle.isProxyConnectionCurrent,
   isProxyHealthy: lifecycle.isProxyHealthy,
   onProxyExit: (listener: (event: { port: number; childPid: number }) => void) => {
     lifecycle.exitListener = listener
@@ -48,6 +50,7 @@ import cursorExtension from './index.ts'
 
 beforeEach(() => {
   lifecycle.connectToProxy.mockReset().mockResolvedValue({ port: 4100, pid: 41, models: [] })
+  lifecycle.isProxyConnectionCurrent.mockReset().mockReturnValue(true)
   lifecycle.isProxyHealthy.mockReset().mockResolvedValue(true)
   lifecycle.pushToken.mockReset().mockResolvedValue(true)
   lifecycle.exitListener = undefined
@@ -148,6 +151,47 @@ describe('request-time proxy recovery', () => {
     expect(lifecycle.isProxyHealthy).toHaveBeenCalledOnce()
     expect(lifecycle.connectToProxy).toHaveBeenCalledTimes(2)
     expect(registrations.at(-1)?.baseUrl).toBe('http://localhost:4300/v1')
+  })
+
+  it('does not register a connection that exits at the connect return boundary', async () => {
+    const registrations: ProviderConfig[] = []
+    const pi = {
+      on: vi.fn<(event: string, handler: (...args: unknown[]) => unknown) => void>(),
+      registerCommand: vi.fn<(name: string, command: unknown) => void>(),
+      registerProvider: vi.fn<(name: string, config: ProviderConfig) => void>((_name, config) => {
+        registrations.push(config)
+      }),
+    }
+    await cursorExtension(pi as unknown as ExtensionAPI)
+
+    lifecycle.isProxyHealthy.mockResolvedValue(false)
+    lifecycle.connectToProxy.mockImplementationOnce(async () => {
+      lifecycle.isProxyConnectionCurrent.mockReturnValue(false)
+      return { port: 4200, pid: 42, models: [] }
+    })
+    const model: Model<'cursor-openai-completions'> = {
+      id: 'cursor-test',
+      name: 'Cursor Test',
+      provider: 'cursor',
+      api: 'cursor-openai-completions',
+      baseUrl: 'http://localhost:4100/v1',
+      reasoning: false,
+      input: ['text'],
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: 1000,
+      maxTokens: 100,
+    }
+    const stream = registrations
+      .at(-1)
+      ?.streamSimple?.(model, { systemPrompt: '', messages: [], tools: [] }, { apiKey: 'fresh-access' })
+    if (!stream) {
+      throw new Error('Cursor provider did not return a request stream')
+    }
+
+    await expect(stream.result()).resolves.toMatchObject({ stopReason: 'error' })
+    expect(registrations.some((provider) => provider.baseUrl === 'http://localhost:4200/v1')).toBeFalsy()
+    expect(registrations.at(-1)?.baseUrl).toBe('http://localhost:0/v1')
+    expect(delegatedStream).not.toHaveBeenCalled()
   })
 
   it('reconnects the same request when the healthy child exits during its token push', async () => {

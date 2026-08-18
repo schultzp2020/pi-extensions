@@ -13,6 +13,7 @@ import { CURSOR_PROXY_API_KEY } from './proxy-auth.ts'
 import {
   connectToProxy,
   getActivePort,
+  isProxyConnectionCurrent,
   isProxyHealthy,
   onProxyExit,
   pushToken,
@@ -291,6 +292,9 @@ export default async function (pi: ExtensionAPI): Promise<void> {
           // Resolve the live session ID for heartbeats and debug logging.
           const result = await connectToProxy(() => sessionId, currentAccessToken, { signal: controller.signal })
           controller.signal.throwIfAborted()
+          if (!isProxyConnectionCurrent(result)) {
+            throw new Error(`Cursor proxy ${String(result.pid)} exited before provider registration`)
+          }
           currentPort = result.port
           if (result.models.length > 0) {
             updateModels(result.models)
@@ -414,6 +418,9 @@ export default async function (pi: ExtensionAPI): Promise<void> {
   async function connectAtStartup(accessToken: string | null): Promise<void> {
     try {
       const result = await connectToProxy(() => sessionId, accessToken)
+      if (!isProxyConnectionCurrent(result)) {
+        return
+      }
       currentPort = result.port
       if (result.models.length > 0) {
         updateModels(result.models)
