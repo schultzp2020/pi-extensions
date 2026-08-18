@@ -1057,6 +1057,8 @@ describe('post-ready child exit recovery', () => {
 
       controller.abort()
 
+      // Cancellation may surface either the lock wait or AbortSignal error, depending on timing.
+      // oxlint-disable-next-line vitest/require-to-throw-message
       await expect(connection).rejects.toThrow()
       expect(existsSync(portFilePath)).toBeFalsy()
     } finally {
@@ -1074,21 +1076,23 @@ describe('post-ready child exit recovery', () => {
     const lifecycleFilePath = join(tempDir, 'cursor-proxy-lifecycle.json')
     const generation = new Date().toISOString()
     let healthChecks = 0
-    const fetchMock = vi.fn<typeof fetch>().mockImplementation(async (input) => {
-      const url = String(input)
+    const fetchMock = vi.fn<typeof fetch>().mockImplementation((input) => {
+      const url = input instanceof Request ? input.url : String(input)
       if (url.endsWith('/internal/health')) {
         healthChecks += 1
-        return new Response(JSON.stringify({ status: healthChecks === 1 ? 'ok' : 'shutting-down' }), {
-          status: healthChecks === 1 ? 200 : 503,
-        })
+        return Promise.resolve(
+          new Response(JSON.stringify({ status: healthChecks === 1 ? 'ok' : 'shutting-down' }), {
+            status: healthChecks === 1 ? 200 : 503,
+          }),
+        )
       }
       if (url.endsWith('/internal/heartbeat')) {
-        return new Response(JSON.stringify({ ok: true }), { status: 200 })
+        return Promise.resolve(new Response(JSON.stringify({ ok: true }), { status: 200 }))
       }
       if (url.endsWith('/internal/models')) {
-        return new Response(JSON.stringify({ models: [] }), { status: 200 })
+        return Promise.resolve(new Response(JSON.stringify({ models: [] }), { status: 200 }))
       }
-      return new Response(null, { status: 404 })
+      return Promise.resolve(new Response(null, { status: 404 }))
     })
     vi.stubGlobal('fetch', fetchMock)
 
@@ -1800,6 +1804,8 @@ describe('post-ready child exit recovery', () => {
       process.kill(childPid, 'SIGKILL')
       await waitFor(() => exits.includes(connection.pid))
 
+      // Keep the assertion pending while the lifecycle lock deliberately blocks completion.
+      // oxlint-disable-next-line vitest/valid-expect
       const failedReconnect = expect(
         connectToProxy('test-session', null, { portFilePath, lifecycleFilePath, proxyEntry }),
       ).rejects.toThrow('No access token and no existing proxy')

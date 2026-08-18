@@ -333,6 +333,8 @@ async function completePendingRestart(
       persistLifecycleRecord({ ...persistedRecord, restartOutcome: nextOutcome }, lifecycleFilePath)
     }
   })
+  // The locked callback above can flip connectionCurrent after its final ownership check.
+  // oxlint-disable-next-line typescript/no-unnecessary-condition
   return connectionCurrent && (isConnectionCurrent?.() ?? true)
 }
 
@@ -552,9 +554,9 @@ export function isProxyConnectionCurrent(connection: ProxyInfo, portFilePath = P
   const publishedConnection = parsePortFile(portFilePath).info
   return Boolean(
     publishedConnection &&
-      hasSameProxyGeneration(publishedConnection, connection) &&
-      publishedConnection.port === connection.port &&
-      isActiveProxyConnection(connection),
+    hasSameProxyGeneration(publishedConnection, connection) &&
+    publishedConnection.port === connection.port &&
+    isActiveProxyConnection(connection),
   )
 }
 
@@ -612,13 +614,13 @@ export async function connectToProxy(
     stopHeartbeatFor(connection)
     const spawnedHere = Boolean(
       spawnedConnection &&
-        spawnedConnection.port === connection.port &&
-        hasSameProxyGeneration(spawnedConnection, connection),
+      spawnedConnection.port === connection.port &&
+      hasSameProxyGeneration(spawnedConnection, connection),
     )
     const adoptedHere = Boolean(
       adoptedConnection &&
-        adoptedConnection.port === connection.port &&
-        hasSameProxyGeneration(adoptedConnection, connection),
+      adoptedConnection.port === connection.port &&
+      hasSameProxyGeneration(adoptedConnection, connection),
     )
     if (spawnedHere || (!connectionCurrent && adoptedHere && !isProcessAlive(connection.pid))) {
       removeOwnedProxyPortFileUnderLock(portFilePath, connection)

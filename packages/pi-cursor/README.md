@@ -8,7 +8,7 @@ A [Pi](https://github.com/badlogic/pi) extension that gives you access to all yo
 - **Full tool support** — native Cursor tools (read, write, shell, grep) are redirected to Pi equivalents only when Pi enabled the mapped tool for the session. MCP tools pass through only when registered in the session tool set, and Cursor-only web/exa queries are rejected.
 - **Thinking/reasoning** — `thinkingDelta` events map to `reasoning_content` in SSE, with XML tag filtering as a safety net.
 - **Multi-session** — multiple Pi sessions share one proxy process via HTTP internal API and a port file at `~/.pi/agent/cursor-proxy.json`.
-- **Runtime recovery** — a ready proxy that exits is replaced on the next Cursor request; the latest credential-free exit and restart result is stored at `~/.pi/agent/cursor-proxy-lifecycle.json`.
+- **Runtime recovery** — before dispatch, each Cursor request health-checks its cached proxy endpoint and makes at most one reconnect attempt. A successful replacement serves that same request, and the latest credential-free lifecycle result is stored at `~/.pi/agent/cursor-proxy-lifecycle.json`.
 - **Conversation persistence** — checkpoints and blob stores are persisted to disk, preventing "blob not found" crashes on long sessions.
 
 ## Requirements

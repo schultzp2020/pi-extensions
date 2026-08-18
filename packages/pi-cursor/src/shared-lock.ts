@@ -89,7 +89,7 @@ async function createSharedLockIncarnation(ownerId: string): Promise<SharedLockI
     return null
   }
   const server = createServer((socket) => socket.destroy())
-  return await new Promise<SharedLockIncarnation | null>((resolveIncarnation) => {
+  return new Promise<SharedLockIncarnation | null>((resolveIncarnation) => {
     const onError = (): void => {
       server.removeListener('listening', onListening)
       closeSharedLockIncarnation({ path, server })
@@ -112,7 +112,7 @@ async function observeSharedLockIncarnation(path: string, maxProbeMs: number): P
   if (timeout === null) {
     return 'unknown'
   }
-  return await new Promise<IncarnationStatus>((resolveStatus) => {
+  return new Promise<IncarnationStatus>((resolveStatus) => {
     const socket = connect(path)
     socket.unref()
     let settled = false
@@ -153,8 +153,8 @@ function queryLinuxProcessIdentity(pid: number): ProcessIdentity {
       .slice(commandEnd + 2)
       .trim()
       .split(/\s+/)
-    const state = fields[0]
-    const startTime = fields[19]
+    const [state] = fields
+    const startTime = fields.at(19)
     if (state === 'Z') {
       return { status: 'stopped' }
     }

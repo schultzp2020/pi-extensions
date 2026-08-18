@@ -24,7 +24,7 @@ vi.mock('./shared-lock.ts', () => ({
     const value = await operation()
     try {
       if (lockPath === fence.lockPath) {
-        const afterOperation = fence.afterOperation
+        const { afterOperation } = fence
         fence.afterOperation = undefined
         await afterOperation?.(value)
       }

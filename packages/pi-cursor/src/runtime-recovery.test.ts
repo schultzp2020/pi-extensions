@@ -27,6 +27,8 @@ const delegatedStream = vi.hoisted(() =>
 
 vi.mock('node:os', () => ({ homedir: () => '/nonexistent/pi-cursor-runtime-recovery-test' }))
 vi.mock('@earendil-works/pi-ai', async (importOriginal) => ({
+  // Vitest's typed importOriginal helper intentionally uses an import type query.
+  // oxlint-disable-next-line typescript/consistent-type-imports
   ...(await importOriginal<typeof import('@earendil-works/pi-ai')>()),
   streamSimple: delegatedStream,
 }))
@@ -96,7 +98,7 @@ describe('request-time proxy recovery', () => {
 
     await vi.waitFor(() => expect(delegatedStream).toHaveBeenCalledTimes(2))
     expect(lifecycle.connectToProxy).toHaveBeenLastCalledWith(expect.any(String), 'fresh-access', {
-      signal: expect.any(AbortSignal),
+      signal: expect.any(AbortSignal) as AbortSignal,
     })
     expect(registrations.at(-1)?.baseUrl).toBe('http://localhost:4200/v1')
     expect(delegatedStream.mock.calls[1]?.[0]).toMatchObject({
@@ -112,7 +114,7 @@ describe('request-time proxy recovery', () => {
 
     await vi.waitFor(() => expect(delegatedStream).toHaveBeenCalledTimes(3))
     expect(lifecycle.connectToProxy).toHaveBeenLastCalledWith(expect.any(String), 'fresh-access', {
-      signal: expect.any(AbortSignal),
+      signal: expect.any(AbortSignal) as AbortSignal,
     })
     expect(delegatedStream.mock.calls[2]?.[0]).toMatchObject({ baseUrl: 'http://localhost:4300/v1' })
     expect(delegatedStream.mock.calls[2]?.[2]).toMatchObject({ apiKey: 'fresh-access' })
@@ -165,9 +167,9 @@ describe('request-time proxy recovery', () => {
     await cursorExtension(pi as unknown as ExtensionAPI)
 
     lifecycle.isProxyHealthy.mockResolvedValue(false)
-    lifecycle.connectToProxy.mockImplementationOnce(async () => {
+    lifecycle.connectToProxy.mockImplementationOnce(() => {
       lifecycle.isProxyConnectionCurrent.mockReturnValue(false)
-      return { port: 4200, pid: 42, models: [] }
+      return Promise.resolve({ port: 4200, pid: 42, models: [] })
     })
     const model: Model<'cursor-openai-completions'> = {
       id: 'cursor-test',
@@ -206,11 +208,11 @@ describe('request-time proxy recovery', () => {
     await cursorExtension(pi as unknown as ExtensionAPI)
 
     lifecycle.connectToProxy.mockResolvedValueOnce({ port: 4200, pid: 42, models: [] })
-    lifecycle.pushToken.mockImplementationOnce(async (port) => {
+    lifecycle.pushToken.mockImplementationOnce((port) => {
       if (port === 4100) {
         lifecycle.exitListener?.({ port: 4100, childPid: 41 })
       }
-      return true
+      return Promise.resolve(true)
     })
     const model: Model<'cursor-openai-completions'> = {
       id: 'cursor-test',
@@ -286,8 +288,8 @@ describe('request-time proxy recovery', () => {
     let finishRecovery: ((result: { port: number; pid: number; models: [] }) => void) | undefined
     let recoverySignal: AbortSignal | undefined
     lifecycle.connectToProxy.mockImplementationOnce(
-      async (_sessionId, _accessToken, options) =>
-        await new Promise<{ port: number; pid: number; models: [] }>((resolve) => {
+      (_sessionId, _accessToken, options) =>
+        new Promise<{ port: number; pid: number; models: [] }>((resolve) => {
           recoverySignal = options?.signal
           finishRecovery = resolve
         }),
@@ -363,8 +365,8 @@ describe('request-time proxy recovery', () => {
     lifecycle.isProxyHealthy.mockResolvedValue(false)
     let recoverySignal: AbortSignal | undefined
     lifecycle.connectToProxy.mockImplementationOnce(
-      async (_sessionId, _accessToken, options) =>
-        await new Promise<{ port: number; pid: number; models: [] }>((_resolve, reject) => {
+      (_sessionId, _accessToken, options) =>
+        new Promise<{ port: number; pid: number; models: [] }>((_resolve, reject) => {
           recoverySignal = options?.signal
           if (!recoverySignal) {
             reject(new Error('Recovery did not receive a cancellation signal'))
@@ -547,7 +549,7 @@ describe('request-time proxy recovery', () => {
       api: 'openai-completions',
       thinkingLevelMap: { xhigh: 'xhigh' },
     })
-    expect(delegatedModel && clampThinkingLevel(delegatedModel, 'xhigh')).toBe('xhigh')
+    expect(clampThinkingLevel(delegatedModel, 'xhigh')).toBe('xhigh')
     expect(delegatedStream.mock.calls[0]?.[1]).toBe(context)
     expect(delegatedStream.mock.calls[0]?.[2]).toBe(options)
   })

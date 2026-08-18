@@ -1,3 +1,4 @@
+/* oxlint-disable typescript/no-unsafe-assignment, typescript/no-unsafe-call, typescript/no-unsafe-member-access -- JavaScript fixture is outside the TypeScript project. */
 import { createServer } from 'node:http'
 
 const server = createServer((req, res) => {
@@ -12,6 +13,42 @@ const server = createServer((req, res) => {
   }
   if (req.url === '/internal/heartbeat' || req.url === '/internal/token') {
     res.end(JSON.stringify({ ok: true }))
+    return
+  }
+  if (req.url === '/v1/chat/completions' && req.method === 'POST') {
+    const address = server.address()
+    const port = typeof address === 'object' && address !== null ? address.port : 0
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      Connection: 'keep-alive',
+    })
+    res.write(
+      `data: ${JSON.stringify({
+        id: 'fixture-recovery',
+        object: 'chat.completion.chunk',
+        created: 0,
+        model: 'cursor-test',
+        choices: [
+          {
+            index: 0,
+            delta: { role: 'assistant', content: `served-by:${String(process.pid)}:${String(port)}` },
+            finish_reason: null,
+          },
+        ],
+      })}\n\n`,
+    )
+    res.write(
+      `data: ${JSON.stringify({
+        id: 'fixture-recovery',
+        object: 'chat.completion.chunk',
+        created: 0,
+        model: 'cursor-test',
+        choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
+        usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+      })}\n\n`,
+    )
+    res.end('data: [DONE]\n\n')
     return
   }
   if (req.url === '/test/disconnect') {

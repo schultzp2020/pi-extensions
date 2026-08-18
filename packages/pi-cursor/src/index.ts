@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import * as piAi from '@earendil-works/pi-ai'
 import type { OAuthCredentials, OAuthLoginCallbacks } from '@earendil-works/pi-ai'
 import { lazyStream } from '@earendil-works/pi-ai/api/lazy'
+import type { streamSimple as openAIStreamSimple } from '@earendil-works/pi-ai/api/openai-completions'
 import type { ExtensionAPI, ProviderModelConfig } from '@earendil-works/pi-coding-agent'
 
 import { generateCursorAuthParams, getTokenExpiry, pollCursorAuth, refreshCursorToken } from './auth.ts'
@@ -37,7 +38,7 @@ const PROVIDER_ID = 'cursor'
 const CURSOR_API = 'cursor-openai-completions'
 const AGENT_DIR = join(homedir(), '.pi', 'agent')
 const MODEL_CACHE_PATH = join(AGENT_DIR, 'cursor-model-cache.json')
-type HostStreamSimple = typeof import('@earendil-works/pi-ai/api/openai-completions').streamSimple
+type HostStreamSimple = typeof openAIStreamSimple
 let hostStreamSimple: HostStreamSimple | null = null
 
 interface ProxyReconnectState {
@@ -57,7 +58,7 @@ async function resolveHostStreamSimple(): Promise<HostStreamSimple> {
     return hostStreamSimple
   }
   const compat = await import('@earendil-works/pi-ai/compat')
-  hostStreamSimple = compat.streamSimple as HostStreamSimple
+  hostStreamSimple = compat.streamSimple
   return hostStreamSimple
 }
 
@@ -66,7 +67,7 @@ async function waitForSharedRecovery<T>(recovery: Promise<T>, signal?: AbortSign
     return recovery
   }
   signal.throwIfAborted()
-  return await new Promise<T>((resolve, reject) => {
+  return new Promise<T>((resolve, reject) => {
     const onAbort = (): void => {
       reject(signal.reason ?? new Error('Request aborted'))
     }
@@ -432,6 +433,8 @@ export default async function (pi: ExtensionAPI): Promise<void> {
     await connectAtStartup(storedToken)
   }
 
+  // connectAtStartup can mutate currentPort even though control-flow analysis cannot observe it.
+  // oxlint-disable-next-line typescript/no-unnecessary-condition
   if (!currentPort && storedToken) {
     await connectAtStartup(storedToken)
   }

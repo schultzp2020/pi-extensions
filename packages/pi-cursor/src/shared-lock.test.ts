@@ -86,7 +86,7 @@ describe('withSharedLock', () => {
         windowsHide: true,
       },
     )
-    const firstExit = once(first, 'exit')
+    const firstExit = once(first, 'exit') as Promise<[number | null, NodeJS.Signals | null]>
 
     try {
       await waitForFile(firstEnteredPath)
