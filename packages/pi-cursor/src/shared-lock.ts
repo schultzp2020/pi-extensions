@@ -11,18 +11,21 @@ import {
   unlinkSync,
   writeFileSync,
 } from 'node:fs'
+import { connect, createServer, type Server } from 'node:net'
 import { join, resolve } from 'node:path'
 import { performance } from 'node:perf_hooks'
 
 const SHARED_LOCK_RETRY_MS = 5
 export const SHARED_LOCK_STALE_MS = 2_000
 const PROCESS_IDENTITY_CACHE_MS = 250
+const SHARED_LOCK_INCARNATION_PREFIX = '/tmp/pi-cursor-lock-'
 
 interface SharedLockOwner {
   ownerPid: number
   ownerId: string
   acquiredAt: number
   processIdentity: string | null
+  incarnationSocket: string | null
 }
 
 interface SharedLockEntry {
@@ -33,14 +36,102 @@ interface SharedLockEntry {
 interface AcquiredSharedLock {
   ticketName: string
   ticketPath: string
+  incarnation: SharedLockIncarnation | null
+}
+
+interface SharedLockIncarnation {
+  path: string
+  server: Server
 }
 
 type ProcessIdentity = { status: 'running'; identity: string } | { status: 'stopped' } | { status: 'unknown' }
+type IncarnationStatus = 'running' | 'stopped' | 'unknown'
 
 export type SharedLockResult<T> = { acquired: true; value: T } | { acquired: false }
 
 const processIdentityCache = new Map<string, { observedAt: number; identity: ProcessIdentity }>()
 let currentProcessIdentity: string | null | undefined
+
+function supportsIncarnationSocket(): boolean {
+  return (
+    process.platform === 'linux' ||
+    process.platform === 'darwin' ||
+    process.platform === 'freebsd' ||
+    process.platform === 'openbsd'
+  )
+}
+
+function getIncarnationSocketPath(ownerId: string): string | null {
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(ownerId)) {
+    return null
+  }
+  return `${SHARED_LOCK_INCARNATION_PREFIX}${ownerId}.sock`
+}
+
+function closeSharedLockIncarnation(incarnation: SharedLockIncarnation | null): void {
+  if (!incarnation) {
+    return
+  }
+  try {
+    incarnation.server.close()
+  } catch {}
+  try {
+    unlinkSync(incarnation.path)
+  } catch {}
+}
+
+async function createSharedLockIncarnation(ownerId: string): Promise<SharedLockIncarnation | null> {
+  if (!supportsIncarnationSocket()) {
+    return null
+  }
+  const path = getIncarnationSocketPath(ownerId)
+  if (!path) {
+    return null
+  }
+  const server = createServer((socket) => socket.destroy())
+  return await new Promise<SharedLockIncarnation | null>((resolveIncarnation) => {
+    const onError = (): void => {
+      server.removeListener('listening', onListening)
+      closeSharedLockIncarnation({ path, server })
+      resolveIncarnation(null)
+    }
+    const onListening = (): void => {
+      server.removeListener('error', onError)
+      server.on('error', () => {})
+      server.unref()
+      resolveIncarnation({ path, server })
+    }
+    server.once('error', onError)
+    server.once('listening', onListening)
+    server.listen(path)
+  })
+}
+
+async function observeSharedLockIncarnation(path: string, maxProbeMs: number): Promise<IncarnationStatus> {
+  const timeout = getProbeTimeout(maxProbeMs, 250)
+  if (timeout === null) {
+    return 'unknown'
+  }
+  return await new Promise<IncarnationStatus>((resolveStatus) => {
+    const socket = connect(path)
+    socket.unref()
+    let settled = false
+    const finish = (status: IncarnationStatus): void => {
+      if (settled) {
+        return
+      }
+      settled = true
+      clearTimeout(timer)
+      socket.destroy()
+      resolveStatus(status)
+    }
+    const timer = setTimeout(() => finish('unknown'), timeout)
+    socket.once('connect', () => finish('running'))
+    socket.once('error', (error: NodeJS.ErrnoException) => {
+      finish(error.code === 'ECONNREFUSED' || error.code === 'ENOENT' ? 'stopped' : 'unknown')
+    })
+  })
+}
 
 function isProcessAlive(pid: number): boolean {
   try {
@@ -176,7 +267,7 @@ function parseSharedLockOwner(value: unknown): SharedLockOwner | null {
     return null
   }
   const record = value as Record<string, unknown>
-  const { ownerPid, ownerId, acquiredAt, processIdentity } = record
+  const { ownerPid, ownerId, acquiredAt, processIdentity, incarnationSocket } = record
   if (
     typeof ownerPid !== 'number' ||
     !Number.isSafeInteger(ownerPid) ||
@@ -186,8 +277,13 @@ function parseSharedLockOwner(value: unknown): SharedLockOwner | null {
     typeof acquiredAt !== 'number' ||
     !Number.isFinite(acquiredAt) ||
     acquiredAt <= 0 ||
-    (typeof processIdentity !== 'string' && processIdentity !== null && processIdentity !== undefined)
+    (typeof processIdentity !== 'string' && processIdentity !== null && processIdentity !== undefined) ||
+    (typeof incarnationSocket !== 'string' && incarnationSocket !== null && incarnationSocket !== undefined)
   ) {
+    return null
+  }
+  const expectedIncarnationSocket = getIncarnationSocketPath(ownerId)
+  if (typeof incarnationSocket === 'string' && incarnationSocket !== expectedIncarnationSocket) {
     return null
   }
   return {
@@ -195,6 +291,7 @@ function parseSharedLockOwner(value: unknown): SharedLockOwner | null {
     ownerId,
     acquiredAt,
     processIdentity: typeof processIdentity === 'string' ? processIdentity : null,
+    incarnationSocket: typeof incarnationSocket === 'string' ? incarnationSocket : null,
   }
 }
 
@@ -213,8 +310,18 @@ function readSharedLockEntry(path: string): SharedLockEntry | null {
   }
 }
 
-function isSharedLockEntryStale(entry: SharedLockEntry, maxProbeMs: number): boolean {
+async function isSharedLockEntryStale(entry: SharedLockEntry, maxProbeMs: number): Promise<boolean> {
   if (entry.owner) {
+    if (entry.owner.incarnationSocket) {
+      const incarnation = await observeSharedLockIncarnation(entry.owner.incarnationSocket, maxProbeMs)
+      if (incarnation === 'running') {
+        return false
+      }
+      if (incarnation === 'stopped') {
+        return true
+      }
+      return false
+    }
     const observed = observeProcessIdentity(entry.owner.ownerPid, entry.owner.processIdentity, maxProbeMs)
     if (observed.status === 'stopped') {
       return true
@@ -228,7 +335,7 @@ function isSharedLockEntryStale(entry: SharedLockEntry, maxProbeMs: number): boo
   return entry.modifiedAt > now + SHARED_LOCK_STALE_MS || now - entry.modifiedAt >= SHARED_LOCK_STALE_MS
 }
 
-function ensureSharedLockDirectory(lockPath: string, maxProbeMs: number): boolean {
+async function ensureSharedLockDirectory(lockPath: string, maxProbeMs: number): Promise<boolean> {
   try {
     mkdirSync(lockPath, { mode: 0o700 })
     return true
@@ -247,7 +354,7 @@ function ensureSharedLockDirectory(lockPath: string, maxProbeMs: number): boolea
   }
 
   const legacyEntry = readSharedLockEntry(lockPath)
-  if (!legacyEntry || !isSharedLockEntryStale(legacyEntry, maxProbeMs)) {
+  if (!legacyEntry || !(await isSharedLockEntryStale(legacyEntry, maxProbeMs))) {
     return false
   }
   try {
@@ -275,8 +382,8 @@ function getNextTicketSequence(lockPath: string): bigint {
   return highest + 1n
 }
 
-function createSharedLockTicket(lockPath: string, maxProbeMs: number): AcquiredSharedLock | null {
-  if (!ensureSharedLockDirectory(lockPath, maxProbeMs)) {
+async function createSharedLockTicket(lockPath: string, maxProbeMs: number): Promise<AcquiredSharedLock | null> {
+  if (!(await ensureSharedLockDirectory(lockPath, maxProbeMs))) {
     return null
   }
   const processIdentity = getCurrentProcessIdentity(maxProbeMs)
@@ -290,11 +397,17 @@ function createSharedLockTicket(lockPath: string, maxProbeMs: number): AcquiredS
   ) {
     return null
   }
+  const ownerId = randomUUID()
+  const incarnation = await createSharedLockIncarnation(ownerId)
+  if (supportsIncarnationSocket() && !incarnation) {
+    return null
+  }
   const owner: SharedLockOwner = {
     ownerPid: process.pid,
-    ownerId: randomUUID(),
+    ownerId,
     acquiredAt: Date.now(),
     processIdentity,
+    incarnationSocket: incarnation?.path ?? null,
   }
   const choosingPath = join(lockPath, `${String(owner.ownerPid)}-${owner.ownerId}.choosing`)
   try {
@@ -303,16 +416,21 @@ function createSharedLockTicket(lockPath: string, maxProbeMs: number): AcquiredS
     const ticketName = `${sequence}-${String(owner.ownerPid)}-${owner.ownerId}.ticket`
     const ticketPath = join(lockPath, ticketName)
     renameSync(choosingPath, ticketPath)
-    return { ticketName, ticketPath }
+    return { ticketName, ticketPath, incarnation }
   } catch {
     try {
       unlinkSync(choosingPath)
     } catch {}
+    closeSharedLockIncarnation(incarnation)
     return null
   }
 }
 
-function getLiveSharedLockNames(lockPath: string, suffix: '.choosing' | '.ticket', maxProbeMs: number): string[] {
+async function getLiveSharedLockNames(
+  lockPath: string,
+  suffix: '.choosing' | '.ticket',
+  maxProbeMs: number,
+): Promise<string[]> {
   const startedAt = performance.now()
   let names: string[]
   try {
@@ -330,29 +448,37 @@ function getLiveSharedLockNames(lockPath: string, suffix: '.choosing' | '.ticket
       continue
     }
     const remainingProbeMs = Math.max(0, maxProbeMs - (performance.now() - startedAt))
-    if (!isSharedLockEntryStale(entry, remainingProbeMs)) {
+    if (!(await isSharedLockEntryStale(entry, remainingProbeMs))) {
       liveNames.push(name)
       continue
     }
     try {
       unlinkSync(path)
     } catch {}
+    if (entry.owner?.incarnationSocket) {
+      try {
+        unlinkSync(entry.owner.incarnationSocket)
+      } catch {}
+    }
   }
   return liveNames
 }
 
-function canEnterSharedLock(lockPath: string, lock: AcquiredSharedLock, maxProbeMs: number): boolean {
+async function canEnterSharedLock(lockPath: string, lock: AcquiredSharedLock, maxProbeMs: number): Promise<boolean> {
   if (!existsSync(lock.ticketPath)) {
     return false
   }
-  if (getLiveSharedLockNames(lockPath, '.choosing', maxProbeMs).length > 0) {
+  if ((await getLiveSharedLockNames(lockPath, '.choosing', maxProbeMs)).length > 0) {
     return false
   }
-  return getLiveSharedLockNames(lockPath, '.ticket', maxProbeMs)[0] === lock.ticketName
+  return (await getLiveSharedLockNames(lockPath, '.ticket', maxProbeMs))[0] === lock.ticketName
 }
 
-function stillOwnsSharedLock(lockPath: string, lock: AcquiredSharedLock, maxProbeMs: number): boolean {
-  return existsSync(lock.ticketPath) && getLiveSharedLockNames(lockPath, '.ticket', maxProbeMs)[0] === lock.ticketName
+async function stillOwnsSharedLock(lockPath: string, lock: AcquiredSharedLock, maxProbeMs: number): Promise<boolean> {
+  return (
+    existsSync(lock.ticketPath) &&
+    (await getLiveSharedLockNames(lockPath, '.ticket', maxProbeMs))[0] === lock.ticketName
+  )
 }
 
 function releaseSharedLock(lockPath: string, lock: AcquiredSharedLock): void {
@@ -362,6 +488,7 @@ function releaseSharedLock(lockPath: string, lock: AcquiredSharedLock): void {
   try {
     rmdirSync(lockPath)
   } catch {}
+  closeSharedLockIncarnation(lock.incarnation)
 }
 
 async function waitForSharedLockRetry(waitMs: number, signal?: AbortSignal): Promise<void> {
@@ -404,16 +531,17 @@ export async function withSharedLock<T>(
     while (performance.now() < deadline) {
       signal?.throwIfAborted()
       const remainingMs = Math.max(0, deadline - performance.now())
-      lock ??= createSharedLockTicket(lockPath, remainingMs)
+      lock ??= await createSharedLockTicket(lockPath, remainingMs)
       const ownershipRemainingMs = Math.max(0, deadline - performance.now())
-      if (lock && canEnterSharedLock(lockPath, lock, ownershipRemainingMs) && performance.now() < deadline) {
+      if (lock && (await canEnterSharedLock(lockPath, lock, ownershipRemainingMs)) && performance.now() < deadline) {
         const value = await operation()
-        if (!stillOwnsSharedLock(lockPath, lock, SHARED_LOCK_STALE_MS)) {
+        if (!(await stillOwnsSharedLock(lockPath, lock, SHARED_LOCK_STALE_MS))) {
           throw new Error(`Lost shared lock ${lockPath}`)
         }
         return { acquired: true, value }
       }
       if (lock && !existsSync(lock.ticketPath)) {
+        closeSharedLockIncarnation(lock.incarnation)
         lock = null
       }
       const waitMs = Math.min(SHARED_LOCK_RETRY_MS, Math.max(0, deadline - performance.now()))

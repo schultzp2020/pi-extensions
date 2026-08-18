@@ -64,14 +64,15 @@ export interface ProxyExitEvent {
 
 interface ProxyLifecycleRecord {
   timestamp: string
-  generation?: string
+  generation: string
+  observation?: number
   childPid: number
   exitCode: number | null
   exitSignal: NodeJS.Signals | null
   restartOutcome: 'not-attempted' | 'succeeded' | 'failed'
 }
 
-type ProxyLifecycleIdentity = Pick<ProxyLifecycleRecord, 'timestamp' | 'generation' | 'childPid'>
+type ProxyLifecycleIdentity = Pick<ProxyLifecycleRecord, 'generation' | 'childPid'>
 
 interface PendingProxyExit {
   record: ProxyLifecycleRecord
@@ -206,12 +207,15 @@ function readLifecycleRecord(lifecycleFilePath: string): ProxyLifecycleRecord | 
       return null
     }
     const record = value as Record<string, unknown>
-    const { timestamp, generation, childPid, exitCode, exitSignal, restartOutcome } = record
+    const { timestamp, generation, observation, childPid, exitCode, exitSignal, restartOutcome } = record
     if (
       typeof timestamp !== 'string' ||
       !Number.isFinite(Date.parse(timestamp)) ||
-      (generation !== undefined &&
-        (typeof generation !== 'string' || generation.length === 0 || !Number.isFinite(Date.parse(generation)))) ||
+      typeof generation !== 'string' ||
+      generation.length === 0 ||
+      !Number.isFinite(Date.parse(generation)) ||
+      (observation !== undefined &&
+        (typeof observation !== 'number' || !Number.isSafeInteger(observation) || observation <= 0)) ||
       typeof childPid !== 'number' ||
       !Number.isSafeInteger(childPid) ||
       childPid <= 0 ||
@@ -223,7 +227,8 @@ function readLifecycleRecord(lifecycleFilePath: string): ProxyLifecycleRecord | 
     }
     return {
       timestamp,
-      generation: typeof generation === 'string' ? generation : undefined,
+      generation,
+      observation: typeof observation === 'number' ? observation : undefined,
       childPid,
       exitCode,
       exitSignal: exitSignal as NodeJS.Signals | null,
@@ -235,19 +240,11 @@ function readLifecycleRecord(lifecycleFilePath: string): ProxyLifecycleRecord | 
 }
 
 function hasSameLifecycleIdentity(left: ProxyLifecycleIdentity, right: ProxyLifecycleIdentity): boolean {
-  if (left.childPid !== right.childPid) {
-    return false
-  }
-  if (left.generation !== undefined || right.generation !== undefined) {
-    return left.generation !== undefined && left.generation === right.generation
-  }
-  return left.timestamp === right.timestamp
+  return left.childPid === right.childPid && left.generation === right.generation
 }
 
 function getLifecycleIdentityKey(identity: ProxyLifecycleIdentity): string {
-  const generationIdentity =
-    identity.generation === undefined ? `timestamp:${identity.timestamp}` : `generation:${identity.generation}`
-  return `${generationIdentity}\0${String(identity.childPid)}`
+  return `${identity.generation}\0${String(identity.childPid)}`
 }
 
 function getPendingProxyExit(
@@ -260,9 +257,7 @@ function getPendingProxyExit(
 function getLatestPendingProxyExit(lifecycleFilePath: string): ProxyLifecycleRecord | null {
   let latest: ProxyLifecycleRecord | null = null
   for (const pending of pendingProxyExits.get(lifecycleFilePath)?.values() ?? []) {
-    if (!latest || isLifecycleRecordLater(pending.record, latest)) {
-      latest = pending.record
-    }
+    latest = pending.record
   }
   return latest
 }
@@ -281,8 +276,13 @@ function mergeRestartOutcome(
 }
 
 function isLifecycleRecordLater(left: ProxyLifecycleRecord, right: ProxyLifecycleRecord): boolean {
-  if (left.timestamp !== right.timestamp) {
-    return Date.parse(left.timestamp) > Date.parse(right.timestamp)
+  const leftObservation = left.observation ?? 0
+  const rightObservation = right.observation ?? 0
+  if (leftObservation !== rightObservation) {
+    return leftObservation > rightObservation
+  }
+  if (left.generation !== right.generation) {
+    return left.generation > right.generation
   }
   if (left.childPid !== right.childPid) {
     return left.childPid > right.childPid
@@ -339,16 +339,15 @@ async function completePendingRestart(
 function getPendingRestartIdentity(lifecycleFilePath: string): ProxyLifecycleIdentity | null {
   const persisted = readLifecycleRecord(lifecycleFilePath)
   const pending = getLatestPendingProxyExit(lifecycleFilePath)
-  const latest =
-    persisted && pending ? (isLifecycleRecordLater(pending, persisted) ? pending : persisted) : (pending ?? persisted)
+  const latest = pending ?? persisted
   return latest && latest.restartOutcome !== 'succeeded'
-    ? { timestamp: latest.timestamp, generation: latest.generation, childPid: latest.childPid }
+    ? { generation: latest.generation, childPid: latest.childPid }
     : null
 }
 
 function allocateProxyGeneration(lifecycleFilePath: string, previousProxy: ProxyInfo | null): string {
   const persistedRecord = readLifecycleRecord(lifecycleFilePath)
-  const persistedGeneration = persistedRecord?.generation ?? persistedRecord?.timestamp
+  const persistedGeneration = persistedRecord?.generation
   const previousGenerationMs = previousProxy ? Date.parse(previousProxy.generation) : Number.NEGATIVE_INFINITY
   const persistedGenerationMs = persistedGeneration ? Date.parse(persistedGeneration) : Number.NEGATIVE_INFINITY
   const latestGenerationMs = Math.max(lastAllocatedGenerationMs, previousGenerationMs, persistedGenerationMs)
@@ -373,19 +372,15 @@ async function persistProxyExit(
   proxy: ProxyInfo,
   portFilePath: string,
   lifecycleFilePath: string,
-  authoritative = false,
 ): Promise<void> {
   await withLifecycleRecordLock(lifecycleFilePath, () => {
     const persistedRecord = readLifecycleRecord(lifecycleFilePath)
-    const sameLifecycleIdentity = Boolean(persistedRecord && hasSameLifecycleIdentity(persistedRecord, record))
-    if (
-      !authoritative &&
-      persistedRecord &&
-      !sameLifecycleIdentity &&
-      isLifecycleRecordLater(persistedRecord, record)
-    ) {
-      return
+    if (persistedRecord?.observation === Number.MAX_SAFE_INTEGER) {
+      throw new Error('Cannot allocate a later lifecycle observation')
     }
+    const observation = (persistedRecord?.observation ?? 0) + 1
+    record.observation = observation
+    const sameLifecycleIdentity = Boolean(persistedRecord && hasSameLifecycleIdentity(persistedRecord, record))
     const replacement = readPortFile(portFilePath)
     const observedOutcome =
       replacement && !hasSameProxyGeneration(replacement, proxy) ? 'succeeded' : record.restartOutcome
@@ -426,7 +421,7 @@ async function persistObservedProxyExit(
     exitSignal: null,
     restartOutcome: 'not-attempted',
   }
-  await persistProxyExit(record, proxy, portFilePath, lifecycleFilePath, true)
+  await persistProxyExit(record, proxy, portFilePath, lifecycleFilePath)
   return record
 }
 
@@ -647,7 +642,6 @@ export async function connectToProxy(
         if (existing) {
           const observedExit = await persistObservedProxyExit(existing, portFilePath, lifecycleFilePath)
           restartIdentity = {
-            timestamp: observedExit.timestamp,
             generation: observedExit.generation,
             childPid: observedExit.childPid,
           }

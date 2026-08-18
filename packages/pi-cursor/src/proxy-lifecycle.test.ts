@@ -1250,6 +1250,7 @@ describe('post-ready child exit recovery', () => {
         lifecycleFilePath,
         JSON.stringify({
           timestamp: previousGeneration,
+          generation: previousGeneration,
           childPid,
           exitCode: null,
           exitSignal: 'SIGKILL',
@@ -1337,6 +1338,84 @@ describe('post-ready child exit recovery', () => {
     }
   })
 
+  it('persists a later proxy exit when the wall clock moves backward', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'pi-cursor-lifecycle-monotonic-observation-'))
+    const portFilePath = join(tempDir, 'cursor-proxy.json')
+    const lifecycleFilePath = join(tempDir, 'cursor-proxy-lifecycle.json')
+    const proxyEntry = fileURLToPath(new URL('./test-fixtures/ready-proxy.mjs', import.meta.url))
+    const childPids: number[] = []
+
+    try {
+      const first = await connectToProxy('first-session', 'first-secret', {
+        portFilePath,
+        lifecycleFilePath,
+        proxyEntry,
+      })
+      childPids.push(first.pid)
+      process.kill(first.pid, 'SIGKILL')
+      await waitFor(() => {
+        try {
+          const record = JSON.parse(readFileSync(lifecycleFilePath, 'utf8')) as Record<string, unknown>
+          return record.childPid === first.pid && record.exitSignal === 'SIGKILL'
+        } catch {
+          return false
+        }
+      })
+      const firstRecord = JSON.parse(readFileSync(lifecycleFilePath, 'utf8')) as Record<string, unknown>
+
+      vi.useFakeTimers({ toFake: ['Date'] })
+      vi.setSystemTime(Date.parse(String(firstRecord.timestamp)) - 60_000)
+      const second = await connectToProxy('second-session', 'second-secret', {
+        portFilePath,
+        lifecycleFilePath,
+        proxyEntry,
+      })
+      childPids.push(second.pid)
+      process.kill(second.pid, 'SIGKILL')
+      await waitFor(() => {
+        try {
+          const record = JSON.parse(readFileSync(lifecycleFilePath, 'utf8')) as Record<string, unknown>
+          return record.childPid === second.pid && record.exitSignal === 'SIGKILL'
+        } catch {
+          return false
+        }
+      })
+      await expect(
+        connectToProxy('second-session', null, { portFilePath, lifecycleFilePath, proxyEntry }),
+      ).rejects.toThrow('No access token and no existing proxy')
+      const secondRecord = JSON.parse(readFileSync(lifecycleFilePath, 'utf8')) as Record<string, unknown>
+
+      expect(secondRecord).toMatchObject({
+        generation: second.generation,
+        childPid: second.pid,
+        exitCode: null,
+        exitSignal: 'SIGKILL',
+        restartOutcome: 'failed',
+      })
+      expect(Number(secondRecord.observation)).toBeGreaterThan(Number(firstRecord.observation))
+      expect(Date.parse(String(secondRecord.timestamp))).toBeLessThan(Date.parse(String(firstRecord.timestamp)))
+    } finally {
+      vi.useRealTimers()
+      stopHeartbeat()
+      for (const pid of childPids) {
+        try {
+          process.kill(pid, 'SIGKILL')
+        } catch {}
+      }
+      await waitFor(() =>
+        childPids.every((pid) => {
+          try {
+            process.kill(pid, 0)
+            return false
+          } catch {
+            return true
+          }
+        }),
+      )
+      rmSync(tempDir, { recursive: true, force: true })
+    }
+  })
+
   it('reclaims locks from a different process incarnation', async () => {
     const tempDir = mkdtempSync(join(tmpdir(), 'pi-cursor-lifecycle-reused-pid-lock-'))
     const portFilePath = join(tempDir, 'cursor-proxy.json')
@@ -1357,6 +1436,7 @@ describe('post-ready child exit recovery', () => {
         lifecycleFilePath,
         JSON.stringify({
           timestamp: new Date(0).toISOString(),
+          generation: new Date(0).toISOString(),
           childPid: 999_999_999,
           exitCode: null,
           exitSignal: 'SIGKILL',
@@ -1632,6 +1712,7 @@ describe('post-ready child exit recovery', () => {
         lifecycleFilePath,
         JSON.stringify({
           timestamp: new Date(0).toISOString(),
+          generation: new Date(0).toISOString(),
           childPid: 999_999_999,
           exitCode: null,
           exitSignal: 'SIGKILL',
@@ -1840,7 +1921,7 @@ describe('post-ready child exit recovery', () => {
       await waitFor(() => {
         try {
           const record = JSON.parse(readFileSync(lifecycleFilePath, 'utf8')) as Record<string, unknown>
-          return record.childPid === childPid && record.restartOutcome === 'not-attempted'
+          return record.childPid === childPid && record.restartOutcome === 'not-attempted' && !existsSync(lockFilePath)
         } catch {
           return false
         }
@@ -1849,7 +1930,7 @@ describe('post-ready child exit recovery', () => {
       const recordText = readFileSync(lifecycleFilePath, 'utf8')
       const record = JSON.parse(recordText) as Record<string, unknown>
       expect(Object.keys(record).sort()).toEqual(
-        ['timestamp', 'generation', 'childPid', 'exitCode', 'exitSignal', 'restartOutcome'].sort(),
+        ['timestamp', 'generation', 'observation', 'childPid', 'exitCode', 'exitSignal', 'restartOutcome'].sort(),
       )
       expect(record).toMatchObject({
         childPid,
