@@ -1,5 +1,45 @@
 # @schultzp2020/pi-cursor
 
+## 0.5.1
+
+### Patch Changes
+
+- [#38](https://github.com/schultzp2020/pi-extensions/pull/38) [`5517dbc`](https://github.com/schultzp2020/pi-extensions/commit/5517dbc4c857d48070a5267ef0ddc000a16f1a5f) Thanks [@schultzp2020](https://github.com/schultzp2020)! - Update workspace dependencies after changelog review, and fix Pi 0.84 OAuth abort handling.
+
+  **Breaking/deprecation fixes applied**
+
+  - `@earendil-works/pi-ai` / `pi-coding-agent` 0.76 → 0.84.1: honor `OAuthLoginCallbacks.signal` during login polling and `refreshToken(credentials, signal)` without discarding a successful token exchange; pass the caller signal into proxy token pushes.
+  - TypeScript 6 → 7: set `"types": ["node"]` (TS 7 no longer auto-includes `@types/*`).
+  - `oxlint-tsgolint` 0.23 → 7.0.2001 (versioning now tracks TS 7): remove unnecessary type assertions flagged by the stricter rule set.
+  - Rolldown 1.0 → 1.2: suppress `INVALID_ANNOTATION` only for generated `src/proto/**` via `onLog` (keep the check for handwritten code).
+  - `@changesets/cli` 2 → 3 / `changelog-github` 0.7 → 1: bump config schema to `@changesets/config@4`; no `prettier`→`format` migration needed for this repo.
+
+  **Other bumps**
+
+  - `@bufbuild/protobuf` / `protoc-gen-es` → 2.14.0, `@bufbuild/buf` → 1.72.0
+  - `oxfmt`, `oxlint`, `lint-staged`, `rolldown`, `vitest`, `@types/node` → current latest
+
+  Also add `.gitattributes` (`eol=lf`) so oxfmt's LF policy stays stable across Windows checkouts.
+
+  Centralize `unknown`/JSON trust-boundary helpers in `src/unknown.ts` so TypeScript and type-aware lint upgrades do not require cast cleanups scattered across call sites.
+
+- [#36](https://github.com/schultzp2020/pi-extensions/pull/36) [`33ba8ca`](https://github.com/schultzp2020/pi-extensions/commit/33ba8ca2771b40b6ba4e10c004ee4f7fe0969da1) Thanks [@g7adrian](https://github.com/g7adrian)! - Keep active proxy clients alive when the heartbeat monitor resumes after system sleep.
+
+- [#32](https://github.com/schultzp2020/pi-extensions/pull/32) [`a32d02f`](https://github.com/schultzp2020/pi-extensions/commit/a32d02f4a5fb77c9642b51459300825d501fb78a) Thanks [@zer09](https://github.com/zer09)! - Prevent proxy diagnostics from corrupting Pi's TUI and capture them in the structured debug log.
+
+- [#37](https://github.com/schultzp2020/pi-extensions/pull/37) [`eae45b6`](https://github.com/schultzp2020/pi-extensions/commit/eae45b632b6bdb457af5dab9e5021284c4c6bc0b) Thanks [@g7adrian](https://github.com/g7adrian)! - fix: retain checkpoint-referenced blobs and recover from locally observed blob misses
+
+  Blob Stores now retain all entries for the conversation lifetime because the
+  Cursor protocol exposes no reachability map for safe checkpoint-aware eviction.
+  This prevents the former 128-entry cap from poisoning persisted checkpoints,
+  at the tradeoff of disk usage growing with long conversations until an explicit
+  conversation reset.
+
+  When a Bridge observes a `GetBlob` miss and then receives an otherwise generic
+  terminal error, it now uses the existing `blob_not_found` reset-and-retry path.
+  The miss signal is scoped to that Bridge so unrelated later failures are not
+  misclassified.
+
 ## 0.5.0
 
 ### Minor Changes
