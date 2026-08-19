@@ -6,7 +6,8 @@
  *
  * Multiple Pi sessions share one proxy via the port file at
  * ~/.pi/agent/cursor-proxy.json. Each session sends heartbeats;
- * the proxy self-exits after 30s without any heartbeat.
+ * the proxy self-exits once heartbeats stop (timeout and sleep-resume
+ * grace rules live in proxy/internal-api.ts).
  */
 import { spawn } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'

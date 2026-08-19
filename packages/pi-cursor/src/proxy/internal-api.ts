@@ -17,6 +17,8 @@ interface SessionHeartbeat {
 
 const heartbeatClients = new Map<string, SessionHeartbeat>()
 const HEARTBEAT_TIMEOUT_MS = 30_000
+const HEARTBEAT_MONITOR_INTERVAL_MS = 10_000
+const SUSPEND_DETECTION_THRESHOLD_MS = HEARTBEAT_MONITOR_INTERVAL_MS * 1.5
 
 let currentAccessToken: string | null = null
 let cachedModels: CursorModel[] = []
@@ -44,8 +46,24 @@ export function getCachedModels(): CursorModel[] {
 }
 
 export function startHeartbeatMonitor(): NodeJS.Timeout {
+  let previousMonitorMs = Date.now()
   const timer = setInterval(() => {
     const now = Date.now()
+    const monitorGapMs = now - previousMonitorMs
+    previousMonitorMs = now
+    if (monitorGapMs > SUSPEND_DETECTION_THRESHOLD_MS && heartbeatClients.size > 0) {
+      // Rewrite timestamps, rather than only skipping this sweep, so client
+      // heartbeat timers have a full window to resume after wake. An
+      // already-dead client gets the same window, delaying its eviction by up
+      // to one heartbeat window; later ordinary sweeps still evict it.
+      for (const session of heartbeatClients.values()) {
+        session.lastHeartbeatMs = now
+      }
+      console.error(
+        `[proxy] Heartbeat monitor resumed after ${String(monitorGapMs)}ms; granting active sessions a fresh heartbeat window`,
+      )
+      return
+    }
     for (const [id] of heartbeatClients) {
       const session = heartbeatClients.get(id)
       if (session && now - session.lastHeartbeatMs > HEARTBEAT_TIMEOUT_MS) {
@@ -56,7 +74,7 @@ export function startHeartbeatMonitor(): NodeJS.Timeout {
       console.error('[proxy] No active sessions, shutting down')
       shutdownCallback?.()
     }
-  }, 10_000)
+  }, HEARTBEAT_MONITOR_INTERVAL_MS)
   if (typeof timer === 'object' && 'unref' in timer) {
     timer.unref()
   }
