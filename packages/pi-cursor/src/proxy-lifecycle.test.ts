@@ -86,8 +86,8 @@ import {
   pushToken,
   stopHeartbeat,
 } from './proxy-lifecycle.ts'
-import { logProxyStderr } from './proxy/debug-logger.ts'
 import { removeOwnedProxyPortFileWithLock } from './proxy-port-file.ts'
+import { logProxyStderr } from './proxy/debug-logger.ts'
 
 const HEARTBEAT_INTERVAL_MS = 10_000
 const PROXY_STARTUP_TIMEOUT_MS = 15_000

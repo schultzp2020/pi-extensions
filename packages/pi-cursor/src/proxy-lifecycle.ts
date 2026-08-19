@@ -16,9 +16,8 @@ import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { createInterface } from 'node:readline'
 
-import { captureProxyStderr } from './proxy-stderr.ts'
-import { isDebugLoggingEnabled, logProxyStderr } from './proxy/debug-logger.ts'
 import { removeOwnedProxyPortFileUnderLock, withProxyPortLock } from './proxy-port-file.ts'
+import { captureProxyStderr } from './proxy-stderr.ts'
 import {
   HEALTH_CHECK_TIMEOUT_MS,
   HEARTBEAT_TIMEOUT_MS,
@@ -27,6 +26,7 @@ import {
   PROXY_STARTUP_TIMEOUT_MS,
   TOKEN_PUSH_TIMEOUT_MS,
 } from './proxy-timeouts.ts'
+import { isDebugLoggingEnabled, logProxyStderr } from './proxy/debug-logger.ts'
 import type { CursorModel } from './proxy/models.ts'
 import { withSharedLock } from './shared-lock.ts'
 
