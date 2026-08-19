@@ -15,9 +15,10 @@ import {
   type CursorConfig,
   type NativeToolsMode,
 } from './proxy/config.ts'
-import { initDebugLogger, logLifecycle } from './proxy/debug-logger.ts'
+import { flushDebugLogger, initDebugLogger, logLifecycle } from './proxy/debug-logger.ts'
 import { processModels, type NormalizedModelSet } from './proxy/model-normalization.ts'
 import type { CursorModel } from './proxy/models.ts'
+import { DEBUG_FLUSH_SHUTDOWN_TIMEOUT_MS } from './proxy/shutdown.ts'
 import { getOwnString, isRecord } from './unknown.ts'
 
 const PROVIDER_ID = 'cursor'
@@ -162,7 +163,8 @@ export default async function (pi: ExtensionAPI): Promise<void> {
       return
     }
     try {
-      const result = await connectToProxy(sessionId, accessToken)
+      // Pass a getter so proxy activity uses the real session ID after session_start
+      const result = await connectToProxy(() => sessionId, accessToken)
       currentPort = result.port
       if (result.models.length > 0) {
         updateModels(result.models)
@@ -213,7 +215,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
 
   if (existingProxy) {
     try {
-      const result = await connectToProxy(sessionId, storedToken)
+      const result = await connectToProxy(() => sessionId, storedToken)
       currentPort = result.port
       if (result.models.length > 0) {
         updateModels(result.models)
@@ -417,5 +419,9 @@ export default async function (pi: ExtensionAPI): Promise<void> {
     logLifecycle(sessionId, '', { event: 'session_shutdown' })
     await cleanupCurrentSession()
     stopHeartbeat()
+    // Queued debug entries must reach the file before Pi exits; the flush
+    // timer is unref'd and cannot be relied on at process end. The bound
+    // keeps a stuck filesystem from hanging the shutdown handler.
+    await flushDebugLogger(DEBUG_FLUSH_SHUTDOWN_TIMEOUT_MS)
   })
 }

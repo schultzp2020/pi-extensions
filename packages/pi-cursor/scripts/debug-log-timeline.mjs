@@ -40,6 +40,7 @@ import { createInterface } from 'node:readline'
  *   mode?: string
  *   resultType?: string
  *   event?: string
+ *   output?: string
  * }} DebugEntry
  */
 
@@ -74,7 +75,7 @@ Options:
   --session <id>   Filter by session ID
   --since <iso>    Show events after this ISO 8601 timestamp
   --until <iso>    Show events before this ISO 8601 timestamp
-  --help           Show this help message`
+  --help           Show this help message`,
     )
     process.exit(0)
   } else if (!arg.startsWith('-')) {
@@ -187,6 +188,9 @@ function formatEvent(ev) {
     }
     case 'lifecycle': {
       return `◉ LIFECYCLE  ${ev.event}`
+    }
+    case 'proxy_stderr': {
+      return `! PROXY STDERR  ${(ev.output ?? '').trimEnd()}`
     }
     default: {
       return `? ${ev.type}  ${JSON.stringify(ev)}`

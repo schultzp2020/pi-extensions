@@ -14,12 +14,17 @@ import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { createInterface } from 'node:readline'
 
+import { captureProxyStderr } from './proxy-stderr.ts'
+import { isDebugLoggingEnabled, logProxyStderr } from './proxy/debug-logger.ts'
 import type { CursorModel } from './proxy/models.ts'
 
 const PORT_FILE = join(homedir(), '.pi', 'agent', 'cursor-proxy.json')
 const PROXY_ENTRY = resolve(import.meta.dirname, 'proxy', 'main.js')
 const HEARTBEAT_INTERVAL_MS = 10_000
 const PROXY_STARTUP_TIMEOUT_MS = 15_000
+const PROXY_STDERR_DRAIN_TIMEOUT_MS = 1_000
+const PROXY_SIGTERM_GRACE_MS = 1_000
+const PROXY_SIGKILL_WAIT_MS = 250
 const HEALTH_CHECK_TIMEOUT_MS = 2_000
 const HEARTBEAT_TIMEOUT_MS = 2_000
 const TOKEN_PUSH_TIMEOUT_MS = 2_000
@@ -34,8 +39,9 @@ interface ProxyConnection {
   port: number
   pid: number
   heartbeatTimer: NodeJS.Timeout
-  sessionId: string
 }
+
+type StartupOutcome = { ready: true; line: string } | { ready: false; message: string; cause?: Error }
 
 let activeConnection: ProxyConnection | null = null
 
@@ -132,10 +138,10 @@ async function getModels(port: number): Promise<CursorModel[]> {
  *
  * 1. Checks the port file for a running proxy and validates via health check.
  * 2. If no healthy proxy exists, spawns a new child process.
- * 3. Starts the heartbeat timer for the given session.
+ * 3. Starts the heartbeat timer; each heartbeat resolves the current session ID.
  */
 export async function connectToProxy(
-  sessionId: string,
+  getSessionId: () => string,
   accessToken: string | null,
 ): Promise<{ port: number; models: CursorModel[] }> {
   // 1. Try existing proxy via port file
@@ -144,7 +150,7 @@ export async function connectToProxy(
     if (accessToken) {
       await pushToken(existing.port, accessToken)
     }
-    startHeartbeat(existing.port, existing.pid, sessionId)
+    startHeartbeat(existing.port, existing.pid, getSessionId)
     const models = await getModels(existing.port)
     return { port: existing.port, models }
   }
@@ -153,53 +159,240 @@ export async function connectToProxy(
   if (!accessToken) {
     throw new Error('No access token and no existing proxy')
   }
-  return spawnProxy(sessionId, accessToken)
+  return spawnProxy(getSessionId, accessToken)
 }
 
-async function spawnProxy(sessionId: string, accessToken: string): Promise<{ port: number; models: CursorModel[] }> {
+async function spawnProxy(
+  getSessionId: () => string,
+  accessToken: string,
+): Promise<{ port: number; models: CursorModel[] }> {
   const child = spawn('node', [PROXY_ENTRY], {
     stdio: ['pipe', 'pipe', 'pipe'],
     detached: false,
     windowsHide: true,
   })
 
+  // Persistent ChildProcess error sink, registered immediately after spawn.
+  // Spawn failures (ENOENT, EMFILE, EAGAIN) emit 'error' — often without any
+  // 'exit' — and a failed kill can emit 'error' during termination. An
+  // unhandled EventEmitter error would crash the whole Pi process, so this
+  // sink observes every child error for the child's lifetime. The startup
+  // state machine below decides whether an error claims the startup.
+  const sinkChildError = (error: Error): void => {
+    void error
+  }
+  child.on('error', sinkChildError)
+
   // Send config on stdin
   // stdio: ['pipe','pipe','pipe'] guarantees these are non-null
   const { stdin, stdout, stderr, pid: childPid } = child
+  // Resolve the session ID at event time so stderr logs use the real ID
+  // after session_start replaces the bootstrap UUID.
+  const stderrCapture = captureProxyStderr(stderr, {
+    onOutput: isDebugLoggingEnabled() ? (output) => logProxyStderr(getSessionId(), output) : undefined,
+  })
   stdin.write(`${JSON.stringify({ accessToken })}\n`)
   stdin.end()
 
+  // kill() only confirms signal delivery and child.killed only records the
+  // request. Termination is confirmed solely by the child's own exit/close
+  // events, tracked through this flag and the cleanup watchers below.
+  let childTerminated = false
+  const markTerminated = (): void => {
+    childTerminated = true
+  }
+
   // Read ready signal from stdout
   const rl = createInterface({ input: stdout })
-  const readyLine = await new Promise<string>((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      reject(new Error('Proxy startup timeout'))
-    }, PROXY_STARTUP_TIMEOUT_MS)
-    rl.once('line', (line) => {
-      clearTimeout(timeout)
-      resolve(line)
-    })
-    child.on('exit', (code) => {
-      clearTimeout(timeout)
-      reject(new Error(`Proxy exited with code ${String(code)}`))
-    })
-  })
-  rl.close()
 
-  const ready = JSON.parse(readyLine) as { type: string; port: number; models?: CursorModel[] }
-  if (ready.type !== 'ready' || !ready.port || !childPid) {
-    throw new Error(`Unexpected proxy output: ${readyLine}`)
+  // Escalates termination of a still-running child: one SIGTERM, an
+  // independent grace window, one SIGKILL if no exit was observed, then a
+  // bounded wait for exit confirmation and final stderr. Disposes every
+  // startup resource and returns the startup error with the stderr snapshot
+  // taken before disposal.
+  async function cleanupFailedStartup(error: unknown): Promise<Error> {
+    // Keep observing exit/close while cleanup runs; the startup exit
+    // listener was detached when the failure claimed the outcome.
+    child.on('exit', markTerminated)
+    child.on('close', markTerminated)
+    try {
+      // Stderr drain and process grace run independently: a child can close
+      // stderr long before it exits, so stderr completion must never
+      // shorten the SIGTERM grace, and a hung stderr stream must never
+      // extend the grace. Both windows are bounded by their own deadlines.
+      const drained = stderrCapture.drain(PROXY_STDERR_DRAIN_TIMEOUT_MS)
+      let termination = Promise.resolve()
+      if (!childTerminated) {
+        sendSignal('SIGTERM')
+        termination = waitForTermination(PROXY_SIGTERM_GRACE_MS)
+      }
+      await drained
+      await termination
+      if (!childTerminated) {
+        sendSignal('SIGKILL')
+        // Exit alone is not proof the pipes drained: the child can write
+        // final stderr after its exit event. A fresh bounded drain runs
+        // concurrently with the exit wait, and both share the post-kill
+        // deadline, so cleanup stays bounded either way.
+        const postKillDrained = stderrCapture.drain(PROXY_SIGKILL_WAIT_MS)
+        await Promise.all([waitForTermination(PROXY_SIGKILL_WAIT_MS), postKillDrained])
+      }
+      // Snapshot the diagnostics before disposal clears the capture state.
+      return stderrCapture.startupError(error)
+    } finally {
+      disposeStartupResources()
+    }
+  }
+
+  function sendSignal(signal: NodeJS.Signals): void {
+    try {
+      child.kill(signal)
+    } catch {
+      // A failed signal (the pid may already be gone) must not block
+      // cleanup; the watchers and the unref fallback still bound it.
+    }
+  }
+
+  // Bounded wait for exit/close after SIGKILL. Resolves on the first event
+  // or the deadline, so cleanup finishes even if no event ever arrives.
+  function waitForTermination(timeoutMs: number): Promise<void> {
+    if (childTerminated) {
+      return Promise.resolve()
+    }
+    return new Promise<void>((resolve) => {
+      let settled = false
+      const onDone = (): void => {
+        if (settled) {
+          return
+        }
+        settled = true
+        clearTimeout(timer)
+        child.removeListener('exit', onDone)
+        child.removeListener('close', onDone)
+        resolve()
+      }
+      const timer = setTimeout(onDone, timeoutMs)
+      child.once('exit', onDone)
+      child.once('close', onDone)
+    })
+  }
+
+  // Disposal of every failed-startup resource: cleanup watchers, readline,
+  // all three pipe wrappers, and the stderr capture listeners. Idempotent
+  // through each part's own guards. The child error sink is removed only
+  // once termination is confirmed: an unconfirmed child can still emit
+  // errors, and an unhandled one would crash the parent. The stderr capture
+  // keeps one inert error sink past its own disposal until the stream
+  // closes, so the destroy below can never expose a queued destroy(error)
+  // emission as an unhandled error.
+  function disposeStartupResources(): void {
+    child.removeListener('exit', markTerminated)
+    child.removeListener('close', markTerminated)
+    if (childTerminated) {
+      child.removeListener('error', sinkChildError)
+    }
+    rl.close()
+    stdin.destroy()
+    stdout.destroy()
+    stderrCapture.dispose()
+    stderr.destroy()
+    if (!childTerminated) {
+      // Last safety: cleanup could not confirm termination, so the child
+      // handle must not be able to retain the parent event loop.
+      child.unref()
+    }
+  }
+
+  let ready: { type: string; port: number; models?: CursorModel[] }
+  try {
+    const outcome = await new Promise<StartupOutcome>((resolve) => {
+      // Startup terminal state. The first of ready line, startup timeout,
+      // pre-ready child exit, or child process error claims the outcome
+      // synchronously; every later terminal callback does nothing, so a
+      // delayed ready line can never override a claimed failure and no
+      // terminal path runs twice.
+      let state: 'pending' | 'succeeded' | 'failed' = 'pending'
+
+      const onExit = (code: number | null): void => {
+        if (state !== 'pending') {
+          return
+        }
+        state = 'failed'
+        childTerminated = true
+        detachStartupWatch()
+        resolve({ ready: false, message: `Proxy exited with code ${String(code)}` })
+      }
+      // A spawn failure (ENOENT, EMFILE, EAGAIN) can emit 'error' without
+      // any 'exit'. The error claims the startup failure and the original
+      // error travels as the startup cause. Errors after the claim only hit
+      // the persistent sink; they never restart cleanup.
+      const onChildError = (error: Error): void => {
+        if (state !== 'pending') {
+          return
+        }
+        state = 'failed'
+        // The errored child never started or is already gone, so cleanup
+        // must not signal it again.
+        childTerminated = true
+        detachStartupWatch()
+        resolve({ ready: false, message: `Proxy process error: ${error.message}`, cause: error })
+      }
+      const onTimeout = (): void => {
+        if (state !== 'pending') {
+          return
+        }
+        state = 'failed'
+        detachStartupWatch()
+        resolve({ ready: false, message: 'Proxy startup timeout' })
+      }
+      const onLine = (line: string): void => {
+        if (state !== 'pending') {
+          return
+        }
+        state = 'succeeded'
+        detachStartupWatch()
+        resolve({ ready: true, line })
+      }
+
+      const startupTimeout = setTimeout(onTimeout, PROXY_STARTUP_TIMEOUT_MS)
+      child.on('exit', onExit)
+      child.on('error', onChildError)
+      rl.once('line', onLine)
+
+      // Clears the startup timeout and detaches every startup listener once a
+      // terminal state is claimed. Idempotent.
+      function detachStartupWatch(): void {
+        clearTimeout(startupTimeout)
+        child.removeListener('exit', onExit)
+        child.removeListener('error', onChildError)
+        rl.removeListener('line', onLine)
+      }
+    })
+
+    if (!outcome.ready) {
+      throw new Error(outcome.message, { cause: outcome.cause })
+    }
+    ready = JSON.parse(outcome.line) as { type: string; port: number; models?: CursorModel[] }
+    if (ready.type !== 'ready' || !ready.port || !childPid) {
+      throw new Error(`Unexpected proxy output: ${outcome.line}`)
+    }
+    stderrCapture.finishStartup()
+  } catch (error) {
+    // Single failure funnel: startup timeout, pre-ready exit, pre-ready
+    // child process error, malformed ready JSON, and invalid ready payload
+    // all land here. The child is only killed on failure paths; a
+    // successfully validated proxy never reaches this catch.
+    const failure = await cleanupFailedStartup(error)
+    throw failure
+  } finally {
+    rl.close()
   }
 
   // Write port file for other sessions to discover
   writePortFile({ port: ready.port, pid: childPid })
 
   // Start heartbeat
-  startHeartbeat(ready.port, childPid, sessionId)
-
-  stderr.on('data', (chunk: Buffer) => {
-    process.stderr.write(`[cursor-proxy] ${chunk.toString()}`)
-  })
+  startHeartbeat(ready.port, childPid, getSessionId)
 
   // Don't let the child keep the parent alive
   child.unref()
@@ -207,16 +400,17 @@ async function spawnProxy(sessionId: string, accessToken: string): Promise<{ por
   return { port: ready.port, models: ready.models ?? [] }
 }
 
-function startHeartbeat(port: number, pid: number, sessionId: string): void {
+function startHeartbeat(port: number, pid: number, getSessionId: () => string): void {
   stopHeartbeat()
-  void sendHeartbeat(port, sessionId) // immediate first heartbeat
+  // Resolve the session ID at each send so heartbeats follow session_start updates.
+  void sendHeartbeat(port, getSessionId()) // immediate first heartbeat
   const timer = setInterval(() => {
-    void sendHeartbeat(port, sessionId)
+    void sendHeartbeat(port, getSessionId())
   }, HEARTBEAT_INTERVAL_MS)
   if (typeof timer === 'object' && 'unref' in timer) {
     timer.unref()
   }
-  activeConnection = { port, pid, heartbeatTimer: timer, sessionId }
+  activeConnection = { port, pid, heartbeatTimer: timer }
 }
 
 export function stopHeartbeat(): void {

@@ -115,7 +115,10 @@ Enable structured debug logging to diagnose proxy behavior:
 export PI_CURSOR_PROVIDER_DEBUG=1
 ```
 
-This writes JSONL entries to `~/.pi/agent/cursor-debug.jsonl`. Override the path:
+This writes JSONL entries to `~/.pi/agent/cursor-debug.jsonl`.
+The log includes structured request events and captured proxy stderr.
+Proxy diagnostics never write directly into Pi's terminal.
+Override the path:
 
 ```bash
 export PI_CURSOR_PROVIDER_EXTENSION_DEBUG_FILE=/path/to/debug.jsonl
