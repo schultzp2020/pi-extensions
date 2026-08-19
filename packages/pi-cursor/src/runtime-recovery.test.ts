@@ -6,7 +6,7 @@ const lifecycle = vi.hoisted(() => ({
   connectToProxy:
     vi.fn<
       (
-        sessionId: string,
+        sessionId: string | (() => string),
         accessToken: string | null,
         options?: { signal?: AbortSignal },
       ) => Promise<{ port: number; pid: number; models: [] }>
@@ -97,7 +97,7 @@ describe('request-time proxy recovery', () => {
     initialProvider?.streamSimple?.(model, { systemPrompt: '', messages: [], tools: [] }, { apiKey: 'fresh-access' })
 
     await vi.waitFor(() => expect(delegatedStream).toHaveBeenCalledTimes(2))
-    expect(lifecycle.connectToProxy).toHaveBeenLastCalledWith(expect.any(String), 'fresh-access', {
+    expect(lifecycle.connectToProxy).toHaveBeenLastCalledWith(expect.any(Function), 'fresh-access', {
       signal: expect.any(AbortSignal) as AbortSignal,
     })
     expect(registrations.at(-1)?.baseUrl).toBe('http://localhost:4200/v1')
@@ -113,7 +113,7 @@ describe('request-time proxy recovery', () => {
       ?.streamSimple?.(model, { systemPrompt: '', messages: [], tools: [] }, { apiKey: 'cursor-proxy' })
 
     await vi.waitFor(() => expect(delegatedStream).toHaveBeenCalledTimes(3))
-    expect(lifecycle.connectToProxy).toHaveBeenLastCalledWith(expect.any(String), 'fresh-access', {
+    expect(lifecycle.connectToProxy).toHaveBeenLastCalledWith(expect.any(Function), 'fresh-access', {
       signal: expect.any(AbortSignal) as AbortSignal,
     })
     expect(delegatedStream.mock.calls[2]?.[0]).toMatchObject({ baseUrl: 'http://localhost:4300/v1' })

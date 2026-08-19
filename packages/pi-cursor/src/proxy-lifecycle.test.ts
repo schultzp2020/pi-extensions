@@ -2,7 +2,6 @@ import type * as ChildProcessModule from 'node:child_process'
 import type { ChildProcess, SpawnOptions } from 'node:child_process'
 import { spawn } from 'node:child_process'
 import { EventEmitter, once } from 'node:events'
-import type * as FsModule from 'node:fs'
 import {
   existsSync,
   mkdirSync,
@@ -21,31 +20,6 @@ import { fileURLToPath } from 'node:url'
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
 
 import type * as DebugLoggerModule from './proxy/debug-logger.ts'
-
-const realFsRef = vi.hoisted(() => ({ current: null as typeof FsModule | null }))
-
-type ReadTextFile = (path: Parameters<typeof readFileSync>[0], encoding: BufferEncoding) => string
-
-const fsMocks = vi.hoisted(() => ({
-  existsSync: vi.fn<() => boolean>(() => false),
-  readFileSync: vi.fn<ReadTextFile>(() => '{}'),
-  writeFileSync: vi.fn<() => void>(),
-  mkdirSync: vi.fn<() => void>(),
-  unlinkSync: vi.fn<() => void>(),
-}))
-
-vi.mock('node:fs', async (importOriginal) => {
-  const actual = await importOriginal<typeof FsModule>()
-  realFsRef.current = actual
-  return {
-    ...actual,
-    existsSync: fsMocks.existsSync,
-    readFileSync: fsMocks.readFileSync,
-    writeFileSync: fsMocks.writeFileSync,
-    mkdirSync: fsMocks.mkdirSync,
-    unlinkSync: fsMocks.unlinkSync,
-  }
-})
 
 type SpawnFn = (command: string, args: readonly string[], options: SpawnOptions) => ChildProcess
 
@@ -104,6 +78,30 @@ const SIGTERM_RESISTANT_FIXTURE = resolve(import.meta.dirname, 'test-fixtures', 
 const REAL_PENDING_DEADLINE_MS = 8_000
 
 const recorded: { url: string; body: string | null }[] = []
+
+let testTempDir = ''
+
+beforeEach(() => {
+  testTempDir = mkdtempSync(join(tmpdir(), 'pi-cursor-lifecycle-unit-'))
+})
+
+afterEach(() => {
+  rmSync(testTempDir, { recursive: true, force: true })
+})
+
+function connectToTestProxy(
+  sessionId: string | (() => string),
+  accessToken: string | null,
+): ReturnType<typeof connectToProxy> {
+  return connectToProxy(sessionId, accessToken, {
+    portFilePath: join(testTempDir, 'cursor-proxy.json'),
+    lifecycleFilePath: join(testTempDir, 'cursor-proxy-lifecycle.json'),
+  })
+}
+
+function expectTestPortUnpublished(): void {
+  expect(existsSync(join(testTempDir, 'cursor-proxy.json'))).toBeFalsy()
+}
 
 function requestUrl(input: string | URL | Request): string {
   if (typeof input === 'string') {
@@ -206,6 +204,8 @@ function makeFakeChild(pid: number): {
     stdout,
     stderr,
     pid,
+    exitCode: null,
+    signalCode: null,
     unref: unrefMock,
     kill: killMock,
     on: events.on.bind(events),
@@ -215,13 +215,20 @@ function makeFakeChild(pid: number): {
   return { child, events, stdout, stderr, killMock, unrefMock }
 }
 
+function mockFakeChildSpawn(child: ChildProcess): Promise<void> {
+  return new Promise<void>((resolveSpawned) => {
+    spawnMock.mockImplementation(() => {
+      resolveSpawned()
+      return child
+    })
+  })
+}
+
 describe('proxy-lifecycle session ID resolution', () => {
   beforeEach(() => {
     // Fake only the timer APIs the heartbeat uses; keep streams and readline on real timers.
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] })
     vi.stubGlobal('fetch', fetchMock)
-    fsMocks.existsSync.mockReturnValue(false)
-    fsMocks.readFileSync.mockReturnValue('{}')
   })
 
   afterEach(() => {
@@ -233,11 +240,13 @@ describe('proxy-lifecycle session ID resolution', () => {
   })
 
   it('sends later heartbeats with the current session ID after reconnecting to an existing proxy', async () => {
-    fsMocks.existsSync.mockReturnValue(true)
-    fsMocks.readFileSync.mockReturnValue(JSON.stringify({ port: 45678, pid: process.pid }))
+    writeFileSync(
+      join(testTempDir, 'cursor-proxy.json'),
+      JSON.stringify({ port: 45678, pid: process.pid, generation: new Date().toISOString() }),
+    )
 
     let currentId = BOOTSTRAP_SESSION_ID
-    const result = await connectToProxy(() => currentId, null)
+    const result = await connectToTestProxy(() => currentId, null)
     expect(result.port).toBe(45678)
 
     // The immediate heartbeat uses the ID current at connect time (bootstrap).
@@ -250,11 +259,12 @@ describe('proxy-lifecycle session ID resolution', () => {
   })
 
   it('sends later heartbeats with the current session ID after spawning a proxy', async () => {
-    const { child, stdout } = makeFakeChild(4242)
-    spawnMock.mockReturnValue(child)
+    const { child, stdout } = makeFakeChild(process.pid)
+    const spawned = mockFakeChildSpawn(child)
 
     let currentId = BOOTSTRAP_SESSION_ID
-    const pending = connectToProxy(() => currentId, 'access-token')
+    const pending = connectToTestProxy(() => currentId, 'access-token')
+    await spawned
     stdout.write(`${JSON.stringify({ type: 'ready', port: 45679, models: [] })}\n`)
     const result = await pending
     expect(result.port).toBe(45679)
@@ -266,11 +276,12 @@ describe('proxy-lifecycle session ID resolution', () => {
   })
 
   it('logs proxy stderr with the current session ID after it changes', async () => {
-    const { child, stdout, stderr } = makeFakeChild(4243)
-    spawnMock.mockReturnValue(child)
+    const { child, stdout, stderr } = makeFakeChild(process.pid)
+    const spawned = mockFakeChildSpawn(child)
 
     let currentId = BOOTSTRAP_SESSION_ID
-    const pending = connectToProxy(() => currentId, 'access-token')
+    const pending = connectToTestProxy(() => currentId, 'access-token')
+    await spawned
     stdout.write(`${JSON.stringify({ type: 'ready', port: 45680, models: [] })}\n`)
     await pending
 
@@ -290,8 +301,6 @@ describe('proxy-lifecycle startup failures', () => {
     // Fake only the timer APIs the startup path uses; keep stream events on the real loop.
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] })
     vi.stubGlobal('fetch', fetchMock)
-    fsMocks.existsSync.mockReturnValue(false)
-    fsMocks.readFileSync.mockReturnValue('{}')
   })
 
   afterEach(() => {
@@ -304,11 +313,12 @@ describe('proxy-lifecycle startup failures', () => {
 
   it('includes stderr that Node delivers after the child exit event in the startup error', async () => {
     const { child, stderr, events } = makeFakeChild(4244)
-    spawnMock.mockReturnValue(child)
+    const spawned = mockFakeChildSpawn(child)
 
-    const pending = connectToProxy(() => BOOTSTRAP_SESSION_ID, 'access-token')
+    const pending = connectToTestProxy(() => BOOTSTRAP_SESSION_ID, 'access-token')
     // Keep the eventual rejection handled while the deferred stderr arrives.
     void pending.catch(() => {})
+    await spawned
     // The child exits first; the final stderr data reaches the parent later,
     // after the exit event's microtasks ran (real child-process ordering).
     events.emit('exit', 1, null)
@@ -322,11 +332,12 @@ describe('proxy-lifecycle startup failures', () => {
 
   it('escalates a timed-out child that never exits from SIGTERM to SIGKILL and disposes every resource', async () => {
     const { child, stdout, stderr, events, killMock, unrefMock } = makeFakeChild(4245)
-    spawnMock.mockReturnValue(child)
+    const spawned = mockFakeChildSpawn(child)
 
-    const pending = connectToProxy(() => BOOTSTRAP_SESSION_ID, 'access-token')
+    const pending = connectToTestProxy(() => BOOTSTRAP_SESSION_ID, 'access-token')
     // Keep the eventual rejection handled while the timers advance.
     void pending.catch(() => {})
+    await spawned
     await vi.advanceTimersByTimeAsync(PROXY_STARTUP_TIMEOUT_MS)
     // The hung child writes diagnostics but never exits and never ends stderr.
     stderr.write('[proxy] accessToken is required\n')
@@ -347,11 +358,12 @@ describe('proxy-lifecycle startup failures', () => {
 
   it('waits the full SIGTERM grace after stderr ends before escalating a child that never exits', async () => {
     const { child, stdout, stderr, killMock, unrefMock } = makeFakeChild(4246)
-    spawnMock.mockReturnValue(child)
+    const spawned = mockFakeChildSpawn(child)
 
-    const pending = connectToProxy(() => BOOTSTRAP_SESSION_ID, 'access-token')
+    const pending = connectToTestProxy(() => BOOTSTRAP_SESSION_ID, 'access-token')
     // Keep the eventual rejection handled while the stream ends.
     void pending.catch(() => {})
+    await spawned
     await vi.advanceTimersByTimeAsync(PROXY_STARTUP_TIMEOUT_MS)
     // The killed child flushes final diagnostics and closes stderr, but it
     // never exits. Stderr completion settles the drain early; it must not
@@ -372,10 +384,11 @@ describe('proxy-lifecycle startup failures', () => {
 
   it('never escalates a SIGTERM-responsive child that closes stderr before it exits', async () => {
     const { child, stderr, events, killMock, unrefMock } = makeFakeChild(4255)
-    spawnMock.mockReturnValue(child)
+    const spawned = mockFakeChildSpawn(child)
 
-    const pending = connectToProxy(() => BOOTSTRAP_SESSION_ID, 'access-token')
+    const pending = connectToTestProxy(() => BOOTSTRAP_SESSION_ID, 'access-token')
     void pending.catch(() => {})
+    await spawned
     await vi.advanceTimersByTimeAsync(PROXY_STARTUP_TIMEOUT_MS)
     // The responsive child closes its stderr immediately but exits only
     // later, inside the grace window. Stderr completion must never trigger
@@ -391,16 +404,17 @@ describe('proxy-lifecycle startup failures', () => {
     // confirmed, no SIGKILL and no unref safety needed.
     expect(killMock.mock.calls.map((call) => call[0])).toEqual(['SIGTERM'])
     expect(unrefMock).not.toHaveBeenCalled()
-    expect(fsMocks.writeFileSync).not.toHaveBeenCalled()
+    expectTestPortUnpublished()
     expect(heartbeatBodies()).toEqual([])
   })
 
   it('cleans up a still-live child when the ready payload is invalid', async () => {
     const { child, stdout, stderr, killMock, unrefMock } = makeFakeChild(4252)
-    spawnMock.mockReturnValue(child)
+    const spawned = mockFakeChildSpawn(child)
 
-    const pending = connectToProxy(() => BOOTSTRAP_SESSION_ID, 'access-token')
+    const pending = connectToTestProxy(() => BOOTSTRAP_SESSION_ID, 'access-token')
     void pending.catch(() => {})
+    await spawned
     stdout.write(`${JSON.stringify({ type: 'nope', port: 45684, models: [] })}\n`)
     // The child stays live and its stderr never ends: cleanup escalates.
     await vi.advanceTimersByTimeAsync(STDERR_DRAIN_TIMEOUT_MS + SIGKILL_WAIT_MS)
@@ -414,10 +428,11 @@ describe('proxy-lifecycle startup failures', () => {
 
   it('cleans up a still-live child when the ready line is malformed JSON', async () => {
     const { child, stdout, killMock } = makeFakeChild(4254)
-    spawnMock.mockReturnValue(child)
+    const spawned = mockFakeChildSpawn(child)
 
-    const pending = connectToProxy(() => BOOTSTRAP_SESSION_ID, 'access-token')
+    const pending = connectToTestProxy(() => BOOTSTRAP_SESSION_ID, 'access-token')
     void pending.catch(() => {})
+    await spawned
     stdout.write('{oops}\n')
     await vi.advanceTimersByTimeAsync(STDERR_DRAIN_TIMEOUT_MS + SIGKILL_WAIT_MS)
 
@@ -427,10 +442,11 @@ describe('proxy-lifecycle startup failures', () => {
 
   it('fails a bounded startup when the child errors without exiting, like a failed spawn', async () => {
     const { child, stdout, stderr, events, killMock, unrefMock } = makeFakeChild(4256)
-    spawnMock.mockReturnValue(child)
+    const spawned = mockFakeChildSpawn(child)
 
-    const pending = connectToProxy(() => BOOTSTRAP_SESSION_ID, 'access-token')
+    const pending = connectToTestProxy(() => BOOTSTRAP_SESSION_ID, 'access-token')
     void pending.catch(() => {})
+    await spawned
     // A spawn failure emits 'error' and then 'close', never 'exit'. The
     // error must claim the startup failure instead of crashing the parent.
     events.emit('error', Object.assign(new Error('spawn node ENOENT'), { code: 'ENOENT' }))
@@ -452,16 +468,17 @@ describe('proxy-lifecycle startup failures', () => {
     expect(stdout.destroyed).toBeTruthy()
     expect(stderr.destroyed).toBeTruthy()
     expect(events.listenerCount('error')).toBe(0)
-    expect(fsMocks.writeFileSync).not.toHaveBeenCalled()
+    expectTestPortUnpublished()
     expect(heartbeatBodies()).toEqual([])
   })
 
   it('keeps a kill error during termination handled without restarting or extending cleanup', async () => {
     const { child, stdout, stderr, events, killMock, unrefMock } = makeFakeChild(4257)
-    spawnMock.mockReturnValue(child)
+    const spawned = mockFakeChildSpawn(child)
 
-    const pending = connectToProxy(() => BOOTSTRAP_SESSION_ID, 'access-token')
+    const pending = connectToTestProxy(() => BOOTSTRAP_SESSION_ID, 'access-token')
     void pending.catch(() => {})
+    await spawned
     await vi.advanceTimersByTimeAsync(PROXY_STARTUP_TIMEOUT_MS)
     // The SIGTERM delivery fails while the grace window is still running.
     // The persistent error sink must swallow the event; it must not claim a
@@ -478,16 +495,17 @@ describe('proxy-lifecycle startup failures', () => {
     expect(events.listenerCount('error')).toBe(1)
     expect(stdout.destroyed).toBeTruthy()
     expect(stderr.destroyed).toBeTruthy()
-    expect(fsMocks.writeFileSync).not.toHaveBeenCalled()
+    expectTestPortUnpublished()
     expect(heartbeatBodies()).toEqual([])
   })
 
   it('captures final stderr that arrives after the post-SIGKILL exit event', async () => {
     const { child, stderr, events, killMock } = makeFakeChild(4258)
-    spawnMock.mockReturnValue(child)
+    const spawned = mockFakeChildSpawn(child)
 
-    const pending = connectToProxy(() => BOOTSTRAP_SESSION_ID, 'access-token')
+    const pending = connectToTestProxy(() => BOOTSTRAP_SESSION_ID, 'access-token')
     void pending.catch(() => {})
+    await spawned
     await vi.advanceTimersByTimeAsync(PROXY_STARTUP_TIMEOUT_MS)
     // The child ignores SIGTERM and keeps stderr open, so the initial drain
     // and the grace both expire before the escalation.
@@ -505,10 +523,11 @@ describe('proxy-lifecycle startup failures', () => {
 
   it('bounds the post-SIGKILL stderr drain when the killed child exits but stderr never closes', async () => {
     const { child, stderr, events, killMock, unrefMock } = makeFakeChild(4259)
-    spawnMock.mockReturnValue(child)
+    const spawned = mockFakeChildSpawn(child)
 
-    const pending = connectToProxy(() => BOOTSTRAP_SESSION_ID, 'access-token')
+    const pending = connectToTestProxy(() => BOOTSTRAP_SESSION_ID, 'access-token')
     void pending.catch(() => {})
+    await spawned
     await vi.advanceTimersByTimeAsync(PROXY_STARTUP_TIMEOUT_MS)
     await vi.advanceTimersByTimeAsync(SIGTERM_GRACE_MS)
     // The child exits inside the post-kill window but its stderr never
@@ -534,10 +553,11 @@ describe('proxy-lifecycle startup failures', () => {
 
   it('keeps a stderr error queued across the exit event handled through cleanup', async () => {
     const { child, stderr, events, killMock, unrefMock } = makeFakeChild(4260)
-    spawnMock.mockReturnValue(child)
+    const spawned = mockFakeChildSpawn(child)
 
-    const pending = connectToProxy(() => BOOTSTRAP_SESSION_ID, 'access-token')
+    const pending = connectToTestProxy(() => BOOTSTRAP_SESSION_ID, 'access-token')
     void pending.catch(() => {})
+    await spawned
     await vi.advanceTimersByTimeAsync(PROXY_STARTUP_TIMEOUT_MS)
     // The SIGTERM-responsive child exits inside the grace window and its
     // stderr transport fails in the same turn: destroy(error) queues the
@@ -565,8 +585,6 @@ describe('proxy-lifecycle startup terminal state', () => {
     // Fake only the timer APIs the startup path uses; keep stream events on the real loop.
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] })
     vi.stubGlobal('fetch', fetchMock)
-    fsMocks.existsSync.mockReturnValue(false)
-    fsMocks.readFileSync.mockReturnValue('{}')
   })
 
   afterEach(() => {
@@ -579,11 +597,12 @@ describe('proxy-lifecycle startup terminal state', () => {
 
   it('rejects a ready line that arrives after the child exited, without publishing the proxy', async () => {
     const { child, stdout, stderr, events } = makeFakeChild(4247)
-    spawnMock.mockReturnValue(child)
+    const spawned = mockFakeChildSpawn(child)
 
-    const pending = connectToProxy(() => BOOTSTRAP_SESSION_ID, 'access-token')
+    const pending = connectToTestProxy(() => BOOTSTRAP_SESSION_ID, 'access-token')
     // Keep the eventual rejection handled while the buffered ready line arrives.
     void pending.catch(() => {})
+    await spawned
     events.emit('exit', 1, null)
     // Buffered stdout still reaches the parent while stderr drains; the exit
     // already claimed the terminal state, so the ready line changes nothing.
@@ -591,16 +610,17 @@ describe('proxy-lifecycle startup terminal state', () => {
     stderr.end()
 
     await expect(pending).rejects.toThrow('Proxy exited with code 1')
-    expect(fsMocks.writeFileSync).not.toHaveBeenCalled()
+    expectTestPortUnpublished()
     expect(heartbeatBodies()).toEqual([])
   })
 
   it('rejects a ready line that arrives after the startup timeout, killing the child once', async () => {
     const { child, stdout, stderr, events, killMock } = makeFakeChild(4248)
-    spawnMock.mockReturnValue(child)
+    const spawned = mockFakeChildSpawn(child)
 
-    const pending = connectToProxy(() => BOOTSTRAP_SESSION_ID, 'access-token')
+    const pending = connectToTestProxy(() => BOOTSTRAP_SESSION_ID, 'access-token')
     void pending.catch(() => {})
+    await spawned
     await vi.advanceTimersByTimeAsync(PROXY_STARTUP_TIMEOUT_MS)
     // The killed child's buffered ready line arrives while stderr drains.
     stdout.write(`${JSON.stringify({ type: 'ready', port: 45682, models: [] })}\n`)
@@ -612,16 +632,17 @@ describe('proxy-lifecycle startup terminal state', () => {
     await expect(pending).rejects.toThrow('Proxy startup timeout')
     expect(killMock).toHaveBeenCalledTimes(1)
     expect(killMock.mock.calls[0]?.[0]).toBe('SIGTERM')
-    expect(fsMocks.writeFileSync).not.toHaveBeenCalled()
+    expectTestPortUnpublished()
     expect(heartbeatBodies()).toEqual([])
   })
 
   it('starts one drain, keeps one kill, and skips SIGKILL when the timeout and the resulting exit interleave', async () => {
     const { child, stderr, events, killMock, unrefMock } = makeFakeChild(4249)
-    spawnMock.mockReturnValue(child)
+    const spawned = mockFakeChildSpawn(child)
 
-    const pending = connectToProxy(() => BOOTSTRAP_SESSION_ID, 'access-token')
+    const pending = connectToTestProxy(() => BOOTSTRAP_SESSION_ID, 'access-token')
     void pending.catch(() => {})
+    await spawned
     await vi.advanceTimersByTimeAsync(PROXY_STARTUP_TIMEOUT_MS)
 
     // Exactly one drain runs: the capture's persistent end listener plus one
@@ -647,25 +668,27 @@ describe('proxy-lifecycle startup terminal state', () => {
     expect(stderr.listenerCount('end')).toBe(0)
   })
 
-  it('removes the child exit listener once the ready line claims success', async () => {
-    const { child, stdout, events } = makeFakeChild(4250)
-    spawnMock.mockReturnValue(child)
+  it('replaces the startup exit listener with the post-ready lifecycle listener', async () => {
+    const { child, stdout, events } = makeFakeChild(process.pid)
+    const spawned = mockFakeChildSpawn(child)
 
-    const pending = connectToProxy(() => BOOTSTRAP_SESSION_ID, 'access-token')
+    const pending = connectToTestProxy(() => BOOTSTRAP_SESSION_ID, 'access-token')
+    await spawned
     expect(events.listenerCount('exit')).toBe(1)
 
     stdout.write(`${JSON.stringify({ type: 'ready', port: 45683, models: [] })}\n`)
     const result = await pending
 
     expect(result.port).toBe(45683)
-    expect(events.listenerCount('exit')).toBe(0)
+    expect(events.listenerCount('exit')).toBe(1)
   })
 
   it('keeps the stderr capture attached after a successful startup', async () => {
-    const { child, stdout, stderr } = makeFakeChild(4253)
-    spawnMock.mockReturnValue(child)
+    const { child, stdout, stderr } = makeFakeChild(process.pid)
+    const spawned = mockFakeChildSpawn(child)
 
-    const pending = connectToProxy(() => BOOTSTRAP_SESSION_ID, 'access-token')
+    const pending = connectToTestProxy(() => BOOTSTRAP_SESSION_ID, 'access-token')
+    await spawned
     stdout.write(`${JSON.stringify({ type: 'ready', port: 45685, models: [] })}\n`)
     const result = await pending
 
@@ -678,10 +701,11 @@ describe('proxy-lifecycle startup terminal state', () => {
 
   it('bounds the startup error when the stderr stream itself fails', async () => {
     const { child, stderr } = makeFakeChild(4251)
-    spawnMock.mockReturnValue(child)
+    const spawned = mockFakeChildSpawn(child)
 
-    const pending = connectToProxy(() => BOOTSTRAP_SESSION_ID, 'access-token')
+    const pending = connectToTestProxy(() => BOOTSTRAP_SESSION_ID, 'access-token')
     void pending.catch(() => {})
+    await spawned
     // The transport fails before any ready line. The queued error must stay
     // handled, and the startup must still fail within its deadlines: the
     // early drain settlement must not shorten the grace of the still-live
@@ -699,8 +723,6 @@ describe('proxy-lifecycle real-child startup cleanup', () => {
     // pipes, and its signals all run on the real event loop.
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] })
     vi.stubGlobal('fetch', fetchMock)
-    fsMocks.existsSync.mockReturnValue(false)
-    fsMocks.readFileSync.mockReturnValue('{}')
   })
 
   afterEach(() => {
@@ -746,7 +768,7 @@ describe('proxy-lifecycle real-child startup cleanup', () => {
         })
       })
 
-      const pending = connectToProxy(() => BOOTSTRAP_SESSION_ID, 'access-token')
+      const pending = connectToTestProxy(() => BOOTSTRAP_SESSION_ID, 'access-token')
       // Keep the eventual rejection handled while the fixture boots.
       void pending.catch(() => {})
 
@@ -914,16 +936,10 @@ describe('pushToken', () => {
 
 describe('post-ready child exit recovery', () => {
   beforeEach(() => {
-    const realFs = realFsRef.current
     const realSpawn = realSpawnRef.current
-    if (!realFs || !realSpawn) {
+    if (!realSpawn) {
       throw new Error('test mocks did not capture the real Node modules')
     }
-    fsMocks.existsSync.mockImplementation(realFs.existsSync as () => boolean)
-    fsMocks.readFileSync.mockImplementation((path, encoding) => realFs.readFileSync(path, encoding))
-    fsMocks.writeFileSync.mockImplementation(realFs.writeFileSync as () => void)
-    fsMocks.mkdirSync.mockImplementation(realFs.mkdirSync as () => void)
-    fsMocks.unlinkSync.mockImplementation(realFs.unlinkSync as () => void)
     spawnMock.mockImplementation(realSpawn)
   })
 
