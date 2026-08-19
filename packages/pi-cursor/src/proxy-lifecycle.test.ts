@@ -24,9 +24,11 @@ import type * as DebugLoggerModule from './proxy/debug-logger.ts'
 
 const realFsRef = vi.hoisted(() => ({ current: null as typeof FsModule | null }))
 
+type ReadTextFile = (path: Parameters<typeof readFileSync>[0], encoding: BufferEncoding) => string
+
 const fsMocks = vi.hoisted(() => ({
   existsSync: vi.fn<() => boolean>(() => false),
-  readFileSync: vi.fn<() => string>(() => '{}'),
+  readFileSync: vi.fn<ReadTextFile>(() => '{}'),
   writeFileSync: vi.fn<() => void>(),
   mkdirSync: vi.fn<() => void>(),
   unlinkSync: vi.fn<() => void>(),
@@ -918,7 +920,7 @@ describe('post-ready child exit recovery', () => {
       throw new Error('test mocks did not capture the real Node modules')
     }
     fsMocks.existsSync.mockImplementation(realFs.existsSync as () => boolean)
-    fsMocks.readFileSync.mockImplementation(realFs.readFileSync as () => string)
+    fsMocks.readFileSync.mockImplementation((path, encoding) => realFs.readFileSync(path, encoding))
     fsMocks.writeFileSync.mockImplementation(realFs.writeFileSync as () => void)
     fsMocks.mkdirSync.mockImplementation(realFs.mkdirSync as () => void)
     fsMocks.unlinkSync.mockImplementation(realFs.unlinkSync as () => void)

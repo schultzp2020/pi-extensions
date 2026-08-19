@@ -943,7 +943,7 @@ async function spawnProxy(
         }
         state = 'failed'
         detachStartupWatch()
-        const reason = options.signal?.reason
+        const reason: unknown = options.signal?.reason
         resolve({
           ready: false,
           message: 'Proxy startup aborted',
