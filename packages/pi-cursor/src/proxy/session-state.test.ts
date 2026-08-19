@@ -15,7 +15,6 @@ import {
   getConversationState,
   invalidateSession,
   persistConversation,
-  pruneBlobs,
   registerBridge,
   resetConversation,
   resolveSession,
@@ -218,6 +217,23 @@ describe('commitTurn', () => {
     commitTurn('nonexistent', { turnCount: 1, fingerprint: 'abc' }, config)
     expect(getConversationState('nonexistent')).toBeUndefined()
   })
+
+  it('persists and restores every blob when a checkpoint may reference more than 128', () => {
+    const { conversation } = resolveSession('test-session', config)
+    conversation.checkpoint = new Uint8Array([10, 20])
+    for (let i = 0; i < 130; i++) {
+      conversation.blobStore.set(`blob-${String(i).padStart(3, '0')}`, new Uint8Array([i]))
+    }
+
+    commitTurn('test-session', { turnCount: 1, fingerprint: 'blob-heavy-turn' }, config)
+    invalidateSession('test-session')
+
+    const { conversation: restored } = resolveSession('test-session', config)
+    expect(restored.checkpoint).toEqual(new Uint8Array([10, 20]))
+    expect(restored.blobStore.size).toBe(130)
+    expect(restored.blobStore.get('blob-000')).toEqual(new Uint8Array([0]))
+    expect(restored.blobStore.get('blob-129')).toEqual(new Uint8Array([129]))
+  })
 })
 
 // ── cleanup (asymmetric lifetime) ──
@@ -408,41 +424,6 @@ describe('resetConversation', () => {
     expect(stored.conversationId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/)
     expect(stored.checkpoint).toBeNull()
     expect(stored.blobStore.size).toBe(0)
-  })
-})
-
-// ── pruneBlobs ──
-
-describe('pruneBlobs', () => {
-  it('does nothing when under the cap', () => {
-    const store = new Map<string, Uint8Array>()
-    store.set('a', new Uint8Array([1]))
-    store.set('b', new Uint8Array([2]))
-    expect(pruneBlobs(store)).toBe(0)
-    expect(store.size).toBe(2)
-  })
-
-  it('evicts oldest entries when over the cap', () => {
-    const store = new Map<string, Uint8Array>()
-    for (let i = 0; i < 130; i++) {
-      store.set(`key-${String(i).padStart(3, '0')}`, new Uint8Array([i]))
-    }
-    expect(store.size).toBe(130)
-    const evicted = pruneBlobs(store)
-    expect(evicted).toBe(2)
-    expect(store.size).toBe(128)
-    expect(store.has('key-000')).toBeFalsy()
-    expect(store.has('key-001')).toBeFalsy()
-    expect(store.has('key-129')).toBeTruthy()
-  })
-
-  it('handles exact cap boundary', () => {
-    const store = new Map<string, Uint8Array>()
-    for (let i = 0; i < 128; i++) {
-      store.set(`k${i}`, new Uint8Array([i]))
-    }
-    expect(pruneBlobs(store)).toBe(0)
-    expect(store.size).toBe(128)
   })
 })
 

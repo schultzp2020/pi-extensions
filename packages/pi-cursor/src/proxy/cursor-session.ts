@@ -308,6 +308,8 @@ export class CursorSession {
   private _flushedExecs: PendingExec[] = []
   private _alive = true
   private doneEventSent = false
+  /** Scoped to this Bridge so misses cannot affect later requests. */
+  private blobMissDetected = false
 
   private h2Session!: ClientHttp2Session
   private h2Stream!: ClientHttp2Stream
@@ -520,6 +522,9 @@ export class CursorSession {
           this.streamState.checkpointAfterExec = true
           this.options.onCheckpoint?.(checkpointBytes)
         },
+        onBlobMiss: () => {
+          this.blobMissDetected = true
+        },
         onNotify: (note) => {
           this.queue.push({ type: 'text', text: `\n${note}\n`, isThinking: false })
         },
@@ -564,7 +569,7 @@ export class CursorSession {
     this.streamState.endStreamSeen = true
     const err = parseConnectEndStream(endStreamBytes)
     if (err) {
-      const hint = classifyConnectError(err.message)
+      const hint = this.connectEndStreamRetryHint(err.message)
       this.pushDone({ type: 'done', error: err.message, retryHint: hint })
       this.finish(CLOSE_ERR)
       return
@@ -675,6 +680,11 @@ export class CursorSession {
     }
     this.doneEventSent = true
     this.queue.pushForce(event)
+  }
+
+  private connectEndStreamRetryHint(errorMessage: string): RetryHint | undefined {
+    const classified = classifyConnectError(errorMessage)
+    return classified ?? (this.blobMissDetected ? 'blob_not_found' : undefined)
   }
 
   // ── Inactivity timer ──

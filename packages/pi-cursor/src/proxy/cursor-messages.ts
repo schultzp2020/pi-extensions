@@ -116,6 +116,7 @@ function handleKvMessage(
   kvMsg: KvServerMessage,
   blobStore: Map<string, Uint8Array>,
   sendFrame: (data: Buffer) => void,
+  onBlobMiss?: () => void,
 ): void {
   const kvCase = kvMsg.message.case
 
@@ -127,6 +128,7 @@ function handleKvMessage(
       console.warn(
         `[cursor-messages] GetBlob miss: key=${blobIdKey.slice(0, 16)}... (store has ${blobStore.size} blobs)`,
       )
+      onBlobMiss?.()
     }
     sendKvResponse(kvMsg, 'getBlobResult', create(GetBlobResultSchema, blobData ? { blobData } : {}), sendFrame)
   } else if (kvCase === 'setBlobArgs') {
@@ -144,6 +146,8 @@ export interface MessageProcessorContext {
   state: StreamState
   onText: (text: string, isThinking: boolean) => void
   onCheckpoint?: (checkpointBytes: Uint8Array) => void
+  /** Records a missing blob for the lifetime of the current Bridge only. */
+  onBlobMiss?: () => void
   onNotify?: (text: string) => void
   /** Tool dispatch context for tool routing. */
   toolDispatch: ToolDispatchContext
@@ -164,7 +168,7 @@ export function processServerMessage(msg: AgentServerMessage, ctx: MessageProces
   }
 
   if (msgCase === 'kvServerMessage') {
-    handleKvMessage(msg.message.value, ctx.blobStore, ctx.sendFrame)
+    handleKvMessage(msg.message.value, ctx.blobStore, ctx.sendFrame, ctx.onBlobMiss)
     return true
   }
 

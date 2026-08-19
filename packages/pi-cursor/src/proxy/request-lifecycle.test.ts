@@ -33,7 +33,6 @@ vi.mock('./session-state.ts', async (importOriginal) => {
     getConversationState: vi.fn<() => unknown>(),
     persistConversation: vi.fn<() => void>(),
     resetConversation: vi.fn<() => void>(),
-    pruneBlobs: vi.fn<() => number>(),
   }
 })
 
@@ -84,7 +83,13 @@ vi.mock('./native-tools.ts', () => ({
 import { readBody, errorResponse } from './http-helpers.ts'
 import { collectNonStreamingResponse, pumpSession, createSSECtx } from './openai-stream.ts'
 import { handleChatCompletion, parseContextTierSuffix } from './request-lifecycle.ts'
-import { commitTurn, persistConversation, resetConversation, resolveSession } from './session-state.ts'
+import {
+  commitTurn,
+  getConversationState,
+  persistConversation,
+  resetConversation,
+  resolveSession,
+} from './session-state.ts'
 
 // ── Helpers ──
 
@@ -250,6 +255,54 @@ describe('handleChatCompletion', () => {
       await handleChatCompletion(req, res, ctx)
 
       // resetConversation should have been called for blob_not_found
+      expect(resetConversation).toHaveBeenCalledWith(stored)
+    })
+
+    it('resets and retries a streaming request once after a blob_not_found hint', async () => {
+      const req = makeRequest()
+      const res = makeResponse()
+      const ctx = makeProxyContext({
+        config: {
+          nativeToolsMode: 'reject',
+          maxMode: false,
+          fast: false,
+          thinking: true,
+          maxRetries: 1,
+        },
+      })
+      const streamBody = JSON.stringify({
+        model: 'claude-3.5-sonnet',
+        messages: [{ role: 'user', content: 'Hello' }],
+        stream: true,
+      })
+      const stored = makeStoredConversation({ checkpoint: new Uint8Array([1, 2, 3]) })
+
+      vi.mocked(readBody).mockResolvedValue(streamBody)
+      vi.mocked(resolveSession).mockReturnValue({
+        bridge: undefined,
+        conversation: stored,
+        lineageInvalidated: false,
+      })
+      vi.mocked(getConversationState).mockReturnValueOnce(stored)
+      vi.mocked(createSSECtx).mockReturnValue({
+        sendChunk: vi.fn<() => void>(),
+        sendDone: vi.fn<() => void>(),
+        close: vi.fn<() => void>(),
+      } as unknown as ReturnType<typeof createSSECtx>)
+      vi.mocked(pumpSession)
+        .mockResolvedValueOnce({
+          outcome: 'retry',
+          retryHint: 'blob_not_found',
+          error: 'Connect error internal: Error',
+        })
+        .mockResolvedValueOnce({ outcome: 'done' })
+
+      await handleChatCompletion(req, res, ctx)
+
+      await vi.waitFor(() => {
+        expect(pumpSession).toHaveBeenCalledTimes(2)
+      })
+      expect(resetConversation).toHaveBeenCalledTimes(1)
       expect(resetConversation).toHaveBeenCalledWith(stored)
     })
   })
