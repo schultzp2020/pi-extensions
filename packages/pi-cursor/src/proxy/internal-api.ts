@@ -24,6 +24,7 @@ let currentAccessToken: string | null = null
 let cachedModels: CursorModel[] = []
 let onModelsRefreshed: ((models: CursorModel[]) => void) | null = null
 let shutdownCallback: (() => void) | null = null
+let proxyShuttingDown = false
 
 export function configureInternalApi(opts: {
   initialToken: string | null
@@ -35,6 +36,11 @@ export function configureInternalApi(opts: {
   cachedModels = opts.initialModels
   onModelsRefreshed = opts.onModelsRefreshed ?? null
   shutdownCallback = opts.onShutdown ?? null
+  proxyShuttingDown = false
+}
+
+export function markProxyShuttingDown(): void {
+  proxyShuttingDown = true
 }
 
 export function getAccessToken(): string | null {
@@ -82,6 +88,10 @@ export function startHeartbeatMonitor(): NodeJS.Timeout {
 }
 
 export async function handleInternalRequest(req: IncomingMessage, res: ServerResponse, path: string): Promise<void> {
+  if (proxyShuttingDown) {
+    jsonResponse(res, 503, { status: 'shutting-down' })
+    return
+  }
   if (path === '/internal/health' && req.method === 'GET') {
     jsonResponse(res, 200, {
       status: 'ok',
