@@ -5,7 +5,7 @@ import type { CursorModel } from './models.ts'
 // ---------------------------------------------------------------------------
 
 /** Effort suffixes found in Cursor legacy slug model IDs */
-export type CursorEffort = 'none' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
+export type CursorEffort = 'minimal' | 'none' | 'low' | 'medium' | 'high' | 'extra-high' | 'xhigh' | 'max'
 
 /** Result of parsing a legacy slug into its components */
 export interface ParsedSlug {
@@ -37,6 +37,8 @@ export interface NormalizedModelSet {
   modelMeta: Map<string, ModelMeta>
   /** Effort maps keyed by model ID */
   effortMaps: Map<string, Record<string, string>>
+  /** Available efforts keyed by "(modelId)|(fast)|(thinking)" */
+  variantEfforts: Map<string, Set<CursorEffort | 'default'>>
   /**
    * Slug resolution table: maps "(modelId)|(effort)|(fast)|(thinking)" to the
    * legacy slug that Cursor's server accepts.
@@ -48,49 +50,63 @@ export interface NormalizedModelSet {
 // Constants
 // ---------------------------------------------------------------------------
 
-const EFFORT_SUFFIXES: ReadonlySet<string> = new Set(['none', 'low', 'medium', 'high', 'xhigh', 'max'])
+const EFFORT_SUFFIXES: ReadonlySet<string> = new Set([
+  'minimal',
+  'none',
+  'low',
+  'medium',
+  'high',
+  'extra-high',
+  'xhigh',
+  'max',
+])
+
+/** Pi reasoning levels to the Cursor suffixes `buildEffortMap` will prefer. */
+const PI_EFFORT_PREFERENCES: Record<string, readonly (CursorEffort | 'default')[]> = {
+  minimal: ['minimal', 'none', 'low'],
+  low: ['low', 'none', 'minimal'],
+  medium: ['medium', 'default'],
+  high: ['high'],
+  xhigh: ['max', 'xhigh', 'extra-high', 'high'],
+}
 
 // ---------------------------------------------------------------------------
 // parseSlug
 // ---------------------------------------------------------------------------
 
-/**
- * Parse a legacy slug by stripping suffixes in order:
- * 1. Strip `-fast` → speed variant
- * 2. Strip `-thinking` → thinking variant
- * 3. Parse effort from last remaining segment
- * 4. Remaining segments → base name
- */
+/** Parse a legacy slug whose effort, thinking, and fast suffixes can appear in any order. */
 export function parseSlug(slug: string): ParsedSlug {
-  let remaining = slug
-
-  // 1. Strip -fast
-  let fast = false
-  if (remaining.endsWith('-fast')) {
-    fast = true
-    remaining = remaining.slice(0, -5)
-  }
-
-  // 2. Strip -thinking
-  let thinking = false
-  if (remaining.endsWith('-thinking')) {
-    thinking = true
-    remaining = remaining.slice(0, -9)
-  }
-
-  // 3. Parse effort from last segment
+  const segments = slug.split('-')
   let effort: CursorEffort | null = null
-  const segments = remaining.split('-')
-  if (segments.length > 1) {
+  let thinking = false
+  let fast = false
+
+  while (segments.length > 1) {
     const lastSegment = segments.at(-1) ?? ''
-    if (EFFORT_SUFFIXES.has(lastSegment)) {
+    if (lastSegment === 'fast') {
+      fast = true
+      segments.pop()
+      continue
+    }
+    if (lastSegment === 'thinking') {
+      thinking = true
+      segments.pop()
+      continue
+    }
+    if (effort === null && lastSegment === 'high' && segments.at(-2) === 'extra') {
+      effort = 'extra-high'
+      segments.splice(-2)
+      continue
+    }
+    if (effort === null && EFFORT_SUFFIXES.has(lastSegment)) {
       effort = lastSegment as CursorEffort
       segments.pop()
-      remaining = segments.join('-')
+      continue
     }
+    break
   }
 
-  return { base: remaining, effort, thinking, fast }
+  return { base: segments.join('-'), effort, thinking, fast }
 }
 
 // ---------------------------------------------------------------------------
@@ -100,14 +116,24 @@ export function parseSlug(slug: string): ParsedSlug {
 /**
  * Map Pi's effort levels to the best available Cursor effort suffix.
  *
- * - minimal → none if available, else low, else lowest available
- * - low → low if available, else none, else lowest available
+ * - minimal → minimal if available, then none, then low
+ * - low → low if available, then none, then minimal
  * - medium → medium if available, else 'default' (no suffix)
- * - high → high if available, else highest below xhigh
- * - xhigh → max if available, else xhigh, else high
+ * - high → high if available, else highest lower effort
+ * - xhigh → max if available, then xhigh, then extra-high, then high
  */
 export function buildEffortMap(availableEfforts: Set<CursorEffort | 'default'>): Record<string, string> {
-  const orderedEfforts: (CursorEffort | 'default')[] = ['none', 'low', 'default', 'medium', 'high', 'xhigh', 'max']
+  const orderedEfforts: (CursorEffort | 'default')[] = [
+    'minimal',
+    'none',
+    'low',
+    'default',
+    'medium',
+    'high',
+    'extra-high',
+    'xhigh',
+    'max',
+  ]
   const available = orderedEfforts.filter((e) => availableEfforts.has(e))
 
   if (available.length === 0) {
@@ -126,15 +152,34 @@ export function buildEffortMap(availableEfforts: Set<CursorEffort | 'default'>):
     return effortToSuffix(fallback)
   }
 
-  const highFallback: CursorEffort | 'default' = highest === 'max' || highest === 'xhigh' ? 'high' : highest
+  let highFallback = highest
+  for (const candidate of available) {
+    if (candidate !== 'extra-high' && candidate !== 'xhigh' && candidate !== 'max') {
+      highFallback = candidate
+    }
+  }
 
   return {
-    minimal: pick(['none', 'low'], lowest),
-    low: pick(['low', 'none'], lowest),
-    medium: pick(['medium', 'default'], lowest),
-    high: pick(['high'], highFallback),
-    xhigh: pick(['max', 'xhigh', 'high'], highest),
+    minimal: pick([...PI_EFFORT_PREFERENCES.minimal], lowest),
+    low: pick([...PI_EFFORT_PREFERENCES.low], lowest),
+    medium: pick([...PI_EFFORT_PREFERENCES.medium], lowest),
+    high: pick([...PI_EFFORT_PREFERENCES.high], highFallback),
+    xhigh: pick([...PI_EFFORT_PREFERENCES.xhigh], highest),
   }
+}
+
+/** True when this variant would change a named Pi effort to a different named Cursor suffix. */
+function isNamedEffortRemap(
+  effort: string,
+  availableEfforts: Set<CursorEffort | 'default'>,
+  resolvedEffort: string,
+): boolean {
+  const preferred = Object.hasOwn(PI_EFFORT_PREFERENCES, effort) ? PI_EFFORT_PREFERENCES[effort] : undefined
+  if (!preferred) {
+    return false
+  }
+  const hasPreferred = preferred.some((candidate) => availableEfforts.has(candidate))
+  return !hasPreferred && resolvedEffort !== 'default'
 }
 
 function effortToSuffix(effort: CursorEffort | 'default'): string {
@@ -155,6 +200,7 @@ function effortToSuffix(effort: CursorEffort | 'default'): string {
 export function processModels(rawModels: CursorModel[]): NormalizedModelSet {
   const modelMeta = new Map<string, ModelMeta>()
   const effortMaps = new Map<string, Record<string, string>>()
+  const variantEfforts = new Map<string, Set<CursorEffort | 'default'>>()
   const slugLookup = new Map<string, string>()
 
   for (const model of rawModels) {
@@ -178,10 +224,18 @@ export function processModels(rawModels: CursorModel[]): NormalizedModelSet {
           meta.supportsThinking = true
         }
 
-        // Build slug lookup key: "modelId|effort|fast|thinking"
+        // Cursor lists preferred slugs first; first-wins keeps that order.
+        // If the API ever lists preferred last, prefer cursor-* on collision.
         const effort = parsed.effort ?? 'default'
+        const variantKey = `${model.id}|${String(parsed.fast)}|${String(parsed.thinking)}`
+        const availableEfforts = variantEfforts.get(variantKey) ?? new Set<CursorEffort | 'default'>()
+        availableEfforts.add(effort)
+        variantEfforts.set(variantKey, availableEfforts)
+
         const key = `${model.id}|${effort}|${String(parsed.fast)}|${String(parsed.thinking)}`
-        slugLookup.set(key, slug)
+        if (!slugLookup.has(key)) {
+          slugLookup.set(key, slug)
+        }
       }
     }
 
@@ -194,7 +248,7 @@ export function processModels(rawModels: CursorModel[]): NormalizedModelSet {
     }
   }
 
-  return { models: rawModels, modelMeta, effortMaps, slugLookup }
+  return { models: rawModels, modelMeta, effortMaps, variantEfforts, slugLookup }
 }
 
 // ---------------------------------------------------------------------------
@@ -220,56 +274,63 @@ export function resolveModelId(
     return modelId
   }
 
-  // Resolve effort suffix from effort map
-  let resolvedEffort = 'default'
-  if (effort) {
-    const effortMap = modelSet.effortMaps.get(modelId)
-    if (effortMap && Object.hasOwn(effortMap, effort)) {
-      const suffix = effortMap[effort]
-      resolvedEffort = suffix || 'default'
-    } else if (EFFORT_SUFFIXES.has(effort)) {
-      resolvedEffort = effort
-    }
-  }
-
-  // Silently ignore flags the model doesn't support
+  // Silently ignore flags the model doesn't support.
   const effectiveFast = fast && meta.supportsFast
   const effectiveThinking = thinking && meta.supportsThinking
+  const flagCandidates: [fast: boolean, thinking: boolean][] = [[effectiveFast, effectiveThinking]]
 
-  // Look up the legacy slug
-  const key = `${modelId}|${resolvedEffort}|${String(effectiveFast)}|${String(effectiveThinking)}`
-  const slug = modelSet.slugLookup.get(key)
-  if (slug) {
-    return slug
-  }
-
-  // Fallback: try without thinking
-  if (effectiveThinking) {
-    const keyNoThinking = `${modelId}|${resolvedEffort}|${String(effectiveFast)}|false`
-    const slugNoThinking = modelSet.slugLookup.get(keyNoThinking)
-    if (slugNoThinking) {
-      return slugNoThinking
-    }
-  }
-
-  // Fallback: try without fast
+  // Preserve thinking when the exact fast variant is unavailable.
   if (effectiveFast) {
-    const keyNoFast = `${modelId}|${resolvedEffort}|false|${String(effectiveThinking)}`
-    const slugNoFast = modelSet.slugLookup.get(keyNoFast)
-    if (slugNoFast) {
-      return slugNoFast
+    flagCandidates.push([false, effectiveThinking])
+  }
+  if (effectiveThinking) {
+    flagCandidates.push([effectiveFast, false])
+  }
+  if (effectiveFast && effectiveThinking) {
+    flagCandidates.push([false, false])
+  }
+
+  for (const [candidateFast, candidateThinking] of flagCandidates) {
+    const variantKey = `${modelId}|${String(candidateFast)}|${String(candidateThinking)}`
+    const availableEfforts = modelSet.variantEfforts.get(variantKey)
+    if (!availableEfforts) {
+      continue
+    }
+
+    let resolvedEffort = 'default'
+    if (effort) {
+      const effortMap = buildEffortMap(availableEfforts)
+      if (Object.hasOwn(effortMap, effort)) {
+        const suffix = effortMap[effort]
+        resolvedEffort = suffix || 'default'
+      } else if (EFFORT_SUFFIXES.has(effort) && availableEfforts.has(effort as CursorEffort)) {
+        resolvedEffort = effort
+      } else {
+        let piEffort: 'minimal' | 'xhigh' | null = null
+        if (effort === 'none') {
+          piEffort = 'minimal'
+        } else if (effort === 'extra-high' || effort === 'max') {
+          piEffort = 'xhigh'
+        }
+        if (piEffort) {
+          const suffix = effortMap[piEffort]
+          resolvedEffort = suffix || 'default'
+        }
+      }
+
+      // Keep haiku's low → default on thinking; skip opus-style low → thinking-high.
+      if (isNamedEffortRemap(effort, availableEfforts, resolvedEffort)) {
+        continue
+      }
+    }
+
+    const key = `${modelId}|${resolvedEffort}|${String(candidateFast)}|${String(candidateThinking)}`
+    const slug = modelSet.slugLookup.get(key)
+    if (slug) {
+      return slug
     }
   }
 
-  // Fallback: try bare effort only
-  if (resolvedEffort !== 'default') {
-    const keyBare = `${modelId}|${resolvedEffort}|false|false`
-    const slugBare = modelSet.slugLookup.get(keyBare)
-    if (slugBare) {
-      return slugBare
-    }
-  }
-
-  // No slug found — return model ID as-is (e.g. gemini models with no legacy slugs)
+  // The normalized model ID represents the default non-fast, non-thinking variant.
   return modelId
 }

@@ -4,36 +4,31 @@ Raw Cursor model IDs encode effort level, speed variant, and thinking mode as su
 
 ## How it works
 
-Each raw Cursor model ID is parsed in order:
-
-1. Strip trailing `-max` → this is the **maxMode flag** (Cursor's max capability toggle), not an effort level
-2. Strip `-fast` → speed variant
-3. Strip `-thinking` → thinking variant
-4. Parse the last remaining segment for effort (`none`, `low`, `medium`, `high`, `xhigh`, `max`)
-
-This produces: `{base}[-{effort}][-thinking][-fast][-max(mode)]`
+Each legacy slug is parsed by popping trailing `-fast`, `-thinking`, and effort segments (`minimal`, `none`, `low`, `medium`, `high`, `extra-high`, `xhigh`, `max`) in any order. Max Mode stays a separate request-time suffix from the global setting; it is not stripped during slug parse.
 
 Critical: `-max` has **three** meanings in Cursor model IDs:
 
-- **Trailing `-max`** → maxMode flag (stripped first, controlled by global Max Mode setting)
+- **Trailing `-max` on the wire** → maxMode flag (appended at request time when Max Mode is on)
 - **Effort suffix `max`** → an effort level (e.g. `claude-4.6-opus-max` = effort `max` on base `claude-4.6-opus`)
 - **Base name component** → part of model identity (e.g. `gpt-5.1-codex-max` = a distinct model family)
 
-Models like `claude-4.6-opus-max-thinking-fast-max` have both effort `max` AND maxMode flag.
+Cursor lists preferred slugs before compatibility aliases. First-wins keeps that preferred slug.
 
-Models sharing the same `(base, variant)` with multiple effort levels or a single non-empty effort suffix are collapsed into one entry with `compat.supportsReasoningEffort: true` and a model-level `thinkingLevelMap` built from the family's effort map.
+Models sharing the same `(base, variant)` with multiple effort levels or a single non-empty effort suffix are collapsed into one entry with `compat.supportsReasoningEffort: true`. The selector `thinkingLevelMap` is the **family-union** effort map so Pi keeps levels such as `xhigh` selectable. Request-time resolve uses **per-variant** effort sets.
 
-Pi's effort levels map to Cursor suffixes via `buildEffortMap`, which picks the best available match from the family's actual effort set:
+Pi's effort levels map to Cursor suffixes via `buildEffortMap`:
 
-- `minimal` → `none` if available, else `low`, else lowest available
-- `low` → `low`
+- `minimal` → `minimal` if available, then `none`, then `low`
+- `low` → `low` if available, then `none`, then `minimal`
 - `medium` → `medium` or no suffix (default)
-- `high` → `high`
-- `xhigh` → `max` if available, else `xhigh`, else `high`
+- `high` → `high` if available, else the highest lower effort
+- `xhigh` → `max` if available, then `xhigh`, then `extra-high`, then `high`
 
 `xhigh` and `max` effort suffixes **can coexist** in the same family (e.g. `gpt-5.2` has `{low, high, xhigh, max}`). When both exist, `max` is the higher effort and maps to Pi's `xhigh`.
 
-At request time the proxy reconstructs the full Cursor model ID: `base` + effort suffix + variant suffixes (`-thinking`/`-fast`) + maxMode suffix (`-max` if global Max Mode is on and the family supports it).
+If the selected thinking/fast variant has no preferred match for a named Pi effort, resolve tries the next flag candidate instead of remapping that effort (so `low`+thinking on a sparse thinking family stays `low`; an effort-less thinking slug such as Haiku still keeps thinking).
+
+At request time the proxy reconstructs the full Cursor model ID from the resolved legacy slug, then appends maxMode (`-max`) if the global Max Mode setting is on and the family supports it.
 
 ## `modelMappings` setting
 

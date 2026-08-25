@@ -28,6 +28,7 @@ import {
 } from './proxy-timeouts.ts'
 import { isDebugLoggingEnabled, logProxyStderr } from './proxy/debug-logger.ts'
 import type { CursorModel } from './proxy/models.ts'
+import type { ProxyReadySignal } from './proxy/proxy-ready.ts'
 import { withSharedLock } from './shared-lock.ts'
 
 const PORT_FILE = join(homedir(), '.pi', 'agent', 'cursor-proxy.json')
@@ -908,7 +909,7 @@ async function spawnProxy(
     }
   }
 
-  let ready: { type: string; port: number; models?: CursorModel[] }
+  let ready: ProxyReadySignal
   try {
     const outcome = await new Promise<StartupOutcome>((resolve) => {
       // Startup terminal state. The first of ready line, startup timeout,
@@ -996,10 +997,11 @@ async function spawnProxy(
       throw new Error(outcome.message, { cause: outcome.cause })
     }
     options.signal?.throwIfAborted()
-    ready = JSON.parse(outcome.line) as { type: string; port: number; models?: CursorModel[] }
-    if (ready.type !== 'ready' || !ready.port || !childPid) {
+    const parsed = JSON.parse(outcome.line) as Partial<ProxyReadySignal>
+    if (parsed.type !== 'ready' || !parsed.port || !childPid) {
       throw new Error(`Unexpected proxy output: ${outcome.line}`)
     }
+    ready = { type: 'ready', port: parsed.port, models: parsed.models ?? [] }
     stderrCapture.finishStartup()
   } catch (error) {
     // Single failure funnel: startup timeout, pre-ready exit, pre-ready
@@ -1034,7 +1036,7 @@ async function spawnProxy(
   // Don't let the child keep the parent alive
   child.unref()
 
-  return { port: ready.port, pid: childPid, generation, models: ready.models ?? [] }
+  return { port: ready.port, pid: childPid, generation, models: ready.models }
 }
 
 function startHeartbeat(

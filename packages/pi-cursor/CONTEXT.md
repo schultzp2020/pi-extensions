@@ -45,15 +45,15 @@ A static model list (`fallback-models.ts`) bundled with the extension containing
 _Avoid_: default models, hardcoded models
 
 **Model Normalization**:
-The process of collapsing raw Cursor model variants into deduplicated Pi-visible models. Raw IDs encode up to four dimensions: effort level, speed (`-fast`), thinking (`-thinking`), and maxMode (trailing `-max`). Parsing strips suffixes in order: trailing `-max` first, then `-fast`, then `-thinking`, then effort from the last remaining segment. Controlled by the `modelMappings` setting.
+The process of collapsing raw Cursor model variants into deduplicated Pi-visible models. Raw IDs encode effort level, speed (`-fast`), thinking (`-thinking`), and maxMode (trailing `-max` applied at request time). Parsing pops trailing `-fast`, `-thinking`, and effort suffixes (`minimal`, `none`, `low`, `medium`, `high`, `extra-high`, `xhigh`, `max`) in any order. Controlled by the `modelMappings` setting.
 _Avoid_: model dedup, model collapse
 
 **Effort Map**:
-A per-model mapping from Pi's reasoning-effort levels (`minimal`, `low`, `medium`, `high`, `xhigh`) to the best available Cursor effort suffix for that family. Built dynamically from the family's actual effort set using `buildEffortMap`. `xhigh` and `max` can coexist in the same family; when both exist, `max` is treated as the higher Cursor effort and maps to Pi's `xhigh`. Registered via the provider's model-level `thinkingLevelMap` with `compat.supportsReasoningEffort` enabled when a model supports reasoning control.
+A per-model mapping from Pi's reasoning-effort levels (`minimal`, `low`, `medium`, `high`, `xhigh`) to the best available Cursor effort suffix for that family. Built dynamically from the family's actual effort set using `buildEffortMap` so Pi's selector can keep levels such as `xhigh` selectable. `minimal` maps to `minimal` then `none` then `low`. `xhigh` maps to `max` then `xhigh` then `extra-high` then `high`. `xhigh` and `max` can coexist in the same family; when both exist, `max` is treated as the higher Cursor effort and maps to Pi's `xhigh`. Registered via the provider's model-level `thinkingLevelMap` with `compat.supportsReasoningEffort` enabled when a model supports reasoning control.
 _Avoid_: effort table, reasoning map
 
 **Effort Resolution**:
-The process of reconstructing the final Cursor model ID at request time by inserting the mapped effort suffix before any `-fast` or `-thinking` variant suffix. Performed by the Proxy using the Effort Map and global settings.
+The process of reconstructing the final Cursor model ID at request time from the variant's available efforts and global Fast/Thinking settings. Performed by the Proxy using per-variant effort sets. If the selected thinking/fast variant has no preferred match for a named Pi effort, resolve tries the next flag candidate instead of remapping that effort.
 _Avoid_: model resolution, effort insertion
 
 **Max Mode**:

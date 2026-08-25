@@ -162,8 +162,8 @@ function toProviderModels(models: CursorModel[], modelSet?: NormalizedModelSet):
       maxTokens: m.maxTokens,
     }
 
-    // Expose per-model thinking controls for models with effort maps.
-    // Pi core reads thinkingLevelMap to populate the reasoning-effort selector.
+    // Family-union map so Pi keeps xhigh selectable. Request-time resolve uses
+    // per-variant efforts and will not change a named effort just to keep thinking.
     if (modelSet) {
       const effortMap = modelSet.effortMaps.get(m.id)
       if (effortMap) {
