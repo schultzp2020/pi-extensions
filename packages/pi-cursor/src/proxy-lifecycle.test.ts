@@ -1,33 +1,25 @@
 import type * as ChildProcessModule from 'node:child_process'
 import type { ChildProcess, SpawnOptions } from 'node:child_process'
-import { EventEmitter } from 'node:events'
-import type * as FsModule from 'node:fs'
-import { resolve } from 'node:path'
+import { spawn } from 'node:child_process'
+import { EventEmitter, once } from 'node:events'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  unlinkSync,
+  utimesSync,
+  writeFileSync,
+} from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
 import { PassThrough } from 'node:stream'
+import { fileURLToPath } from 'node:url'
 
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
 
 import type * as DebugLoggerModule from './proxy/debug-logger.ts'
-
-const fsMocks = vi.hoisted(() => ({
-  existsSync: vi.fn<() => boolean>(() => false),
-  readFileSync: vi.fn<() => string>(() => '{}'),
-  writeFileSync: vi.fn<() => void>(),
-  mkdirSync: vi.fn<() => void>(),
-  unlinkSync: vi.fn<() => void>(),
-}))
-
-vi.mock('node:fs', async (importOriginal) => {
-  const actual = await importOriginal<typeof FsModule>()
-  return {
-    ...actual,
-    existsSync: fsMocks.existsSync,
-    readFileSync: fsMocks.readFileSync,
-    writeFileSync: fsMocks.writeFileSync,
-    mkdirSync: fsMocks.mkdirSync,
-    unlinkSync: fsMocks.unlinkSync,
-  }
-})
 
 type SpawnFn = (command: string, args: readonly string[], options: SpawnOptions) => ChildProcess
 
@@ -60,7 +52,15 @@ vi.mock('./proxy/debug-logger.ts', async (importOriginal) => {
   }
 })
 
-import { connectToProxy, pushToken, stopHeartbeat } from './proxy-lifecycle.ts'
+import {
+  connectToProxy,
+  getActivePort,
+  isProxyHealthy,
+  onProxyExit,
+  pushToken,
+  stopHeartbeat,
+} from './proxy-lifecycle.ts'
+import { removeOwnedProxyPortFileWithLock } from './proxy-port-file.ts'
 import { logProxyStderr } from './proxy/debug-logger.ts'
 
 const HEARTBEAT_INTERVAL_MS = 10_000
@@ -78,6 +78,30 @@ const SIGTERM_RESISTANT_FIXTURE = resolve(import.meta.dirname, 'test-fixtures', 
 const REAL_PENDING_DEADLINE_MS = 8_000
 
 const recorded: { url: string; body: string | null }[] = []
+
+let testTempDir = ''
+
+beforeEach(() => {
+  testTempDir = mkdtempSync(join(tmpdir(), 'pi-cursor-lifecycle-unit-'))
+})
+
+afterEach(() => {
+  rmSync(testTempDir, { recursive: true, force: true })
+})
+
+function connectToTestProxy(
+  sessionId: string | (() => string),
+  accessToken: string | null,
+): ReturnType<typeof connectToProxy> {
+  return connectToProxy(sessionId, accessToken, {
+    portFilePath: join(testTempDir, 'cursor-proxy.json'),
+    lifecycleFilePath: join(testTempDir, 'cursor-proxy-lifecycle.json'),
+  })
+}
+
+function expectTestPortUnpublished(): void {
+  expect(existsSync(join(testTempDir, 'cursor-proxy.json'))).toBeFalsy()
+}
 
 function requestUrl(input: string | URL | Request): string {
   if (typeof input === 'string') {
@@ -180,6 +204,8 @@ function makeFakeChild(pid: number): {
     stdout,
     stderr,
     pid,
+    exitCode: null,
+    signalCode: null,
     unref: unrefMock,
     kill: killMock,
     on: events.on.bind(events),
@@ -189,13 +215,20 @@ function makeFakeChild(pid: number): {
   return { child, events, stdout, stderr, killMock, unrefMock }
 }
 
+function mockFakeChildSpawn(child: ChildProcess): Promise<void> {
+  return new Promise<void>((resolveSpawned) => {
+    spawnMock.mockImplementation(() => {
+      resolveSpawned()
+      return child
+    })
+  })
+}
+
 describe('proxy-lifecycle session ID resolution', () => {
   beforeEach(() => {
     // Fake only the timer APIs the heartbeat uses; keep streams and readline on real timers.
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] })
     vi.stubGlobal('fetch', fetchMock)
-    fsMocks.existsSync.mockReturnValue(false)
-    fsMocks.readFileSync.mockReturnValue('{}')
   })
 
   afterEach(() => {
@@ -207,11 +240,13 @@ describe('proxy-lifecycle session ID resolution', () => {
   })
 
   it('sends later heartbeats with the current session ID after reconnecting to an existing proxy', async () => {
-    fsMocks.existsSync.mockReturnValue(true)
-    fsMocks.readFileSync.mockReturnValue(JSON.stringify({ port: 45678, pid: process.pid }))
+    writeFileSync(
+      join(testTempDir, 'cursor-proxy.json'),
+      JSON.stringify({ port: 45678, pid: process.pid, generation: new Date().toISOString() }),
+    )
 
     let currentId = BOOTSTRAP_SESSION_ID
-    const result = await connectToProxy(() => currentId, null)
+    const result = await connectToTestProxy(() => currentId, null)
     expect(result.port).toBe(45678)
 
     // The immediate heartbeat uses the ID current at connect time (bootstrap).
@@ -224,11 +259,12 @@ describe('proxy-lifecycle session ID resolution', () => {
   })
 
   it('sends later heartbeats with the current session ID after spawning a proxy', async () => {
-    const { child, stdout } = makeFakeChild(4242)
-    spawnMock.mockReturnValue(child)
+    const { child, stdout } = makeFakeChild(process.pid)
+    const spawned = mockFakeChildSpawn(child)
 
     let currentId = BOOTSTRAP_SESSION_ID
-    const pending = connectToProxy(() => currentId, 'access-token')
+    const pending = connectToTestProxy(() => currentId, 'access-token')
+    await spawned
     stdout.write(`${JSON.stringify({ type: 'ready', port: 45679, models: [] })}\n`)
     const result = await pending
     expect(result.port).toBe(45679)
@@ -240,11 +276,12 @@ describe('proxy-lifecycle session ID resolution', () => {
   })
 
   it('logs proxy stderr with the current session ID after it changes', async () => {
-    const { child, stdout, stderr } = makeFakeChild(4243)
-    spawnMock.mockReturnValue(child)
+    const { child, stdout, stderr } = makeFakeChild(process.pid)
+    const spawned = mockFakeChildSpawn(child)
 
     let currentId = BOOTSTRAP_SESSION_ID
-    const pending = connectToProxy(() => currentId, 'access-token')
+    const pending = connectToTestProxy(() => currentId, 'access-token')
+    await spawned
     stdout.write(`${JSON.stringify({ type: 'ready', port: 45680, models: [] })}\n`)
     await pending
 
@@ -264,8 +301,6 @@ describe('proxy-lifecycle startup failures', () => {
     // Fake only the timer APIs the startup path uses; keep stream events on the real loop.
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] })
     vi.stubGlobal('fetch', fetchMock)
-    fsMocks.existsSync.mockReturnValue(false)
-    fsMocks.readFileSync.mockReturnValue('{}')
   })
 
   afterEach(() => {
@@ -278,11 +313,12 @@ describe('proxy-lifecycle startup failures', () => {
 
   it('includes stderr that Node delivers after the child exit event in the startup error', async () => {
     const { child, stderr, events } = makeFakeChild(4244)
-    spawnMock.mockReturnValue(child)
+    const spawned = mockFakeChildSpawn(child)
 
-    const pending = connectToProxy(() => BOOTSTRAP_SESSION_ID, 'access-token')
+    const pending = connectToTestProxy(() => BOOTSTRAP_SESSION_ID, 'access-token')
     // Keep the eventual rejection handled while the deferred stderr arrives.
     void pending.catch(() => {})
+    await spawned
     // The child exits first; the final stderr data reaches the parent later,
     // after the exit event's microtasks ran (real child-process ordering).
     events.emit('exit', 1, null)
@@ -296,11 +332,12 @@ describe('proxy-lifecycle startup failures', () => {
 
   it('escalates a timed-out child that never exits from SIGTERM to SIGKILL and disposes every resource', async () => {
     const { child, stdout, stderr, events, killMock, unrefMock } = makeFakeChild(4245)
-    spawnMock.mockReturnValue(child)
+    const spawned = mockFakeChildSpawn(child)
 
-    const pending = connectToProxy(() => BOOTSTRAP_SESSION_ID, 'access-token')
+    const pending = connectToTestProxy(() => BOOTSTRAP_SESSION_ID, 'access-token')
     // Keep the eventual rejection handled while the timers advance.
     void pending.catch(() => {})
+    await spawned
     await vi.advanceTimersByTimeAsync(PROXY_STARTUP_TIMEOUT_MS)
     // The hung child writes diagnostics but never exits and never ends stderr.
     stderr.write('[proxy] accessToken is required\n')
@@ -321,11 +358,12 @@ describe('proxy-lifecycle startup failures', () => {
 
   it('waits the full SIGTERM grace after stderr ends before escalating a child that never exits', async () => {
     const { child, stdout, stderr, killMock, unrefMock } = makeFakeChild(4246)
-    spawnMock.mockReturnValue(child)
+    const spawned = mockFakeChildSpawn(child)
 
-    const pending = connectToProxy(() => BOOTSTRAP_SESSION_ID, 'access-token')
+    const pending = connectToTestProxy(() => BOOTSTRAP_SESSION_ID, 'access-token')
     // Keep the eventual rejection handled while the stream ends.
     void pending.catch(() => {})
+    await spawned
     await vi.advanceTimersByTimeAsync(PROXY_STARTUP_TIMEOUT_MS)
     // The killed child flushes final diagnostics and closes stderr, but it
     // never exits. Stderr completion settles the drain early; it must not
@@ -346,10 +384,11 @@ describe('proxy-lifecycle startup failures', () => {
 
   it('never escalates a SIGTERM-responsive child that closes stderr before it exits', async () => {
     const { child, stderr, events, killMock, unrefMock } = makeFakeChild(4255)
-    spawnMock.mockReturnValue(child)
+    const spawned = mockFakeChildSpawn(child)
 
-    const pending = connectToProxy(() => BOOTSTRAP_SESSION_ID, 'access-token')
+    const pending = connectToTestProxy(() => BOOTSTRAP_SESSION_ID, 'access-token')
     void pending.catch(() => {})
+    await spawned
     await vi.advanceTimersByTimeAsync(PROXY_STARTUP_TIMEOUT_MS)
     // The responsive child closes its stderr immediately but exits only
     // later, inside the grace window. Stderr completion must never trigger
@@ -365,16 +404,17 @@ describe('proxy-lifecycle startup failures', () => {
     // confirmed, no SIGKILL and no unref safety needed.
     expect(killMock.mock.calls.map((call) => call[0])).toEqual(['SIGTERM'])
     expect(unrefMock).not.toHaveBeenCalled()
-    expect(fsMocks.writeFileSync).not.toHaveBeenCalled()
+    expectTestPortUnpublished()
     expect(heartbeatBodies()).toEqual([])
   })
 
   it('cleans up a still-live child when the ready payload is invalid', async () => {
     const { child, stdout, stderr, killMock, unrefMock } = makeFakeChild(4252)
-    spawnMock.mockReturnValue(child)
+    const spawned = mockFakeChildSpawn(child)
 
-    const pending = connectToProxy(() => BOOTSTRAP_SESSION_ID, 'access-token')
+    const pending = connectToTestProxy(() => BOOTSTRAP_SESSION_ID, 'access-token')
     void pending.catch(() => {})
+    await spawned
     stdout.write(`${JSON.stringify({ type: 'nope', port: 45684, models: [] })}\n`)
     // The child stays live and its stderr never ends: cleanup escalates.
     await vi.advanceTimersByTimeAsync(STDERR_DRAIN_TIMEOUT_MS + SIGKILL_WAIT_MS)
@@ -388,10 +428,11 @@ describe('proxy-lifecycle startup failures', () => {
 
   it('cleans up a still-live child when the ready line is malformed JSON', async () => {
     const { child, stdout, killMock } = makeFakeChild(4254)
-    spawnMock.mockReturnValue(child)
+    const spawned = mockFakeChildSpawn(child)
 
-    const pending = connectToProxy(() => BOOTSTRAP_SESSION_ID, 'access-token')
+    const pending = connectToTestProxy(() => BOOTSTRAP_SESSION_ID, 'access-token')
     void pending.catch(() => {})
+    await spawned
     stdout.write('{oops}\n')
     await vi.advanceTimersByTimeAsync(STDERR_DRAIN_TIMEOUT_MS + SIGKILL_WAIT_MS)
 
@@ -401,10 +442,11 @@ describe('proxy-lifecycle startup failures', () => {
 
   it('fails a bounded startup when the child errors without exiting, like a failed spawn', async () => {
     const { child, stdout, stderr, events, killMock, unrefMock } = makeFakeChild(4256)
-    spawnMock.mockReturnValue(child)
+    const spawned = mockFakeChildSpawn(child)
 
-    const pending = connectToProxy(() => BOOTSTRAP_SESSION_ID, 'access-token')
+    const pending = connectToTestProxy(() => BOOTSTRAP_SESSION_ID, 'access-token')
     void pending.catch(() => {})
+    await spawned
     // A spawn failure emits 'error' and then 'close', never 'exit'. The
     // error must claim the startup failure instead of crashing the parent.
     events.emit('error', Object.assign(new Error('spawn node ENOENT'), { code: 'ENOENT' }))
@@ -426,16 +468,17 @@ describe('proxy-lifecycle startup failures', () => {
     expect(stdout.destroyed).toBeTruthy()
     expect(stderr.destroyed).toBeTruthy()
     expect(events.listenerCount('error')).toBe(0)
-    expect(fsMocks.writeFileSync).not.toHaveBeenCalled()
+    expectTestPortUnpublished()
     expect(heartbeatBodies()).toEqual([])
   })
 
   it('keeps a kill error during termination handled without restarting or extending cleanup', async () => {
     const { child, stdout, stderr, events, killMock, unrefMock } = makeFakeChild(4257)
-    spawnMock.mockReturnValue(child)
+    const spawned = mockFakeChildSpawn(child)
 
-    const pending = connectToProxy(() => BOOTSTRAP_SESSION_ID, 'access-token')
+    const pending = connectToTestProxy(() => BOOTSTRAP_SESSION_ID, 'access-token')
     void pending.catch(() => {})
+    await spawned
     await vi.advanceTimersByTimeAsync(PROXY_STARTUP_TIMEOUT_MS)
     // The SIGTERM delivery fails while the grace window is still running.
     // The persistent error sink must swallow the event; it must not claim a
@@ -452,16 +495,17 @@ describe('proxy-lifecycle startup failures', () => {
     expect(events.listenerCount('error')).toBe(1)
     expect(stdout.destroyed).toBeTruthy()
     expect(stderr.destroyed).toBeTruthy()
-    expect(fsMocks.writeFileSync).not.toHaveBeenCalled()
+    expectTestPortUnpublished()
     expect(heartbeatBodies()).toEqual([])
   })
 
   it('captures final stderr that arrives after the post-SIGKILL exit event', async () => {
     const { child, stderr, events, killMock } = makeFakeChild(4258)
-    spawnMock.mockReturnValue(child)
+    const spawned = mockFakeChildSpawn(child)
 
-    const pending = connectToProxy(() => BOOTSTRAP_SESSION_ID, 'access-token')
+    const pending = connectToTestProxy(() => BOOTSTRAP_SESSION_ID, 'access-token')
     void pending.catch(() => {})
+    await spawned
     await vi.advanceTimersByTimeAsync(PROXY_STARTUP_TIMEOUT_MS)
     // The child ignores SIGTERM and keeps stderr open, so the initial drain
     // and the grace both expire before the escalation.
@@ -479,10 +523,11 @@ describe('proxy-lifecycle startup failures', () => {
 
   it('bounds the post-SIGKILL stderr drain when the killed child exits but stderr never closes', async () => {
     const { child, stderr, events, killMock, unrefMock } = makeFakeChild(4259)
-    spawnMock.mockReturnValue(child)
+    const spawned = mockFakeChildSpawn(child)
 
-    const pending = connectToProxy(() => BOOTSTRAP_SESSION_ID, 'access-token')
+    const pending = connectToTestProxy(() => BOOTSTRAP_SESSION_ID, 'access-token')
     void pending.catch(() => {})
+    await spawned
     await vi.advanceTimersByTimeAsync(PROXY_STARTUP_TIMEOUT_MS)
     await vi.advanceTimersByTimeAsync(SIGTERM_GRACE_MS)
     // The child exits inside the post-kill window but its stderr never
@@ -508,10 +553,11 @@ describe('proxy-lifecycle startup failures', () => {
 
   it('keeps a stderr error queued across the exit event handled through cleanup', async () => {
     const { child, stderr, events, killMock, unrefMock } = makeFakeChild(4260)
-    spawnMock.mockReturnValue(child)
+    const spawned = mockFakeChildSpawn(child)
 
-    const pending = connectToProxy(() => BOOTSTRAP_SESSION_ID, 'access-token')
+    const pending = connectToTestProxy(() => BOOTSTRAP_SESSION_ID, 'access-token')
     void pending.catch(() => {})
+    await spawned
     await vi.advanceTimersByTimeAsync(PROXY_STARTUP_TIMEOUT_MS)
     // The SIGTERM-responsive child exits inside the grace window and its
     // stderr transport fails in the same turn: destroy(error) queues the
@@ -539,8 +585,6 @@ describe('proxy-lifecycle startup terminal state', () => {
     // Fake only the timer APIs the startup path uses; keep stream events on the real loop.
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] })
     vi.stubGlobal('fetch', fetchMock)
-    fsMocks.existsSync.mockReturnValue(false)
-    fsMocks.readFileSync.mockReturnValue('{}')
   })
 
   afterEach(() => {
@@ -553,11 +597,12 @@ describe('proxy-lifecycle startup terminal state', () => {
 
   it('rejects a ready line that arrives after the child exited, without publishing the proxy', async () => {
     const { child, stdout, stderr, events } = makeFakeChild(4247)
-    spawnMock.mockReturnValue(child)
+    const spawned = mockFakeChildSpawn(child)
 
-    const pending = connectToProxy(() => BOOTSTRAP_SESSION_ID, 'access-token')
+    const pending = connectToTestProxy(() => BOOTSTRAP_SESSION_ID, 'access-token')
     // Keep the eventual rejection handled while the buffered ready line arrives.
     void pending.catch(() => {})
+    await spawned
     events.emit('exit', 1, null)
     // Buffered stdout still reaches the parent while stderr drains; the exit
     // already claimed the terminal state, so the ready line changes nothing.
@@ -565,16 +610,17 @@ describe('proxy-lifecycle startup terminal state', () => {
     stderr.end()
 
     await expect(pending).rejects.toThrow('Proxy exited with code 1')
-    expect(fsMocks.writeFileSync).not.toHaveBeenCalled()
+    expectTestPortUnpublished()
     expect(heartbeatBodies()).toEqual([])
   })
 
   it('rejects a ready line that arrives after the startup timeout, killing the child once', async () => {
     const { child, stdout, stderr, events, killMock } = makeFakeChild(4248)
-    spawnMock.mockReturnValue(child)
+    const spawned = mockFakeChildSpawn(child)
 
-    const pending = connectToProxy(() => BOOTSTRAP_SESSION_ID, 'access-token')
+    const pending = connectToTestProxy(() => BOOTSTRAP_SESSION_ID, 'access-token')
     void pending.catch(() => {})
+    await spawned
     await vi.advanceTimersByTimeAsync(PROXY_STARTUP_TIMEOUT_MS)
     // The killed child's buffered ready line arrives while stderr drains.
     stdout.write(`${JSON.stringify({ type: 'ready', port: 45682, models: [] })}\n`)
@@ -586,16 +632,17 @@ describe('proxy-lifecycle startup terminal state', () => {
     await expect(pending).rejects.toThrow('Proxy startup timeout')
     expect(killMock).toHaveBeenCalledTimes(1)
     expect(killMock.mock.calls[0]?.[0]).toBe('SIGTERM')
-    expect(fsMocks.writeFileSync).not.toHaveBeenCalled()
+    expectTestPortUnpublished()
     expect(heartbeatBodies()).toEqual([])
   })
 
   it('starts one drain, keeps one kill, and skips SIGKILL when the timeout and the resulting exit interleave', async () => {
     const { child, stderr, events, killMock, unrefMock } = makeFakeChild(4249)
-    spawnMock.mockReturnValue(child)
+    const spawned = mockFakeChildSpawn(child)
 
-    const pending = connectToProxy(() => BOOTSTRAP_SESSION_ID, 'access-token')
+    const pending = connectToTestProxy(() => BOOTSTRAP_SESSION_ID, 'access-token')
     void pending.catch(() => {})
+    await spawned
     await vi.advanceTimersByTimeAsync(PROXY_STARTUP_TIMEOUT_MS)
 
     // Exactly one drain runs: the capture's persistent end listener plus one
@@ -621,25 +668,27 @@ describe('proxy-lifecycle startup terminal state', () => {
     expect(stderr.listenerCount('end')).toBe(0)
   })
 
-  it('removes the child exit listener once the ready line claims success', async () => {
-    const { child, stdout, events } = makeFakeChild(4250)
-    spawnMock.mockReturnValue(child)
+  it('replaces the startup exit listener with the post-ready lifecycle listener', async () => {
+    const { child, stdout, events } = makeFakeChild(process.pid)
+    const spawned = mockFakeChildSpawn(child)
 
-    const pending = connectToProxy(() => BOOTSTRAP_SESSION_ID, 'access-token')
+    const pending = connectToTestProxy(() => BOOTSTRAP_SESSION_ID, 'access-token')
+    await spawned
     expect(events.listenerCount('exit')).toBe(1)
 
     stdout.write(`${JSON.stringify({ type: 'ready', port: 45683, models: [] })}\n`)
     const result = await pending
 
     expect(result.port).toBe(45683)
-    expect(events.listenerCount('exit')).toBe(0)
+    expect(events.listenerCount('exit')).toBe(1)
   })
 
   it('keeps the stderr capture attached after a successful startup', async () => {
-    const { child, stdout, stderr } = makeFakeChild(4253)
-    spawnMock.mockReturnValue(child)
+    const { child, stdout, stderr } = makeFakeChild(process.pid)
+    const spawned = mockFakeChildSpawn(child)
 
-    const pending = connectToProxy(() => BOOTSTRAP_SESSION_ID, 'access-token')
+    const pending = connectToTestProxy(() => BOOTSTRAP_SESSION_ID, 'access-token')
+    await spawned
     stdout.write(`${JSON.stringify({ type: 'ready', port: 45685, models: [] })}\n`)
     const result = await pending
 
@@ -652,10 +701,11 @@ describe('proxy-lifecycle startup terminal state', () => {
 
   it('bounds the startup error when the stderr stream itself fails', async () => {
     const { child, stderr } = makeFakeChild(4251)
-    spawnMock.mockReturnValue(child)
+    const spawned = mockFakeChildSpawn(child)
 
-    const pending = connectToProxy(() => BOOTSTRAP_SESSION_ID, 'access-token')
+    const pending = connectToTestProxy(() => BOOTSTRAP_SESSION_ID, 'access-token')
     void pending.catch(() => {})
+    await spawned
     // The transport fails before any ready line. The queued error must stay
     // handled, and the startup must still fail within its deadlines: the
     // early drain settlement must not shorten the grace of the still-live
@@ -673,8 +723,6 @@ describe('proxy-lifecycle real-child startup cleanup', () => {
     // pipes, and its signals all run on the real event loop.
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] })
     vi.stubGlobal('fetch', fetchMock)
-    fsMocks.existsSync.mockReturnValue(false)
-    fsMocks.readFileSync.mockReturnValue('{}')
   })
 
   afterEach(() => {
@@ -720,7 +768,7 @@ describe('proxy-lifecycle real-child startup cleanup', () => {
         })
       })
 
-      const pending = connectToProxy(() => BOOTSTRAP_SESSION_ID, 'access-token')
+      const pending = connectToTestProxy(() => BOOTSTRAP_SESSION_ID, 'access-token')
       // Keep the eventual rejection handled while the fixture boots.
       void pending.catch(() => {})
 
@@ -825,6 +873,30 @@ describe('real-time observation deadline', () => {
   })
 })
 
+async function waitFor(predicate: () => boolean, timeoutMs = 3000): Promise<void> {
+  const deadline = performance.now() + timeoutMs
+  while (!predicate()) {
+    if (performance.now() >= deadline) {
+      throw new Error('Timed out waiting for proxy lifecycle state')
+    }
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 10)
+    })
+  }
+}
+
+async function waitForProxyUnreachable(port: number, timeoutMs = 3000): Promise<void> {
+  const deadline = performance.now() + timeoutMs
+  while (await isProxyHealthy(port)) {
+    if (performance.now() >= deadline) {
+      throw new Error('Timed out waiting for proxy to become unreachable')
+    }
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 10)
+    })
+  }
+}
+
 describe('pushToken', () => {
   afterEach(() => {
     vi.unstubAllGlobals()
@@ -836,8 +908,8 @@ describe('pushToken', () => {
     const controller = new AbortController()
     controller.abort()
 
-    await pushToken(3456, 'token', controller.signal)
-
+    const delivered = await pushToken(3456, 'token', controller.signal)
+    expect(delivered).toBeFalsy()
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
@@ -846,10 +918,1165 @@ describe('pushToken', () => {
     vi.stubGlobal('fetch', fetchMock)
     const controller = new AbortController()
 
-    await pushToken(3456, 'token', controller.signal)
+    const delivered = await pushToken(3456, 'token', controller.signal)
 
+    expect(delivered).toBeTruthy()
     expect(fetchMock).toHaveBeenCalledOnce()
     expect(fetchMock.mock.calls[0]?.[1]?.signal).toBeInstanceOf(AbortSignal)
     expect(fetchMock.mock.calls[0]?.[1]?.signal?.aborted).toBeFalsy()
+  })
+
+  it('reports an unreachable token endpoint', async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockRejectedValue(new Error('connection lost'))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(pushToken(3456, 'token')).resolves.toBeFalsy()
+  })
+})
+
+describe('shared proxy adoption', () => {
+  afterEach(() => {
+    stopHeartbeat()
+    spawnMock.mockReset()
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+    vi.clearAllMocks()
+  })
+
+  it.each([
+    { failingEndpoint: 'token', expectedError: `Healthy proxy ${String(process.pid)} rejected the access token` },
+    {
+      failingEndpoint: 'heartbeat',
+      expectedError: `Healthy proxy ${String(process.pid)} rejected the session heartbeat`,
+    },
+    { failingEndpoint: 'models', expectedError: 'Proxy model refresh failed with status 503' },
+  ] as const)(
+    'leaves a healthy published child in place when its $failingEndpoint handshake step fails',
+    async ({ failingEndpoint, expectedError }) => {
+      const portFilePath = join(testTempDir, 'cursor-proxy.json')
+      const lifecycleFilePath = join(testTempDir, 'cursor-proxy-lifecycle.json')
+      const generation = new Date().toISOString()
+      const published = { port: 4510, pid: process.pid, generation }
+      writeFileSync(portFilePath, JSON.stringify(published))
+      spawnMock.mockImplementation(() => {
+        throw new Error('attempted to spawn a sibling proxy')
+      })
+      vi.stubGlobal(
+        'fetch',
+        vi.fn<typeof fetch>((input) => {
+          const url = requestUrl(input)
+          if (url.endsWith(`/internal/${failingEndpoint}`)) {
+            return Promise.resolve(new Response(null, { status: 503 }))
+          }
+          if (url.endsWith('/internal/models')) {
+            return Promise.resolve(new Response(JSON.stringify({ models: [] }), { status: 200 }))
+          }
+          return Promise.resolve(new Response(null, { status: 200 }))
+        }),
+      )
+
+      await expect(
+        connectToProxy('adopting-session', 'access-token', { portFilePath, lifecycleFilePath }),
+      ).rejects.toThrow(expectedError)
+
+      expect(spawnMock).not.toHaveBeenCalled()
+      expect(JSON.parse(readFileSync(portFilePath, 'utf8'))).toEqual(published)
+      expect(existsSync(lifecycleFilePath)).toBeFalsy()
+      expect(getActivePort()).toBeNull()
+    },
+  )
+
+  it('clears an adopted connection when the published proxy generation changes', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+    vi.stubGlobal('fetch', fetchMock)
+    const portFilePath = join(testTempDir, 'cursor-proxy.json')
+    const lifecycleFilePath = join(testTempDir, 'cursor-proxy-lifecycle.json')
+    const generation = new Date().toISOString()
+    const replacementGeneration = new Date(Date.parse(generation) + 1).toISOString()
+    const published = { port: 4511, pid: process.pid, generation }
+    const replacement = { port: 4512, pid: process.pid, generation: replacementGeneration }
+    const exits: number[] = []
+    const stopObserving = onProxyExit((event) => exits.push(event.childPid))
+
+    try {
+      writeFileSync(portFilePath, JSON.stringify(published))
+      await expect(
+        connectToProxy('adopting-session', null, { portFilePath, lifecycleFilePath }),
+      ).resolves.toMatchObject(published)
+      expect(getActivePort()).toBe(published.port)
+
+      writeFileSync(portFilePath, JSON.stringify(replacement))
+      await vi.advanceTimersByTimeAsync(HEARTBEAT_INTERVAL_MS)
+
+      expect(exits).toEqual([published.pid])
+      expect(getActivePort()).toBeNull()
+      expect(JSON.parse(readFileSync(portFilePath, 'utf8'))).toEqual(replacement)
+    } finally {
+      stopObserving()
+    }
+  })
+})
+
+describe('post-ready child exit recovery', () => {
+  beforeEach(() => {
+    const realSpawn = realSpawnRef.current
+    if (!realSpawn) {
+      throw new Error('test mocks did not capture the real Node modules')
+    }
+    spawnMock.mockImplementation(realSpawn)
+  })
+
+  it('publishes one replacement across concurrent module instances', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'pi-cursor-lifecycle-shared-reconnect-'))
+    const portFilePath = join(tempDir, 'cursor-proxy.json')
+    const lifecycleFilePath = join(tempDir, 'cursor-proxy-lifecycle.json')
+    const proxyLockPath = `${portFilePath}.lock`
+    const proxyEntry = fileURLToPath(new URL('./test-fixtures/ready-proxy.mjs', import.meta.url))
+    const childPids = new Set<number>()
+    let stopAlternateHeartbeat: (() => void) | undefined
+
+    try {
+      writeFileSync(proxyLockPath, '')
+      utimesSync(proxyLockPath, new Date(0), new Date(0))
+      vi.resetModules()
+      const alternateLifecycle = await import('./proxy-lifecycle.ts')
+      stopAlternateHeartbeat = alternateLifecycle.stopHeartbeat
+      const [first, second] = await Promise.all([
+        connectToProxy('first-session', 'first-secret', { portFilePath, lifecycleFilePath, proxyEntry }),
+        alternateLifecycle.connectToProxy('second-session', 'second-secret', {
+          portFilePath,
+          lifecycleFilePath,
+          proxyEntry,
+        }),
+      ])
+      childPids.add(first.pid)
+      childPids.add(second.pid)
+
+      expect(second).toMatchObject({ port: first.port, pid: first.pid })
+      expect(JSON.parse(readFileSync(portFilePath, 'utf8'))).toEqual({
+        port: first.port,
+        pid: first.pid,
+        generation: first.generation,
+      })
+    } finally {
+      stopHeartbeat()
+      stopAlternateHeartbeat?.()
+      for (const pid of childPids) {
+        try {
+          process.kill(pid, 'SIGKILL')
+        } catch {}
+      }
+      await waitFor(() =>
+        [...childPids].every((pid) => {
+          try {
+            process.kill(pid, 0)
+            return false
+          } catch {
+            return true
+          }
+        }),
+      )
+      rmSync(tempDir, { recursive: true, force: true })
+    }
+  })
+
+  it('waits for an earlier chooser to publish its lock ticket', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'pi-cursor-lifecycle-choosing-lock-'))
+    const portFilePath = join(tempDir, 'cursor-proxy.json')
+    const lifecycleFilePath = join(tempDir, 'cursor-proxy-lifecycle.json')
+    const proxyLockPath = `${portFilePath}.lock`
+    const choosingPath = join(proxyLockPath, 'paused-owner.choosing')
+    const proxyEntry = fileURLToPath(new URL('./test-fixtures/ready-proxy.mjs', import.meta.url))
+    let childPid: number | undefined
+
+    try {
+      mkdirSync(proxyLockPath)
+      writeFileSync(
+        choosingPath,
+        JSON.stringify({ ownerPid: process.pid, ownerId: 'paused-owner', acquiredAt: Date.now() }),
+      )
+      const connectionPromise = connectToProxy('test-session', 'test-secret', {
+        portFilePath,
+        lifecycleFilePath,
+        proxyEntry,
+      })
+      const state = await Promise.race([
+        connectionPromise.then(() => 'connected' as const),
+        new Promise<'waiting'>((resolve) => {
+          setTimeout(() => resolve('waiting'), 250)
+        }),
+      ])
+      expect(state).toBe('waiting')
+      expect(existsSync(portFilePath)).toBeFalsy()
+
+      unlinkSync(choosingPath)
+      const connection = await connectionPromise
+      childPid = connection.pid
+      expect(JSON.parse(readFileSync(portFilePath, 'utf8'))).toMatchObject({ pid: connection.pid })
+    } finally {
+      stopHeartbeat()
+      if (childPid !== undefined) {
+        const pid = childPid
+        try {
+          process.kill(pid, 'SIGKILL')
+        } catch {}
+        await waitFor(() => {
+          try {
+            process.kill(pid, 0)
+            return false
+          } catch {
+            return true
+          }
+        })
+      }
+      rmSync(tempDir, { recursive: true, force: true })
+    }
+  })
+
+  it('releases a queued recovery when its cancellation signal aborts', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'pi-cursor-lifecycle-cancelled-lock-'))
+    const portFilePath = join(tempDir, 'cursor-proxy.json')
+    const lifecycleFilePath = join(tempDir, 'cursor-proxy-lifecycle.json')
+    const proxyLockPath = `${portFilePath}.lock`
+    const choosingPath = join(proxyLockPath, 'blocking-owner.choosing')
+    const proxyEntry = fileURLToPath(new URL('./test-fixtures/ready-proxy.mjs', import.meta.url))
+    const controller = new AbortController()
+
+    try {
+      mkdirSync(proxyLockPath)
+      writeFileSync(
+        choosingPath,
+        JSON.stringify({ ownerPid: process.pid, ownerId: 'blocking-owner', acquiredAt: Date.now() }),
+      )
+      const connection = connectToProxy('test-session', 'test-secret', {
+        portFilePath,
+        lifecycleFilePath,
+        proxyEntry,
+        signal: controller.signal,
+      })
+      await Promise.resolve()
+
+      controller.abort()
+
+      // Cancellation may surface either the lock wait or AbortSignal error, depending on timing.
+      // oxlint-disable-next-line vitest/require-to-throw-message
+      await expect(connection).rejects.toThrow()
+      expect(existsSync(portFilePath)).toBeFalsy()
+    } finally {
+      try {
+        unlinkSync(choosingPath)
+      } catch {}
+      stopHeartbeat()
+      rmSync(tempDir, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects adoption when a proxy begins shutting down during the shared handshake', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'pi-cursor-lifecycle-shutdown-handshake-'))
+    const portFilePath = join(tempDir, 'cursor-proxy.json')
+    const lifecycleFilePath = join(tempDir, 'cursor-proxy-lifecycle.json')
+    const generation = new Date().toISOString()
+    let healthChecks = 0
+    const fetchMock = vi.fn<typeof fetch>().mockImplementation((input) => {
+      const url = input instanceof Request ? input.url : String(input)
+      if (url.endsWith('/internal/health')) {
+        healthChecks += 1
+        return Promise.resolve(
+          new Response(JSON.stringify({ status: healthChecks === 1 ? 'ok' : 'shutting-down' }), {
+            status: healthChecks === 1 ? 200 : 503,
+          }),
+        )
+      }
+      if (url.endsWith('/internal/heartbeat')) {
+        return Promise.resolve(new Response(JSON.stringify({ ok: true }), { status: 200 }))
+      }
+      if (url.endsWith('/internal/models')) {
+        return Promise.resolve(new Response(JSON.stringify({ models: [] }), { status: 200 }))
+      }
+      return Promise.resolve(new Response(null, { status: 404 }))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    try {
+      writeFileSync(portFilePath, JSON.stringify({ port: 4500, pid: process.pid, generation }))
+
+      await expect(connectToProxy('test-session', null, { portFilePath, lifecycleFilePath })).rejects.toThrow(
+        `Healthy proxy ${String(process.pid)} became unavailable during adoption`,
+      )
+      expect(healthChecks).toBe(2)
+      expect(getActivePort()).toBeNull()
+      expect(JSON.parse(readFileSync(portFilePath, 'utf8'))).toEqual({ port: 4500, pid: process.pid, generation })
+      expect(existsSync(lifecycleFilePath)).toBeFalsy()
+    } finally {
+      stopHeartbeat()
+      rmSync(tempDir, { recursive: true, force: true })
+    }
+  })
+
+  it('merges an eventual child exit into its failed alive-but-unreachable recovery attempt', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'pi-cursor-lifecycle-alive-unreachable-'))
+    const portFilePath = join(tempDir, 'cursor-proxy.json')
+    const lifecycleFilePath = join(tempDir, 'cursor-proxy-lifecycle.json')
+    const proxyEntry = fileURLToPath(new URL('./test-fixtures/ready-proxy.mjs', import.meta.url))
+    let childPid: number | undefined
+
+    try {
+      const connection = await connectToProxy('test-session', 'test-secret', {
+        portFilePath,
+        lifecycleFilePath,
+        proxyEntry,
+      })
+      childPid = connection.pid
+      await fetch(`http://localhost:${String(connection.port)}/test/disconnect`)
+      await waitForProxyUnreachable(connection.port)
+      expect(() => process.kill(connection.pid, 0)).not.toThrow()
+
+      vi.useFakeTimers({ toFake: ['Date'] })
+      vi.setSystemTime(Date.parse(connection.generation) - 60_000)
+      await expect(
+        connectToProxy('test-session', null, { portFilePath, lifecycleFilePath, proxyEntry }),
+      ).rejects.toThrow('No access token and no existing proxy')
+      expect(getActivePort()).toBeNull()
+      const observedRecord = JSON.parse(readFileSync(lifecycleFilePath, 'utf8')) as Record<string, unknown>
+      expect(observedRecord).toMatchObject({
+        generation: connection.generation,
+        childPid: connection.pid,
+        exitCode: null,
+        exitSignal: null,
+        restartOutcome: 'failed',
+      })
+      expect(Date.parse(String(observedRecord.timestamp))).toBeLessThan(Date.parse(connection.generation))
+
+      vi.setSystemTime(Date.parse(connection.generation) - 59_000)
+      process.kill(connection.pid, 'SIGKILL')
+      await waitFor(() => {
+        try {
+          const record = JSON.parse(readFileSync(lifecycleFilePath, 'utf8')) as Record<string, unknown>
+          return record.exitSignal === 'SIGKILL' && record.restartOutcome === 'failed'
+        } catch {
+          return false
+        }
+      })
+      const exitRecord = JSON.parse(readFileSync(lifecycleFilePath, 'utf8')) as Record<string, unknown>
+      expect(exitRecord).toMatchObject({
+        generation: connection.generation,
+        childPid: connection.pid,
+        exitCode: null,
+        exitSignal: 'SIGKILL',
+        restartOutcome: 'failed',
+      })
+      expect(Date.parse(String(exitRecord.timestamp))).toBeGreaterThanOrEqual(
+        Date.parse(String(observedRecord.timestamp)),
+      )
+    } finally {
+      vi.useRealTimers()
+      stopHeartbeat()
+      if (childPid !== undefined) {
+        const pid = childPid
+        try {
+          process.kill(pid, 'SIGKILL')
+        } catch {}
+        await waitFor(() => {
+          try {
+            process.kill(pid, 0)
+            return false
+          } catch {
+            return true
+          }
+        })
+      }
+      rmSync(tempDir, { recursive: true, force: true })
+    }
+  })
+
+  it('records a failed reconnect against a dead shared proxy identity', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'pi-cursor-lifecycle-shared-failure-'))
+    const portFilePath = join(tempDir, 'cursor-proxy.json')
+    const lifecycleFilePath = join(tempDir, 'cursor-proxy-lifecycle.json')
+    const proxyEntry = fileURLToPath(new URL('./test-fixtures/ready-proxy.mjs', import.meta.url))
+    const staleChild = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+      stdio: 'ignore',
+      windowsHide: true,
+    })
+
+    try {
+      await once(staleChild, 'spawn')
+      const childPid = staleChild.pid
+      if (childPid === undefined) {
+        throw new Error('Stale proxy fixture did not receive a process ID')
+      }
+      staleChild.kill('SIGKILL')
+      await once(staleChild, 'exit')
+      writeFileSync(portFilePath, JSON.stringify({ port: 65_535, pid: childPid }))
+
+      await expect(
+        connectToProxy('test-session', null, { portFilePath, lifecycleFilePath, proxyEntry }),
+      ).rejects.toThrow('No access token and no existing proxy')
+
+      const record = JSON.parse(readFileSync(lifecycleFilePath, 'utf8')) as Record<string, unknown>
+      expect(record).toMatchObject({ childPid, restartOutcome: 'failed' })
+    } finally {
+      try {
+        staleChild.kill('SIGKILL')
+      } catch {}
+      stopHeartbeat()
+      rmSync(tempDir, { recursive: true, force: true })
+    }
+  })
+
+  it('does not inherit a restart outcome when a child PID is reused', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'pi-cursor-lifecycle-reused-exit-pid-'))
+    const portFilePath = join(tempDir, 'cursor-proxy.json')
+    const lifecycleFilePath = join(tempDir, 'cursor-proxy-lifecycle.json')
+    const proxyEntry = fileURLToPath(new URL('./test-fixtures/ready-proxy.mjs', import.meta.url))
+    const staleChild = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+      stdio: 'ignore',
+      windowsHide: true,
+    })
+
+    try {
+      await once(staleChild, 'spawn')
+      const childPid = staleChild.pid
+      if (childPid === undefined) {
+        throw new Error('Stale proxy fixture did not receive a process ID')
+      }
+      staleChild.kill('SIGKILL')
+      await once(staleChild, 'exit')
+      const previousGeneration = '2026-01-01T00:00:00.000Z'
+      const currentGeneration = '2026-01-02T00:00:00.000Z'
+      writeFileSync(
+        lifecycleFilePath,
+        JSON.stringify({
+          timestamp: previousGeneration,
+          generation: previousGeneration,
+          childPid,
+          exitCode: null,
+          exitSignal: 'SIGKILL',
+          restartOutcome: 'succeeded',
+        }),
+      )
+      writeFileSync(portFilePath, JSON.stringify({ port: 65_535, pid: childPid, generation: currentGeneration }))
+
+      await expect(
+        connectToProxy('test-session', null, { portFilePath, lifecycleFilePath, proxyEntry }),
+      ).rejects.toThrow('No access token and no existing proxy')
+
+      const record = JSON.parse(readFileSync(lifecycleFilePath, 'utf8')) as Record<string, unknown>
+      expect(record).toMatchObject({
+        childPid,
+        restartOutcome: 'failed',
+      })
+      expect(Date.parse(String(record.timestamp))).toBeGreaterThan(Date.parse(currentGeneration))
+    } finally {
+      try {
+        staleChild.kill('SIGKILL')
+      } catch {}
+      stopHeartbeat()
+      rmSync(tempDir, { recursive: true, force: true })
+    }
+  })
+
+  it('allocates a later proxy generation when the wall clock moves backward', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'pi-cursor-lifecycle-monotonic-generation-'))
+    const portFilePath = join(tempDir, 'cursor-proxy.json')
+    const lifecycleFilePath = join(tempDir, 'cursor-proxy-lifecycle.json')
+    const proxyEntry = fileURLToPath(new URL('./test-fixtures/ready-proxy.mjs', import.meta.url))
+    const childPids: number[] = []
+    const exits: number[] = []
+    const stopObserving = onProxyExit((event) => exits.push(event.childPid))
+
+    try {
+      const first = await connectToProxy('test-session', 'test-secret', {
+        portFilePath,
+        lifecycleFilePath,
+        proxyEntry,
+      })
+      childPids.push(first.pid)
+      process.kill(first.pid, 'SIGKILL')
+      await waitFor(() => exits.includes(first.pid))
+      await waitFor(() => {
+        try {
+          const record = JSON.parse(readFileSync(lifecycleFilePath, 'utf8')) as Record<string, unknown>
+          return record.childPid === first.pid && record.exitSignal === 'SIGKILL'
+        } catch {
+          return false
+        }
+      })
+      vi.useFakeTimers({ toFake: ['Date'] })
+      vi.setSystemTime(Date.parse(first.generation) - 60_000)
+      const second = await connectToProxy('test-session', 'test-secret', {
+        portFilePath,
+        lifecycleFilePath,
+        proxyEntry,
+      })
+      childPids.push(second.pid)
+      vi.useRealTimers()
+
+      expect(Date.parse(second.generation)).toBeGreaterThan(Date.parse(first.generation))
+    } finally {
+      vi.useRealTimers()
+      stopObserving()
+      stopHeartbeat()
+      for (const pid of childPids) {
+        try {
+          process.kill(pid, 'SIGKILL')
+        } catch {}
+      }
+      await waitFor(() =>
+        childPids.every((pid) => {
+          try {
+            process.kill(pid, 0)
+            return false
+          } catch {
+            return true
+          }
+        }),
+      )
+      rmSync(tempDir, { recursive: true, force: true })
+    }
+  })
+
+  it('persists a later proxy exit when the wall clock moves backward', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'pi-cursor-lifecycle-monotonic-observation-'))
+    const portFilePath = join(tempDir, 'cursor-proxy.json')
+    const lifecycleFilePath = join(tempDir, 'cursor-proxy-lifecycle.json')
+    const proxyEntry = fileURLToPath(new URL('./test-fixtures/ready-proxy.mjs', import.meta.url))
+    const childPids: number[] = []
+
+    try {
+      const first = await connectToProxy('first-session', 'first-secret', {
+        portFilePath,
+        lifecycleFilePath,
+        proxyEntry,
+      })
+      childPids.push(first.pid)
+      process.kill(first.pid, 'SIGKILL')
+      await waitFor(() => {
+        try {
+          const record = JSON.parse(readFileSync(lifecycleFilePath, 'utf8')) as Record<string, unknown>
+          return record.childPid === first.pid && record.exitSignal === 'SIGKILL'
+        } catch {
+          return false
+        }
+      })
+      const firstRecord = JSON.parse(readFileSync(lifecycleFilePath, 'utf8')) as Record<string, unknown>
+
+      vi.useFakeTimers({ toFake: ['Date'] })
+      vi.setSystemTime(Date.parse(String(firstRecord.timestamp)) - 60_000)
+      const second = await connectToProxy('second-session', 'second-secret', {
+        portFilePath,
+        lifecycleFilePath,
+        proxyEntry,
+      })
+      childPids.push(second.pid)
+      process.kill(second.pid, 'SIGKILL')
+      await waitFor(() => {
+        try {
+          const record = JSON.parse(readFileSync(lifecycleFilePath, 'utf8')) as Record<string, unknown>
+          return record.childPid === second.pid && record.exitSignal === 'SIGKILL'
+        } catch {
+          return false
+        }
+      })
+      await expect(
+        connectToProxy('second-session', null, { portFilePath, lifecycleFilePath, proxyEntry }),
+      ).rejects.toThrow('No access token and no existing proxy')
+      const secondRecord = JSON.parse(readFileSync(lifecycleFilePath, 'utf8')) as Record<string, unknown>
+
+      expect(secondRecord).toMatchObject({
+        generation: second.generation,
+        childPid: second.pid,
+        exitCode: null,
+        exitSignal: 'SIGKILL',
+        restartOutcome: 'failed',
+      })
+      expect(Number(secondRecord.observation)).toBeGreaterThan(Number(firstRecord.observation))
+      expect(Date.parse(String(secondRecord.timestamp))).toBeLessThan(Date.parse(String(firstRecord.timestamp)))
+    } finally {
+      vi.useRealTimers()
+      stopHeartbeat()
+      for (const pid of childPids) {
+        try {
+          process.kill(pid, 'SIGKILL')
+        } catch {}
+      }
+      await waitFor(() =>
+        childPids.every((pid) => {
+          try {
+            process.kill(pid, 0)
+            return false
+          } catch {
+            return true
+          }
+        }),
+      )
+      rmSync(tempDir, { recursive: true, force: true })
+    }
+  })
+
+  it('reclaims locks from a different process incarnation', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'pi-cursor-lifecycle-reused-pid-lock-'))
+    const portFilePath = join(tempDir, 'cursor-proxy.json')
+    const lifecycleFilePath = join(tempDir, 'cursor-proxy-lifecycle.json')
+    const proxyLockPath = `${portFilePath}.lock`
+    const lifecycleLockPath = `${lifecycleFilePath}.lock`
+    const proxyEntry = fileURLToPath(new URL('./test-fixtures/ready-proxy.mjs', import.meta.url))
+    const lockOwner = {
+      ownerPid: process.pid,
+      ownerId: 'reused-process-owner',
+      acquiredAt: Date.now(),
+      processIdentity: 'different-process-incarnation',
+    }
+    let childPid: number | undefined
+
+    try {
+      writeFileSync(
+        lifecycleFilePath,
+        JSON.stringify({
+          timestamp: new Date(0).toISOString(),
+          generation: new Date(0).toISOString(),
+          childPid: 999_999_999,
+          exitCode: null,
+          exitSignal: 'SIGKILL',
+          restartOutcome: 'not-attempted',
+        }),
+      )
+      writeFileSync(proxyLockPath, JSON.stringify(lockOwner))
+      writeFileSync(lifecycleLockPath, JSON.stringify(lockOwner))
+
+      const connection = await connectToProxy('test-session', 'test-secret', {
+        portFilePath,
+        lifecycleFilePath,
+        proxyEntry,
+      })
+      childPid = connection.pid
+
+      expect(JSON.parse(readFileSync(lifecycleFilePath, 'utf8'))).toMatchObject({ restartOutcome: 'succeeded' })
+      expect(existsSync(proxyLockPath)).toBeFalsy()
+      expect(existsSync(lifecycleLockPath)).toBeFalsy()
+    } finally {
+      stopHeartbeat()
+      if (childPid !== undefined) {
+        try {
+          process.kill(childPid, 'SIGKILL')
+        } catch {}
+      }
+      try {
+        unlinkSync(proxyLockPath)
+      } catch {}
+      try {
+        unlinkSync(lifecycleLockPath)
+      } catch {}
+      rmSync(tempDir, { recursive: true, force: true })
+    }
+  })
+
+  it('clears the dead connection, persists exit metadata, and records a successful respawn', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'pi-cursor-lifecycle-'))
+    const portFilePath = join(tempDir, 'cursor-proxy.json')
+    const lifecycleFilePath = join(tempDir, 'cursor-proxy-lifecycle.json')
+    const proxyEntry = fileURLToPath(new URL('./test-fixtures/ready-proxy.mjs', import.meta.url))
+    const childPids: number[] = []
+    const exits: number[] = []
+    const stopObserving = onProxyExit((event) => exits.push(event.childPid))
+    let stopRecoveredHeartbeat: (() => void) | undefined
+
+    try {
+      const first = await connectToProxy('test-session', 'test-secret', {
+        portFilePath,
+        lifecycleFilePath,
+        proxyEntry,
+      })
+      childPids.push(first.pid)
+      expect(getActivePort()).toBe(first.port)
+
+      process.kill(first.pid, 'SIGKILL')
+      await waitFor(() => exits.includes(first.pid))
+
+      expect(getActivePort()).toBeNull()
+      const exitRecord = JSON.parse(readFileSync(lifecycleFilePath, 'utf8')) as Record<string, unknown>
+      expect(exitRecord).toMatchObject({
+        childPid: first.pid,
+        exitCode: null,
+        exitSignal: 'SIGKILL',
+        restartOutcome: 'not-attempted',
+      })
+      expect(typeof exitRecord.timestamp).toBe('string')
+
+      vi.resetModules()
+      const recoveringLifecycle = await import('./proxy-lifecycle.ts')
+      stopRecoveredHeartbeat = recoveringLifecycle.stopHeartbeat
+      await expect(
+        recoveringLifecycle.connectToProxy('test-session', null, {
+          portFilePath,
+          lifecycleFilePath,
+          proxyEntry,
+        }),
+      ).rejects.toThrow('No access token and no existing proxy')
+      const failedRecord = JSON.parse(readFileSync(lifecycleFilePath, 'utf8')) as Record<string, unknown>
+      expect(failedRecord).toMatchObject({ childPid: first.pid, restartOutcome: 'failed' })
+
+      const second = await recoveringLifecycle.connectToProxy('test-session', 'test-secret', {
+        portFilePath,
+        lifecycleFilePath,
+        proxyEntry,
+      })
+      childPids.push(second.pid)
+      expect(second.pid).not.toBe(first.pid)
+      expect(recoveringLifecycle.getActivePort()).toBe(second.port)
+
+      const recoveredRecordText = readFileSync(lifecycleFilePath, 'utf8')
+      const recoveredRecord = JSON.parse(recoveredRecordText) as Record<string, unknown>
+      expect(recoveredRecord).toMatchObject({ childPid: first.pid, restartOutcome: 'succeeded' })
+      expect(recoveredRecordText).not.toContain('test-secret')
+    } finally {
+      stopObserving()
+      stopHeartbeat()
+      stopRecoveredHeartbeat?.()
+      for (const pid of childPids) {
+        try {
+          process.kill(pid, 'SIGKILL')
+        } catch {
+          // The child already exited.
+        }
+      }
+      await waitFor(() =>
+        childPids.every((pid) => {
+          try {
+            process.kill(pid, 0)
+            return false
+          } catch {
+            return true
+          }
+        }),
+      )
+      rmSync(tempDir, { recursive: true, force: true })
+    }
+  })
+
+  it('records success when a live replacement predates exit observation', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'pi-cursor-lifecycle-replacement-'))
+    const portFilePath = join(tempDir, 'cursor-proxy.json')
+    const lifecycleFilePath = join(tempDir, 'cursor-proxy-lifecycle.json')
+    const replacementPortFilePath = join(tempDir, 'replacement-proxy.json')
+    const replacementLifecycleFilePath = join(tempDir, 'replacement-proxy-lifecycle.json')
+    const proxyEntry = fileURLToPath(new URL('./test-fixtures/ready-proxy.mjs', import.meta.url))
+    const childPids: number[] = []
+    const exits: number[] = []
+    const stopObserving = onProxyExit((event) => exits.push(event.childPid))
+    let stopReplacementHeartbeat: (() => void) | undefined
+
+    try {
+      const first = await connectToProxy('test-session', 'first-secret', {
+        portFilePath,
+        lifecycleFilePath,
+        proxyEntry,
+      })
+      childPids.push(first.pid)
+
+      vi.resetModules()
+      const replacementLifecycle = await import('./proxy-lifecycle.ts')
+      stopReplacementHeartbeat = replacementLifecycle.stopHeartbeat
+      const replacement = await replacementLifecycle.connectToProxy('replacement-session', 'replacement-secret', {
+        portFilePath: replacementPortFilePath,
+        lifecycleFilePath: replacementLifecycleFilePath,
+        proxyEntry,
+      })
+      childPids.push(replacement.pid)
+      writeFileSync(portFilePath, JSON.stringify({ port: replacement.port, pid: replacement.pid }))
+
+      process.kill(first.pid, 'SIGKILL')
+      await waitFor(() => exits.includes(first.pid))
+      await waitFor(() => {
+        try {
+          const record = JSON.parse(readFileSync(lifecycleFilePath, 'utf8')) as Record<string, unknown>
+          return record.childPid === first.pid && record.restartOutcome === 'succeeded'
+        } catch {
+          return false
+        }
+      })
+
+      const recordText = readFileSync(lifecycleFilePath, 'utf8')
+      expect(JSON.parse(recordText)).toMatchObject({ childPid: first.pid, restartOutcome: 'succeeded' })
+      expect(recordText).not.toContain('first-secret')
+      expect(recordText).not.toContain('replacement-secret')
+    } finally {
+      stopObserving()
+      stopHeartbeat()
+      stopReplacementHeartbeat?.()
+      for (const pid of childPids) {
+        try {
+          process.kill(pid, 'SIGKILL')
+        } catch {}
+      }
+      await waitFor(() =>
+        childPids.every((pid) => {
+          try {
+            process.kill(pid, 0)
+            return false
+          } catch {
+            return true
+          }
+        }),
+      )
+      rmSync(tempDir, { recursive: true, force: true })
+    }
+  })
+
+  it('records the actual latest exit when an older generation outlives its replacement', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'pi-cursor-lifecycle-latest-exit-'))
+    const firstPortFilePath = join(tempDir, 'first-proxy.json')
+    const secondPortFilePath = join(tempDir, 'second-proxy.json')
+    const lifecycleFilePath = join(tempDir, 'cursor-proxy-lifecycle.json')
+    const proxyEntry = fileURLToPath(new URL('./test-fixtures/ready-proxy.mjs', import.meta.url))
+    const childPids: number[] = []
+
+    try {
+      const first = await connectToProxy('first-session', 'first-secret', {
+        portFilePath: firstPortFilePath,
+        lifecycleFilePath,
+        proxyEntry,
+      })
+      childPids.push(first.pid)
+      const second = await connectToProxy('second-session', 'second-secret', {
+        portFilePath: secondPortFilePath,
+        lifecycleFilePath,
+        proxyEntry,
+      })
+      childPids.push(second.pid)
+      expect(Date.parse(second.generation)).toBeGreaterThan(Date.parse(first.generation))
+
+      process.kill(second.pid, 'SIGKILL')
+      await waitFor(() => {
+        try {
+          const record = JSON.parse(readFileSync(lifecycleFilePath, 'utf8')) as Record<string, unknown>
+          return record.childPid === second.pid && record.exitSignal === 'SIGKILL'
+        } catch {
+          return false
+        }
+      })
+      const secondExitTimestamp = String(
+        (JSON.parse(readFileSync(lifecycleFilePath, 'utf8')) as Record<string, unknown>).timestamp,
+      )
+      await new Promise<void>((resolveWait) => {
+        setTimeout(resolveWait, 10)
+      })
+
+      process.kill(first.pid, 'SIGKILL')
+      await waitFor(() => {
+        try {
+          const record = JSON.parse(readFileSync(lifecycleFilePath, 'utf8')) as Record<string, unknown>
+          return record.childPid === first.pid && record.exitSignal === 'SIGKILL'
+        } catch {
+          return false
+        }
+      })
+      const latestRecord = JSON.parse(readFileSync(lifecycleFilePath, 'utf8')) as Record<string, unknown>
+      expect(Date.parse(String(latestRecord.timestamp))).toBeGreaterThan(Date.parse(secondExitTimestamp))
+    } finally {
+      stopHeartbeat()
+      for (const pid of childPids) {
+        try {
+          process.kill(pid, 'SIGKILL')
+        } catch {}
+      }
+      await waitFor(() =>
+        childPids.every((pid) => {
+          try {
+            process.kill(pid, 0)
+            return false
+          } catch {
+            return true
+          }
+        }),
+      )
+      rmSync(tempDir, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects a ready child that exits before connection completion', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'pi-cursor-lifecycle-return-boundary-'))
+    const portFilePath = join(tempDir, 'cursor-proxy.json')
+    const lifecycleFilePath = join(tempDir, 'cursor-proxy-lifecycle.json')
+    const lockFilePath = `${lifecycleFilePath}.lock`
+    const proxyEntry = fileURLToPath(new URL('./test-fixtures/ready-proxy.mjs', import.meta.url))
+    const exits: number[] = []
+    const stopObserving = onProxyExit((event) => exits.push(event.childPid))
+    let childPid: number | undefined
+    let connectionPromise: ReturnType<typeof connectToProxy> | undefined
+
+    try {
+      writeFileSync(
+        lifecycleFilePath,
+        JSON.stringify({
+          timestamp: new Date(0).toISOString(),
+          generation: new Date(0).toISOString(),
+          childPid: 999_999_999,
+          exitCode: null,
+          exitSignal: 'SIGKILL',
+          restartOutcome: 'not-attempted',
+        }),
+      )
+      writeFileSync(
+        lockFilePath,
+        JSON.stringify({ ownerPid: process.pid, ownerId: 'return-boundary-owner', acquiredAt: Date.now() }),
+      )
+      connectionPromise = connectToProxy('test-session', 'test-secret', {
+        portFilePath,
+        lifecycleFilePath,
+        proxyEntry,
+      })
+
+      await waitFor(() => {
+        try {
+          const info = JSON.parse(readFileSync(portFilePath, 'utf8')) as { pid?: unknown }
+          if (typeof info.pid !== 'number') {
+            return false
+          }
+          childPid = info.pid
+          return true
+        } catch {
+          return false
+        }
+      })
+      const pid = childPid
+      if (pid === undefined) {
+        throw new Error('Proxy child did not publish its process ID')
+      }
+      process.kill(pid, 'SIGKILL')
+      await waitFor(() => exits.includes(pid))
+      unlinkSync(lockFilePath)
+
+      await expect(connectionPromise).rejects.toThrow('exited before connection completed')
+      expect(existsSync(portFilePath)).toBeFalsy()
+    } finally {
+      stopObserving()
+      stopHeartbeat()
+      try {
+        unlinkSync(lockFilePath)
+      } catch {}
+      await connectionPromise?.catch(() => undefined)
+      if (childPid !== undefined) {
+        const pid = childPid
+        try {
+          process.kill(pid, 'SIGKILL')
+        } catch {}
+        await waitFor(() => {
+          try {
+            process.kill(pid, 0)
+            return false
+          } catch {
+            return true
+          }
+        })
+      }
+      rmSync(tempDir, { recursive: true, force: true })
+    }
+  })
+
+  it('records failure when reconnect fails before exit persistence', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'pi-cursor-lifecycle-pending-failure-'))
+    const portFilePath = join(tempDir, 'cursor-proxy.json')
+    const lifecycleFilePath = join(tempDir, 'cursor-proxy-lifecycle.json')
+    const lockFilePath = `${lifecycleFilePath}.lock`
+    const proxyEntry = fileURLToPath(new URL('./test-fixtures/ready-proxy.mjs', import.meta.url))
+    const exits: number[] = []
+    const stopObserving = onProxyExit((event) => exits.push(event.childPid))
+    let childPid: number | undefined
+
+    try {
+      const connection = await connectToProxy('test-session', 'test-secret', {
+        portFilePath,
+        lifecycleFilePath,
+        proxyEntry,
+      })
+      childPid = connection.pid
+      writeFileSync(
+        lockFilePath,
+        JSON.stringify({ ownerPid: process.pid, ownerId: 'pending-failure-owner', acquiredAt: Date.now() }),
+      )
+      process.kill(childPid, 'SIGKILL')
+      await waitFor(() => exits.includes(connection.pid))
+
+      // Keep the assertion pending while the lifecycle lock deliberately blocks completion.
+      // oxlint-disable-next-line vitest/valid-expect
+      const failedReconnect = expect(
+        connectToProxy('test-session', null, { portFilePath, lifecycleFilePath, proxyEntry }),
+      ).rejects.toThrow('No access token and no existing proxy')
+      await new Promise<void>((resolveWait) => {
+        setTimeout(resolveWait, 20)
+      })
+      unlinkSync(lockFilePath)
+      await failedReconnect
+      await waitFor(() => {
+        try {
+          const record = JSON.parse(readFileSync(lifecycleFilePath, 'utf8')) as Record<string, unknown>
+          return record.childPid === connection.pid && record.restartOutcome === 'failed'
+        } catch {
+          return false
+        }
+      })
+    } finally {
+      stopObserving()
+      stopHeartbeat()
+      try {
+        unlinkSync(lockFilePath)
+      } catch {}
+      if (childPid !== undefined) {
+        const pid = childPid
+        try {
+          process.kill(pid, 'SIGKILL')
+        } catch {}
+        await waitFor(() => {
+          try {
+            process.kill(pid, 0)
+            return false
+          } catch {
+            return true
+          }
+        })
+      }
+      rmSync(tempDir, { recursive: true, force: true })
+    }
+  })
+
+  it('does not evict an aged lifecycle lock owned by a live process', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'pi-cursor-lifecycle-live-lock-'))
+    const portFilePath = join(tempDir, 'cursor-proxy.json')
+    const lifecycleFilePath = join(tempDir, 'cursor-proxy-lifecycle.json')
+    const lockFilePath = `${lifecycleFilePath}.lock`
+    const proxyEntry = fileURLToPath(new URL('./test-fixtures/ready-proxy.mjs', import.meta.url))
+    const exits: number[] = []
+    const stopObserving = onProxyExit((event) => exits.push(event.childPid))
+    let childPid: number | undefined
+
+    try {
+      const connection = await connectToProxy('test-session', 'test-secret', {
+        portFilePath,
+        lifecycleFilePath,
+        proxyEntry,
+      })
+      childPid = connection.pid
+      writeFileSync(lockFilePath, JSON.stringify({ ownerPid: process.pid, ownerId: 'live-test-owner', acquiredAt: 1 }))
+      utimesSync(lockFilePath, new Date(0), new Date(0))
+      process.kill(childPid, 'SIGKILL')
+      await waitFor(() => exits.includes(connection.pid))
+      await new Promise<void>((resolveWait) => {
+        setTimeout(resolveWait, 50)
+      })
+
+      expect(JSON.parse(readFileSync(lockFilePath, 'utf8'))).toMatchObject({ ownerId: 'live-test-owner' })
+      expect(existsSync(lifecycleFilePath)).toBeFalsy()
+      unlinkSync(lockFilePath)
+      await waitFor(() => {
+        try {
+          const record = JSON.parse(readFileSync(lifecycleFilePath, 'utf8')) as Record<string, unknown>
+          return record.childPid === connection.pid && record.restartOutcome === 'not-attempted'
+        } catch {
+          return false
+        }
+      })
+    } finally {
+      stopObserving()
+      stopHeartbeat()
+      try {
+        unlinkSync(lockFilePath)
+      } catch {}
+      if (childPid !== undefined) {
+        const pid = childPid
+        try {
+          process.kill(pid, 'SIGKILL')
+        } catch {}
+        await waitFor(() => {
+          try {
+            process.kill(pid, 0)
+            return false
+          } catch {
+            return true
+          }
+        })
+      }
+      rmSync(tempDir, { recursive: true, force: true })
+    }
+  })
+
+  it('reclaims an orphaned lifecycle lock before persisting a later exit', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'pi-cursor-lifecycle-stale-lock-'))
+    const portFilePath = join(tempDir, 'cursor-proxy.json')
+    const lifecycleFilePath = join(tempDir, 'cursor-proxy-lifecycle.json')
+    const lockFilePath = `${lifecycleFilePath}.lock`
+    const proxyEntry = fileURLToPath(new URL('./test-fixtures/ready-proxy.mjs', import.meta.url))
+    let childPid: number | undefined
+
+    try {
+      const connection = await connectToProxy('test-session', 'test-secret', {
+        portFilePath,
+        lifecycleFilePath,
+        proxyEntry,
+      })
+      childPid = connection.pid
+      writeFileSync(lockFilePath, '')
+
+      process.kill(childPid, 'SIGKILL')
+      await waitFor(() => {
+        try {
+          const record = JSON.parse(readFileSync(lifecycleFilePath, 'utf8')) as Record<string, unknown>
+          return record.childPid === childPid && record.restartOutcome === 'not-attempted' && !existsSync(lockFilePath)
+        } catch {
+          return false
+        }
+      }, 4_000)
+
+      const recordText = readFileSync(lifecycleFilePath, 'utf8')
+      const record = JSON.parse(recordText) as Record<string, unknown>
+      expect(Object.keys(record).sort()).toEqual(
+        ['timestamp', 'generation', 'observation', 'childPid', 'exitCode', 'exitSignal', 'restartOutcome'].sort(),
+      )
+      expect(record).toMatchObject({
+        childPid,
+        exitCode: null,
+        exitSignal: 'SIGKILL',
+        restartOutcome: 'not-attempted',
+      })
+      expect(recordText).not.toContain('test-secret')
+      expect(existsSync(lockFilePath)).toBeFalsy()
+    } finally {
+      stopHeartbeat()
+      if (childPid !== undefined) {
+        const pid = childPid
+        try {
+          process.kill(pid, 'SIGKILL')
+        } catch {}
+        await waitFor(() => {
+          try {
+            process.kill(pid, 0)
+            return false
+          } catch {
+            return true
+          }
+        })
+      }
+      rmSync(tempDir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('proxy port ownership', () => {
+  it('keeps a replacement discovery record when an older proxy shuts down', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'pi-cursor-port-ownership-'))
+    const portFilePath = join(tempDir, 'cursor-proxy.json')
+    const predecessor = { port: 4200, pid: 42, generation: '2026-01-01T00:00:00.000Z' }
+    const replacement = { port: 4200, pid: 42, generation: '2026-01-02T00:00:00.000Z' }
+
+    try {
+      writeFileSync(portFilePath, JSON.stringify(replacement))
+
+      expect(await removeOwnedProxyPortFileWithLock(portFilePath, predecessor)).toBeFalsy()
+      expect(JSON.parse(readFileSync(portFilePath, 'utf8'))).toEqual(replacement)
+      expect(await removeOwnedProxyPortFileWithLock(portFilePath, replacement)).toBeTruthy()
+      expect(existsSync(portFilePath)).toBeFalsy()
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true })
+    }
   })
 })

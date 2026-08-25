@@ -1,4 +1,3 @@
-import { unlinkSync } from 'node:fs'
 /**
  * Proxy HTTP server — main entry point.
  *
@@ -15,6 +14,7 @@ import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createInterface } from 'node:readline'
 
+import { removeOwnedProxyPortFileWithLock } from '../proxy-port-file.ts'
 import { resolveEffective } from './config.ts'
 import { flushDebugLogger, initDebugLogger } from './debug-logger.ts'
 import { errorResponse, jsonResponse } from './http-helpers.ts'
@@ -23,6 +23,7 @@ import {
   getAccessToken,
   getCachedModels,
   handleInternalRequest,
+  markProxyShuttingDown,
   startHeartbeatMonitor,
 } from './internal-api.ts'
 import { processModels, type NormalizedModelSet } from './model-normalization.ts'
@@ -36,6 +37,8 @@ import { createShutdownController } from './shutdown.ts'
 interface ProxyConfig {
   accessToken: string
   conversationDir?: string
+  generation?: string
+  portFilePath?: string
 }
 
 // ── Model management ──
@@ -95,21 +98,34 @@ async function main(): Promise<void> {
     conversationDiskDir: config.conversationDir ?? join(tmpdir(), 'pi-cursor-conversations'),
   }
 
-  const portFilePath = join(homedir(), '.pi', 'agent', 'cursor-proxy.json')
+  const portFilePath = config.portFilePath ?? join(homedir(), '.pi', 'agent', 'cursor-proxy.json')
+  let listeningPort: number | null = null
+  let shuttingDown = false
 
   // Queued debug entries are best-effort: flush them under a bounded
   // deadline, then exit. Repeat shutdown requests stay idempotent.
   const requestShutdown = createShutdownController(flushDebugLogger, (code) => process.exit(code))
 
   function shutdown(): void {
-    console.error('[proxy] Shutdown requested')
-    closeAll()
-    try {
-      unlinkSync(portFilePath)
-    } catch {
-      /* may not exist */
+    if (shuttingDown) {
+      return
     }
-    requestShutdown()
+    shuttingDown = true
+    console.error('[proxy] Shutdown requested')
+    markProxyShuttingDown()
+    server.close()
+    closeAll()
+    const port = listeningPort
+    void (async () => {
+      if (port !== null) {
+        await removeOwnedProxyPortFileWithLock(portFilePath, {
+          port,
+          pid: process.pid,
+          generation: config.generation,
+        })
+      }
+      requestShutdown()
+    })()
   }
 
   // 2. Discover models
@@ -148,6 +164,10 @@ async function main(): Promise<void> {
 
   // 5. Start HTTP server
   const server = createServer((req, res) => {
+    if (shuttingDown) {
+      jsonResponse(res, 503, { error: 'Proxy is shutting down' })
+      return
+    }
     const url = new URL(req.url ?? '/', `http://localhost`)
 
     if (url.pathname.startsWith('/internal/')) {
@@ -185,6 +205,7 @@ async function main(): Promise<void> {
   server.listen(0, '127.0.0.1', () => {
     const addr = server.address()
     const port = typeof addr === 'object' && addr !== null ? addr.port : 0
+    listeningPort = port
 
     // 7. Write ready signal to stdout (extension reads this)
     const readySignal = JSON.stringify({

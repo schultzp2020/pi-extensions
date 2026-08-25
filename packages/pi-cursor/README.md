@@ -8,6 +8,7 @@ A [Pi](https://github.com/badlogic/pi) extension that gives you access to all yo
 - **Full tool support** — native Cursor tools (read, write, shell, grep) are redirected to Pi equivalents only when Pi enabled the mapped tool for the session. MCP tools pass through only when registered in the session tool set, and Cursor-only web/exa queries are rejected.
 - **Thinking/reasoning** — `thinkingDelta` events map to `reasoning_content` in SSE, with XML tag filtering as a safety net.
 - **Multi-session** — multiple Pi sessions share one proxy process via HTTP internal API and a port file at `~/.pi/agent/cursor-proxy.json`.
+- **Runtime recovery** — before dispatch, each Cursor request health-checks its cached proxy endpoint and makes at most one reconnect attempt. A successful replacement serves that same request, and the latest credential-free lifecycle result is stored at `~/.pi/agent/cursor-proxy-lifecycle.json`.
 - **Conversation persistence** — checkpoints and blob stores are persisted to disk, preventing "blob not found" crashes on long sessions.
 
 ## Requirements
@@ -190,7 +191,7 @@ The `agent_pb.ts` is vendored directly (the `.proto` source is not publicly avai
 1. **Login** — PKCE OAuth flow opens `cursor.com/loginDeepControl` in the browser, polls `api2.cursor.sh/auth/poll` until the user completes login.
 2. **Proxy startup** — Extension spawns a child process running the built proxy. The proxy opens an HTTP server on a random port and writes `{"type":"ready","port":N,"models":[...]}` to stdout.
 3. **Model discovery** — Proxy calls `AvailableModels` via gRPC to fetch the user's available models. Legacy slugs are parsed to determine effort levels, fast/thinking support per model. Results are cached to disk for fast subsequent starts.
-4. **Provider registration** — Extension registers a `cursor` provider with Pi using `api: 'openai-completions'`, pointing `baseUrl` at the local proxy.
+4. **Provider registration** — Extension registers a `cursor` provider with Pi using the private `api: 'cursor-openai-completions'` discriminator, points `baseUrl` at the local proxy, and delegates requests to Pi's host `openai-completions` adapter.
 5. **Chat completion** — Pi sends standard OpenAI requests to the proxy. The proxy builds an `AgentRunRequest` protobuf, opens an H2 stream to `api2.cursor.sh`, and translates the response back into SSE chunks.
 6. **Tool calls** — Cursor's native tools (read, write, shell) are intercepted and emitted as OpenAI `tool_calls` only if the mapped Pi tool is enabled for the session. MCP tool calls are gated against the same registered tool set, and Cursor-only web/exa queries are rejected so the model falls back to available tools. Results flow back as protobuf frames.
 7. **Multi-session** — The proxy writes a port file at `~/.pi/agent/cursor-proxy.json`. Other Pi sessions discover and reuse the same proxy. Each session sends heartbeats every 10s; the proxy exits 30s after the last heartbeat stops. If the heartbeat monitor misses its expected cadence (e.g. system sleep), sessions that were active before the gap get one fresh heartbeat window on resume instead of being evicted.

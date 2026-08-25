@@ -21,7 +21,7 @@ A JSON-lines protocol over stdout from the Proxy to the spawning extension, used
 _Avoid_: control channel, IPC
 
 **Port File**:
-A JSON file at `~/.pi/agent/cursor-proxy.json` containing the Proxy's port and PID. Written by the spawning extension, read by subsequent extension instances to discover an existing Proxy.
+A JSON file at `~/.pi/agent/cursor-proxy.json` containing the Proxy's port, PID, and per-spawn generation. Written by the spawning extension and read by other extension instances to discover the current Proxy. The generation fences cleanup and exit handling so stale work cannot remove a replacement that reused the same port or PID.
 _Avoid_: lock file, discovery file
 
 **Session ID**:
@@ -61,7 +61,7 @@ A global setting (`maxMode`) that appends a trailing `-max` suffix to the final 
 _Avoid_: max effort, max variant (when referring to the global toggle)
 
 **Proxy Reconnect**:
-The process of a newly loaded extension instance reconnecting to an existing Proxy that survived a reload or session switch. Uses the Port File for discovery across sessions, and `pi.appendEntry()` for fast reconnect within the same session during `/reload`.
+The coordinated process for validating a Port File candidate through its process generation and Internal API health check, adopting it when healthy, or spawning and publishing a replacement. It is used both by newly loaded extension instances and by the live provider after a cached Proxy becomes unhealthy.
 _Avoid_: rediscovery, reattach
 
 **Checkpoint**:
@@ -145,7 +145,7 @@ The message parsing layer (`openai-messages.ts`) preserves image content parts f
 - **Session State** manages the active **Bridge** and **Conversation State** (Checkpoint, Blob Store, Checkpoint Lineage) as a unit, keyed by **Session ID**
 - **Session State** persists Conversation State to disk and validates **Checkpoint Lineage** on every request — discards stale Checkpoints on fork, compaction, or branch navigation
 - The **Proxy** exposes the **Internal API** for heartbeats, token delivery, model refresh, and **Lifecycle Cleanup**
-- Extension instances discover the **Proxy** via the **Port File**, or spawn a new one if none exists
+- Extension instances use **Proxy Reconnect** to reuse a healthy shared **Proxy** or spawn its replacement
 - **Model Discovery** results are cached to disk as the **Model Cache** for fast subsequent startups
 - **Model Normalization** collapses raw Cursor variants into deduplicated models with **Effort Maps**
 - **Effort Resolution** combines the normalized model, **Max Mode**, and Pi's reasoning-effort setting to reconstruct the final Cursor model ID
@@ -159,7 +159,7 @@ The message parsing layer (`openai-messages.ts`) preserves image content parts f
 ## Example dialogue
 
 > **Dev:** "When a second Pi session starts, does it spawn its own Proxy?"
-> **Domain expert:** "No — it reads the Port File, finds the existing Proxy, verifies the PID, and starts heartbeating via the Internal API. Each session's requests are isolated by Session ID."
+> **Domain expert:** "No — it uses Proxy Reconnect to join the healthy shared Proxy. Each session's requests are isolated by Session ID."
 
 > **Dev:** "What happens when Cursor's model tries to use its native `read` tool?"
 > **Domain expert:** "That depends on the Native Tools Mode. In `reject` mode (the default), it's rejected with an error message. In `redirect` mode, it's translated to Pi's `read` tool. In `native` mode, the Proxy reads the file directly within the Allowed Root."

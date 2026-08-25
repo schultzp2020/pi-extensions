@@ -9,6 +9,8 @@ import type { ConversationConfig, StoredConversation } from './session-state.ts'
 
 // ── Mocks ──
 
+const cursorSessionOptions = vi.hoisted(() => [] as unknown[])
+
 // Mock cursor-session — avoid real gRPC connections
 vi.mock('./cursor-session.ts', () => {
   class MockCursorSession {
@@ -16,6 +18,10 @@ vi.mock('./cursor-session.ts', () => {
     close = vi.fn<() => void>()
     cancel = vi.fn<() => void>()
     sendToolResults = vi.fn<() => void>()
+
+    constructor(options: unknown) {
+      cursorSessionOptions.push(options)
+    }
   }
   return { CursorSession: MockCursorSession }
 })
@@ -156,6 +162,7 @@ const VALID_BODY = JSON.stringify({
 describe('handleChatCompletion', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    cursorSessionOptions.length = 0
   })
 
   describe('retry behavior', () => {
@@ -475,6 +482,38 @@ describe('handleChatCompletion', () => {
   })
 
   describe('auth', () => {
+    it('binds a request bearer token instead of the mutable proxy token', async () => {
+      const req = makeRequest()
+      req.headers.authorization = 'Bearer request-token'
+      const res = makeResponse()
+      const ctx = makeProxyContext({ getAccessToken: () => 'stale-proxy-token' })
+      vi.mocked(readBody).mockResolvedValue(VALID_BODY)
+      vi.mocked(resolveSession).mockReturnValue({
+        bridge: undefined,
+        conversation: makeStoredConversation(),
+        lineageInvalidated: false,
+      })
+      vi.mocked(collectNonStreamingResponse).mockResolvedValue({
+        response: new Response(JSON.stringify({ choices: [] }), { status: 200 }),
+      })
+
+      await handleChatCompletion(req, res, ctx)
+
+      expect(cursorSessionOptions).toHaveLength(1)
+      expect(cursorSessionOptions[0]).toMatchObject({ accessToken: 'request-token' })
+    })
+
+    it('does not accept the provider discriminator as a request token', async () => {
+      const req = makeRequest()
+      req.headers.authorization = 'Bearer cursor-proxy'
+      const res = makeResponse()
+      const ctx = makeProxyContext({ getAccessToken: () => null })
+
+      await handleChatCompletion(req, res, ctx)
+
+      expect(errorResponse).toHaveBeenCalledWith(res, 401, 'No access token configured')
+    })
+
     it('returns 401 when no access token', async () => {
       const req = makeRequest()
       const res = makeResponse()
