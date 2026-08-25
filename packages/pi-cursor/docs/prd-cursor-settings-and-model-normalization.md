@@ -81,8 +81,9 @@ After this change:
 
 ### Model normalization
 
-- Parser strips suffixes in order: trailing `-max` (maxMode flag), `-fast`, `-thinking`, then effort from last segment
-- Three meanings of `max`: trailing maxMode flag, effort level, base name component — all independent and composable
+- Parser pops trailing `-fast`, `-thinking`, and effort suffixes (`minimal`, `none`, `low`, `medium`, `high`, `extra-high`, `xhigh`, `max`) in any order
+- Three meanings of `max`: request-time maxMode flag, effort level, base name component — all independent
+- Preferred legacy slugs are listed first; first-wins keeps Cursor's preferred alias
 - `xhigh` and `max` effort suffixes can coexist in the same family; when both exist, `max` is higher and maps to Pi's `xhigh`
 - Extension owns the visible model list and provider compat metadata
 - Proxy owns final raw Cursor model resolution at request time
@@ -92,8 +93,10 @@ After this change:
 
 ### Effort mapping
 
-- Pi levels map to Cursor suffixes via `buildEffortMap` using the family's available effort set
-- `minimal` → `none` or `low`; `low` → `low`; `medium` → `medium` or no suffix; `high` → `high`; `xhigh` → `max` or `xhigh` or `high`
+- Selector `thinkingLevelMap` uses the family-union effort set so Pi does not clamp levels such as `xhigh`
+- Request-time resolve uses per-variant effort sets via `buildEffortMap`
+- `minimal` → `minimal` or `none` or `low`; `low` → `low` or `none` or `minimal`; `medium` → `medium` or no suffix; `high` → `high`; `xhigh` → `max` or `xhigh` or `extra-high` or `high`
+- If the selected thinking/fast variant has no preferred match for a named Pi effort, resolve tries the next flag candidate instead of remapping that effort
 - Registered via provider `compat.supportsReasoningEffort` and model-level `thinkingLevelMap`
 
 ### Native tools modes

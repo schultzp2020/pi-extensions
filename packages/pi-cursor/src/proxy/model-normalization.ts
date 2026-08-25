@@ -61,6 +61,15 @@ const EFFORT_SUFFIXES: ReadonlySet<string> = new Set([
   'max',
 ])
 
+/** Pi reasoning levels to the Cursor suffixes `buildEffortMap` will prefer. */
+const PI_EFFORT_PREFERENCES: Record<string, readonly (CursorEffort | 'default')[]> = {
+  minimal: ['minimal', 'none', 'low'],
+  low: ['low', 'none', 'minimal'],
+  medium: ['medium', 'default'],
+  high: ['high'],
+  xhigh: ['max', 'xhigh', 'extra-high', 'high'],
+}
+
 // ---------------------------------------------------------------------------
 // parseSlug
 // ---------------------------------------------------------------------------
@@ -151,12 +160,26 @@ export function buildEffortMap(availableEfforts: Set<CursorEffort | 'default'>):
   }
 
   return {
-    minimal: pick(['minimal', 'none', 'low'], lowest),
-    low: pick(['low', 'none', 'minimal'], lowest),
-    medium: pick(['medium', 'default'], lowest),
-    high: pick(['high'], highFallback),
-    xhigh: pick(['max', 'xhigh', 'extra-high', 'high'], highest),
+    minimal: pick([...PI_EFFORT_PREFERENCES.minimal], lowest),
+    low: pick([...PI_EFFORT_PREFERENCES.low], lowest),
+    medium: pick([...PI_EFFORT_PREFERENCES.medium], lowest),
+    high: pick([...PI_EFFORT_PREFERENCES.high], highFallback),
+    xhigh: pick([...PI_EFFORT_PREFERENCES.xhigh], highest),
   }
+}
+
+/** True when this variant would change a named Pi effort to a different named Cursor suffix. */
+function isNamedEffortRemap(
+  effort: string,
+  availableEfforts: Set<CursorEffort | 'default'>,
+  resolvedEffort: string,
+): boolean {
+  const preferred = Object.hasOwn(PI_EFFORT_PREFERENCES, effort) ? PI_EFFORT_PREFERENCES[effort] : undefined
+  if (!preferred) {
+    return false
+  }
+  const hasPreferred = preferred.some((candidate) => availableEfforts.has(candidate))
+  return !hasPreferred && resolvedEffort !== 'default'
 }
 
 function effortToSuffix(effort: CursorEffort | 'default'): string {
@@ -201,7 +224,8 @@ export function processModels(rawModels: CursorModel[]): NormalizedModelSet {
           meta.supportsThinking = true
         }
 
-        // Cursor lists preferred slugs before compatibility aliases.
+        // Cursor lists preferred slugs first; first-wins keeps that order.
+        // If the API ever lists preferred last, prefer cursor-* on collision.
         const effort = parsed.effort ?? 'default'
         const variantKey = `${model.id}|${String(parsed.fast)}|${String(parsed.thinking)}`
         const availableEfforts = variantEfforts.get(variantKey) ?? new Set<CursorEffort | 'default'>()
@@ -292,6 +316,11 @@ export function resolveModelId(
           const suffix = effortMap[piEffort]
           resolvedEffort = suffix || 'default'
         }
+      }
+
+      // Keep haiku's low → default on thinking; skip opus-style low → thinking-high.
+      if (isNamedEffortRemap(effort, availableEfforts, resolvedEffort)) {
+        continue
       }
     }
 

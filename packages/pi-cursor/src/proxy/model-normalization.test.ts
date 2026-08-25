@@ -445,6 +445,36 @@ describe('resolveModelId', () => {
     expect(resolveModelId('claude-example', 'low', false, true, modelSet)).toBe('claude-example-thinking')
   })
 
+  it('keeps requested effort instead of remapping inside a sparse thinking variant', () => {
+    const modelSet = processModels([
+      makeModel('claude-opus-5', {
+        legacySlugs: [
+          'claude-opus-5-low',
+          'claude-opus-5-medium',
+          'claude-opus-5-high',
+          'claude-opus-5-thinking-high',
+          'claude-opus-5-thinking-xhigh',
+          'claude-opus-5-thinking-max',
+        ],
+      }),
+    ])
+
+    expect(resolveModelId('claude-opus-5', 'low', false, true, modelSet)).toBe('claude-opus-5-low')
+    expect(resolveModelId('claude-opus-5', 'medium', false, true, modelSet)).toBe('claude-opus-5-medium')
+    expect(resolveModelId('claude-opus-5', 'high', false, true, modelSet)).toBe('claude-opus-5-thinking-high')
+  })
+
+  it('keeps family xhigh on the selector map without changing exact wire resolution', () => {
+    const modelSet = processModels([
+      makeModel('grok-4.6', {
+        legacySlugs: ['cursor-grok-4.6-xhigh', 'cursor-grok-4.6-xhigh-fast', 'grok-4.6-xhigh', 'grok-4.6-xhigh-fast'],
+      }),
+    ])
+
+    expect(modelSet.effortMaps.get('grok-4.6')?.xhigh).toBe('xhigh')
+    expect(resolveModelId('grok-4.6', 'xhigh', true, false, modelSet)).toBe('cursor-grok-4.6-xhigh-fast')
+  })
+
   it('drops fast before thinking when their combination is unavailable', () => {
     const modelSet = processModels([
       makeModel('claude-example', {
@@ -549,6 +579,38 @@ describe('current Cursor legacy slug regressions', () => {
       fast: false,
       thinking: false,
       expected: 'claude-opus-5-high',
+    },
+    {
+      name: 'Claude Opus 5 low thinking keeps non-thinking low',
+      id: 'claude-opus-5',
+      legacySlugs: [
+        'claude-opus-5-low',
+        'claude-opus-5-medium',
+        'claude-opus-5-high',
+        'claude-opus-5-thinking-high',
+        'claude-opus-5-thinking-xhigh',
+        'claude-opus-5-thinking-max',
+      ],
+      effort: 'low',
+      fast: false,
+      thinking: true,
+      expected: 'claude-opus-5-low',
+    },
+    {
+      name: 'Claude Opus 5 medium thinking keeps non-thinking medium',
+      id: 'claude-opus-5',
+      legacySlugs: [
+        'claude-opus-5-low',
+        'claude-opus-5-medium',
+        'claude-opus-5-high',
+        'claude-opus-5-thinking-high',
+        'claude-opus-5-thinking-xhigh',
+        'claude-opus-5-thinking-max',
+      ],
+      effort: 'medium',
+      fast: false,
+      thinking: true,
+      expected: 'claude-opus-5-medium',
     },
     {
       name: 'Claude Sonnet 5 reordered thinking suffix',
