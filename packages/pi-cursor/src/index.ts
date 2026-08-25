@@ -39,7 +39,12 @@ const CURSOR_API = 'cursor-openai-completions'
 const AGENT_DIR = join(homedir(), '.pi', 'agent')
 const MODEL_CACHE_PATH = join(AGENT_DIR, 'cursor-model-cache.json')
 type HostStreamSimple = typeof openAIStreamSimple
-let hostStreamSimple: HostStreamSimple | null = null
+interface HostStreamResolution {
+  streamSimple: HostStreamSimple
+  legacy: boolean
+}
+
+let hostStreamResolution: HostStreamResolution | null = null
 
 interface ProxyReconnectState {
   controller: AbortController
@@ -48,18 +53,18 @@ interface ProxyReconnectState {
   settled: boolean
 }
 
-async function resolveHostStreamSimple(): Promise<HostStreamSimple> {
-  if (hostStreamSimple) {
-    return hostStreamSimple
+async function resolveHostStreamSimple(): Promise<HostStreamResolution> {
+  if (hostStreamResolution) {
+    return hostStreamResolution
   }
   const legacyStreamSimple = (piAi as typeof piAi & { streamSimple?: HostStreamSimple }).streamSimple
   if (legacyStreamSimple) {
-    hostStreamSimple = legacyStreamSimple
-    return hostStreamSimple
+    hostStreamResolution = { streamSimple: legacyStreamSimple, legacy: true }
+    return hostStreamResolution
   }
   const compat = await import('@earendil-works/pi-ai/compat')
-  hostStreamSimple = compat.streamSimple
-  return hostStreamSimple
+  hostStreamResolution = { streamSimple: compat.streamSimple, legacy: false }
+  return hostStreamResolution
 }
 
 async function waitForSharedRecovery<T>(recovery: Promise<T>, signal?: AbortSignal): Promise<T> {
@@ -365,7 +370,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
           options?.apiKey && options.apiKey !== CURSOR_PROXY_API_KEY ? options.apiKey : currentAccessToken
         return lazyStream(model, async () => {
           options?.signal?.throwIfAborted()
-          const streamHostSimple = await waitForSharedRecovery(resolveHostStreamSimple(), options?.signal)
+          const hostStream = await waitForSharedRecovery(resolveHostStreamSimple(), options?.signal)
           options?.signal?.throwIfAborted()
           if (!(await ensureProxyForRequest(requestAccessToken, options?.signal)) || !currentPort) {
             throw new Error('Cursor proxy is unavailable after one reconnect attempt')
@@ -374,12 +379,12 @@ export default async function (pi: ExtensionAPI): Promise<void> {
           const thinkingLevelMap =
             model.thinkingLevelMap ??
             configuredModel?.thinkingLevelMap ??
-            (supportsLegacyXhigh(model.id) ? { xhigh: 'xhigh' as const } : undefined)
+            (hostStream.legacy && supportsLegacyXhigh(model.id) ? { xhigh: 'xhigh' as const } : undefined)
           const requestOptions =
             requestAccessToken && options?.apiKey === CURSOR_PROXY_API_KEY
               ? { ...options, apiKey: requestAccessToken }
               : options
-          return streamHostSimple(
+          return hostStream.streamSimple(
             {
               ...model,
               api: 'openai-completions',

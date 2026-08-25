@@ -148,7 +148,7 @@ try {
 
       const execution = spawnSync(process.execPath, [harnessPath], {
         cwd: outputDir,
-        env: { ...process.env, HOME: homeDir },
+        env: { ...process.env, HOME: homeDir, USERPROFILE: homeDir },
         encoding: 'utf8',
         timeout: 15_000,
       })

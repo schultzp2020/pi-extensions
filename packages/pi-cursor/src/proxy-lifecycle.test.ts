@@ -934,6 +934,89 @@ describe('pushToken', () => {
   })
 })
 
+describe('shared proxy adoption', () => {
+  afterEach(() => {
+    stopHeartbeat()
+    spawnMock.mockReset()
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+    vi.clearAllMocks()
+  })
+
+  it.each([
+    { failingEndpoint: 'token', expectedError: `Healthy proxy ${String(process.pid)} rejected the access token` },
+    {
+      failingEndpoint: 'heartbeat',
+      expectedError: `Healthy proxy ${String(process.pid)} rejected the session heartbeat`,
+    },
+    { failingEndpoint: 'models', expectedError: 'Proxy model refresh failed with status 503' },
+  ] as const)(
+    'leaves a healthy published child in place when its $failingEndpoint handshake step fails',
+    async ({ failingEndpoint, expectedError }) => {
+      const portFilePath = join(testTempDir, 'cursor-proxy.json')
+      const lifecycleFilePath = join(testTempDir, 'cursor-proxy-lifecycle.json')
+      const generation = new Date().toISOString()
+      const published = { port: 4510, pid: process.pid, generation }
+      writeFileSync(portFilePath, JSON.stringify(published))
+      spawnMock.mockImplementation(() => {
+        throw new Error('attempted to spawn a sibling proxy')
+      })
+      vi.stubGlobal(
+        'fetch',
+        vi.fn<typeof fetch>((input) => {
+          const url = requestUrl(input)
+          if (url.endsWith(`/internal/${failingEndpoint}`)) {
+            return Promise.resolve(new Response(null, { status: 503 }))
+          }
+          if (url.endsWith('/internal/models')) {
+            return Promise.resolve(new Response(JSON.stringify({ models: [] }), { status: 200 }))
+          }
+          return Promise.resolve(new Response(null, { status: 200 }))
+        }),
+      )
+
+      await expect(
+        connectToProxy('adopting-session', 'access-token', { portFilePath, lifecycleFilePath }),
+      ).rejects.toThrow(expectedError)
+
+      expect(spawnMock).not.toHaveBeenCalled()
+      expect(JSON.parse(readFileSync(portFilePath, 'utf8'))).toEqual(published)
+      expect(existsSync(lifecycleFilePath)).toBeFalsy()
+      expect(getActivePort()).toBeNull()
+    },
+  )
+
+  it('clears an adopted connection when the published proxy generation changes', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+    vi.stubGlobal('fetch', fetchMock)
+    const portFilePath = join(testTempDir, 'cursor-proxy.json')
+    const lifecycleFilePath = join(testTempDir, 'cursor-proxy-lifecycle.json')
+    const generation = new Date().toISOString()
+    const replacementGeneration = new Date(Date.parse(generation) + 1).toISOString()
+    const published = { port: 4511, pid: process.pid, generation }
+    const replacement = { port: 4512, pid: process.pid, generation: replacementGeneration }
+    const exits: number[] = []
+    const stopObserving = onProxyExit((event) => exits.push(event.childPid))
+
+    try {
+      writeFileSync(portFilePath, JSON.stringify(published))
+      await expect(
+        connectToProxy('adopting-session', null, { portFilePath, lifecycleFilePath }),
+      ).resolves.toMatchObject(published)
+      expect(getActivePort()).toBe(published.port)
+
+      writeFileSync(portFilePath, JSON.stringify(replacement))
+      await vi.advanceTimersByTimeAsync(HEARTBEAT_INTERVAL_MS)
+
+      expect(exits).toEqual([published.pid])
+      expect(getActivePort()).toBeNull()
+      expect(JSON.parse(readFileSync(portFilePath, 'utf8'))).toEqual(replacement)
+    } finally {
+      stopObserving()
+    }
+  })
+})
+
 describe('post-ready child exit recovery', () => {
   beforeEach(() => {
     const realSpawn = realSpawnRef.current
@@ -1118,19 +1201,12 @@ describe('post-ready child exit recovery', () => {
       writeFileSync(portFilePath, JSON.stringify({ port: 4500, pid: process.pid, generation }))
 
       await expect(connectToProxy('test-session', null, { portFilePath, lifecycleFilePath })).rejects.toThrow(
-        'No access token and no existing proxy',
+        `Healthy proxy ${String(process.pid)} became unavailable during adoption`,
       )
       expect(healthChecks).toBe(2)
       expect(getActivePort()).toBeNull()
-      expect(existsSync(portFilePath)).toBeFalsy()
-      const record = JSON.parse(readFileSync(lifecycleFilePath, 'utf8')) as Record<string, unknown>
-      expect(record).toMatchObject({
-        childPid: process.pid,
-        exitCode: null,
-        exitSignal: null,
-        restartOutcome: 'failed',
-      })
-      expect(Date.parse(String(record.timestamp))).toBeGreaterThanOrEqual(Date.parse(generation))
+      expect(JSON.parse(readFileSync(portFilePath, 'utf8'))).toEqual({ port: 4500, pid: process.pid, generation })
+      expect(existsSync(lifecycleFilePath)).toBeFalsy()
     } finally {
       stopHeartbeat()
       rmSync(tempDir, { recursive: true, force: true })

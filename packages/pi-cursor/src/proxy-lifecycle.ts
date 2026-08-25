@@ -52,6 +52,14 @@ interface ProxyConnection {
   heartbeatTimer: NodeJS.Timeout
 }
 
+interface HeartbeatOptions {
+  sendInitial?: boolean
+  observedPortFile?: {
+    portFilePath: string
+    lifecycleFilePath: string
+  }
+}
+
 type StartupOutcome = { ready: true; line: string } | { ready: false; message: string; cause?: Error }
 
 export interface ProxyExitEvent {
@@ -653,30 +661,33 @@ export async function connectToProxy(
           if (healthy) {
             const tokenAccepted = !accessToken || (await pushToken(existing.port, accessToken, signal))
             signal?.throwIfAborted()
-            const heartbeatAccepted = tokenAccepted && (await sendHeartbeat(existing.port, getSessionId(), signal))
-            signal?.throwIfAborted()
-            if (heartbeatAccepted) {
-              try {
-                const models = await getModels(existing.port, signal)
-                signal?.throwIfAborted()
-                if (await isProxyHealthy(existing.port, signal)) {
-                  signal?.throwIfAborted()
-                  startHeartbeat(existing.port, existing.pid, existing.generation, getSessionId, false)
-                  adoptedConnection = existing
-                  const connection = await finalizeProxyConnection(
-                    { port: existing.port, pid: existing.pid, generation: existing.generation, models },
-                    portFilePath,
-                    lifecycleFilePath,
-                    restartIdentity,
-                  )
-                  signal?.throwIfAborted()
-                  return connection
-                }
-                signal?.throwIfAborted()
-              } catch {
-                signal?.throwIfAborted()
-              }
+            if (!tokenAccepted) {
+              throw new Error(`Healthy proxy ${String(existing.pid)} rejected the access token`)
             }
+            const heartbeatAccepted = await sendHeartbeat(existing.port, getSessionId(), signal)
+            signal?.throwIfAborted()
+            if (!heartbeatAccepted) {
+              throw new Error(`Healthy proxy ${String(existing.pid)} rejected the session heartbeat`)
+            }
+            const models = await getModels(existing.port, signal)
+            signal?.throwIfAborted()
+            if (!(await isProxyHealthy(existing.port, signal))) {
+              throw new Error(`Healthy proxy ${String(existing.pid)} became unavailable during adoption`)
+            }
+            signal?.throwIfAborted()
+            startHeartbeat(existing.port, existing.pid, existing.generation, getSessionId, {
+              sendInitial: false,
+              observedPortFile: { portFilePath, lifecycleFilePath },
+            })
+            adoptedConnection = existing
+            const connection = await finalizeProxyConnection(
+              { port: existing.port, pid: existing.pid, generation: existing.generation, models },
+              portFilePath,
+              lifecycleFilePath,
+              restartIdentity,
+            )
+            signal?.throwIfAborted()
+            return connection
           }
         }
 
@@ -1029,14 +1040,37 @@ function startHeartbeat(
   pid: number,
   generation: string,
   getSessionId: () => string,
-  sendInitial = true,
+  options: HeartbeatOptions = {},
 ): void {
   stopHeartbeat()
   // Resolve the session ID at each send so heartbeats follow session_start updates.
-  if (sendInitial) {
+  if (options.sendInitial !== false) {
     void sendHeartbeat(port, getSessionId())
   }
   const timer = setInterval(() => {
+    if (options.observedPortFile) {
+      const connection = { port, pid, generation }
+      const published = parsePortFile(options.observedPortFile.portFilePath).info
+      if (
+        !published ||
+        published.port !== port ||
+        !hasSameProxyGeneration(published, connection) ||
+        !isProcessAlive(pid)
+      ) {
+        if (
+          activeConnection?.port === port &&
+          activeConnection.pid === pid &&
+          activeConnection.generation === generation
+        ) {
+          handleProxyExit(
+            { port, childPid: pid, generation, exitCode: null, exitSignal: null },
+            options.observedPortFile.portFilePath,
+            options.observedPortFile.lifecycleFilePath,
+          )
+        }
+        return
+      }
+    }
     void sendHeartbeat(port, getSessionId())
   }, HEARTBEAT_INTERVAL_MS)
   if (typeof timer === 'object' && 'unref' in timer) {
