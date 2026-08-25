@@ -602,9 +602,11 @@ async function finalizeProxyConnection<T extends ProxyInfo & { models: CursorMod
 /**
  * Connect to an existing proxy or spawn a new one.
  *
- * 1. Checks the port file for a running proxy and validates via health check.
- * 2. If no healthy proxy exists, spawns a new child process.
- * 3. Starts the heartbeat timer; each heartbeat resolves the current session ID.
+ * 1. Checks the port file for a running proxy and validates it via a health check.
+ * 2. Once that check succeeds, any later adoption failure leaves the published
+ *    proxy in place; only a dead or unhealthy candidate may be replaced.
+ * 3. Starts the heartbeat timer. Adopters also watch the published generation
+ *    because they do not own a child-process exit listener.
  */
 export async function connectToProxy(
   sessionId: string | (() => string),
