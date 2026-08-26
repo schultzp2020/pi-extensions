@@ -1594,6 +1594,7 @@ describe('post-ready child exit recovery', () => {
       await waitFor(() => exits.includes(first.pid))
 
       expect(getActivePort()).toBeNull()
+      await waitFor(() => existsSync(lifecycleFilePath), REAL_PENDING_DEADLINE_MS)
       const exitRecord = JSON.parse(readFileSync(lifecycleFilePath, 'utf8')) as Record<string, unknown>
       expect(exitRecord).toMatchObject({
         childPid: first.pid,
