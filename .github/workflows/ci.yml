@@ -34,7 +34,7 @@ jobs:
       - name: Test changed packages
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
-            pnpm --filter "...[origin/${{ github.base_ref }}]" run test
+            pnpm --filter "...{packages/**}[origin/${{ github.base_ref }}]" run test
           else
-            pnpm --filter "...[HEAD~1]" run test
+            pnpm --filter "...{packages/**}[HEAD~1]" run test
           fi
