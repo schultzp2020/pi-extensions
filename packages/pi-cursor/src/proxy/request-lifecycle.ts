@@ -143,6 +143,10 @@ function retryDelayMs(hint: RetryHint): number {
       base = 1000
       break
     }
+    case 'transient': {
+      base = 500
+      break
+    }
   }
   // Add 0-50% jitter to prevent thundering herd
   return Math.round(base * (1 + Math.random() * 0.5))

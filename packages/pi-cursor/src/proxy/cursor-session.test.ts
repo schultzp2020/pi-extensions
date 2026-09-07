@@ -91,6 +91,11 @@ function genericErrorFrame(): Buffer {
   return frameConnectMessage(payload, CONNECT_END_STREAM_FLAG)
 }
 
+function notFoundErrorFrame(): Buffer {
+  const payload = new TextEncoder().encode(JSON.stringify({ error: { code: 'not_found', message: 'Error' } }))
+  return frameConnectMessage(payload, CONNECT_END_STREAM_FLAG)
+}
+
 function pendingToolCallFrame(): Buffer {
   const execMessage = create(ExecServerMessageSchema, {
     id: 1,
@@ -142,7 +147,7 @@ describe('CursorSession blob miss recovery', () => {
     })
   })
 
-  it('does not add a blob_not_found hint to a bridge connection loss after a GetBlob miss', async () => {
+  it('marks a bridge connection loss as a transient retryable failure', async () => {
     const session = new CursorSession(makeSessionOptions())
     const stream = latestStream()
 
@@ -152,6 +157,33 @@ describe('CursorSession blob miss recovery', () => {
     await expect(session.next()).resolves.toEqual({
       type: 'done',
       error: 'bridge connection lost',
+      retryHint: 'transient',
+    })
+  })
+
+  it('maps a not_found Connect error to blob_not_found even without a GetBlob miss', async () => {
+    const session = new CursorSession(makeSessionOptions())
+    const stream = latestStream()
+
+    stream.emit('data', notFoundErrorFrame())
+
+    await expect(session.next()).resolves.toEqual({
+      type: 'done',
+      error: 'Connect error not_found: Error',
+      retryHint: 'blob_not_found',
+    })
+  })
+
+  it('marks an abnormal session close as a transient retryable failure', async () => {
+    const session = new CursorSession(makeSessionOptions())
+    latestStream()
+
+    session.close()
+
+    await expect(session.next()).resolves.toEqual({
+      type: 'done',
+      error: 'session closed',
+      retryHint: 'transient',
     })
   })
 

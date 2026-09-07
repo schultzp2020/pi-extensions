@@ -56,7 +56,7 @@ const INACTIVITY_FLUSHED_MS = 10 * 60_000
 const CLOSE_OK = 0
 const CLOSE_ERR = 1
 
-export type RetryHint = 'blob_not_found' | 'resource_exhausted' | 'timeout'
+export type RetryHint = 'blob_not_found' | 'resource_exhausted' | 'timeout' | 'transient'
 
 export type SessionEvent =
   | { type: 'text'; text: string; isThinking: boolean }
@@ -79,6 +79,13 @@ export interface SessionOptions {
 
 function classifyConnectError(errorMessage: string): RetryHint | undefined {
   if (/blob not found/i.test(errorMessage)) {
+    return 'blob_not_found'
+  }
+  // A Connect `not_found` code from the Agent RPC means the server can no
+  // longer find the referenced conversation/checkpoint state (same class as
+  // "blob not found"). Treat it as retryable so the conversation is reset and
+  // rebuilt without the stale checkpoint instead of surfacing a hard error.
+  if (/\bnot_found\b/i.test(errorMessage)) {
     return 'blob_not_found'
   }
   if (/resource_exhausted/i.test(errorMessage)) {
@@ -397,7 +404,12 @@ export class CursorSession {
       this._alive = false
       if (!this.doneEventSent) {
         this.doneEventSent = true
-        this.queue.pushForce({ type: 'done', error: 'session closed' })
+        // An abnormal close before any terminal event is a transient failure
+        // (H2 drop, server GOAWAY, mid-flight teardown). Mark it retryable so
+        // the request lifecycle rebuilds a fresh session and retries instead
+        // of surfacing a hard error. On a genuine client disconnect the retry
+        // short-circuits because the SSE context is already closed.
+        this.queue.pushForce({ type: 'done', error: 'session closed', retryHint: 'transient' })
       }
       clearInterval(this.heartbeatTimer)
       this.clearInactivityTimer()
@@ -667,7 +679,10 @@ export class CursorSession {
       if (this.pendingExecs.length > 0) {
         this.pushDone({ type: 'done', error: 'session closed with pending tool calls' })
       } else if (code !== CLOSE_OK || !sawEndStream) {
-        this.pushDone({ type: 'done', error: 'bridge connection lost' })
+        // Connection dropped before a clean end-stream and no tool calls are
+        // pending, so retrying is safe: mark it transient so a fresh session
+        // is created rather than failing the turn.
+        this.pushDone({ type: 'done', error: 'bridge connection lost', retryHint: 'transient' })
       } else {
         this.pushDone({ type: 'done' })
       }
