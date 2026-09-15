@@ -1,5 +1,18 @@
 # @schultzp2020/pi-cursor
 
+## 0.5.2
+
+### Patch Changes
+
+- [#45](https://github.com/schultzp2020/pi-extensions/pull/45) [`1b95345`](https://github.com/schultzp2020/pi-extensions/commit/1b95345ab092da9d8ac01f7bf559586ecef968ab) Thanks [@regalstreak](https://github.com/regalstreak)! - fix(pi-cursor): retry on Cursor `not_found` Connect errors instead of failing
+
+  A `not_found` Connect code from the Agent RPC means the server can no longer
+  find the referenced conversation/checkpoint state (the same class of failure as
+  `blob not found`). Previously this surfaced immediately as a hard
+  `[Error: Connect error not_found: ...]` with no retry, so a stale checkpoint
+  would break the turn. It is now classified as `blob_not_found` so the
+  conversation is reset and rebuilt without the stale checkpoint before retrying.
+
 ## 0.5.1
 
 ### Patch Changes
