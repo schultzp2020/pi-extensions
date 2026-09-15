@@ -91,6 +91,11 @@ function genericErrorFrame(): Buffer {
   return frameConnectMessage(payload, CONNECT_END_STREAM_FLAG)
 }
 
+function notFoundErrorFrame(): Buffer {
+  const payload = new TextEncoder().encode(JSON.stringify({ error: { code: 'not_found', message: 'Error' } }))
+  return frameConnectMessage(payload, CONNECT_END_STREAM_FLAG)
+}
+
 function pendingToolCallFrame(): Buffer {
   const execMessage = create(ExecServerMessageSchema, {
     id: 1,
@@ -138,6 +143,19 @@ describe('CursorSession blob miss recovery', () => {
     await expect(session.next()).resolves.toEqual({
       type: 'done',
       error: 'Connect error internal: Error',
+      retryHint: 'blob_not_found',
+    })
+  })
+
+  it('maps a not_found Connect error to blob_not_found even without a GetBlob miss', async () => {
+    const session = new CursorSession(makeSessionOptions())
+    const stream = latestStream()
+
+    stream.emit('data', notFoundErrorFrame())
+
+    await expect(session.next()).resolves.toEqual({
+      type: 'done',
+      error: 'Connect error not_found: Error',
       retryHint: 'blob_not_found',
     })
   })

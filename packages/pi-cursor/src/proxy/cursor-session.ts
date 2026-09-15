@@ -81,6 +81,14 @@ function classifyConnectError(errorMessage: string): RetryHint | undefined {
   if (/blob not found/i.test(errorMessage)) {
     return 'blob_not_found'
   }
+  // A Connect `not_found` code from the Agent RPC means the server can no
+  // longer find the referenced conversation/checkpoint state (same class as
+  // `blob not found`). Reuse the blob_not_found recovery so the conversation
+  // is reset and rebuilt without the stale checkpoint, instead of surfacing a
+  // hard error to the caller with no retry.
+  if (/\bnot_found\b/i.test(errorMessage)) {
+    return 'blob_not_found'
+  }
   if (/resource_exhausted/i.test(errorMessage)) {
     return 'resource_exhausted'
   }
