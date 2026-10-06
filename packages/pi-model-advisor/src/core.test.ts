@@ -97,6 +97,108 @@ describe('recommendSubagentModel', () => {
     expect(result.usage).toEqual(validClassifierResult().usage)
   })
 
+  it('returns aborted when caller cancellation aborts a pending classifier request', async () => {
+    const configuration = validRecommendationConfiguration()
+    if (configuration.status !== 'valid') {
+      throw new Error('Expected valid fixture configuration')
+    }
+    const controller = new AbortController()
+    let markStarted!: () => void
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve
+    })
+    const classify = vi.fn<RecommendationDependencies['classify']>(
+      (_context, { signal }) =>
+        new Promise((_, reject) => {
+          markStarted()
+          signal?.addEventListener(
+            'abort',
+            () => reject(Object.assign(new Error('Native classifier aborted.'), { name: 'AbortError' })),
+            { once: true },
+          )
+        }),
+    )
+    const resultPromise = recommendSubagentModel(validRecommendationRequest(), {
+      configuration,
+      candidateModels: [chatModel()],
+      classify,
+      signal: controller.signal,
+      ...thinkingHelpers,
+    })
+
+    await started
+    controller.abort()
+    const result = await resultPromise
+
+    expect(result).toMatchObject({
+      status: 'aborted',
+      classifier: { provider: 'llama.cpp', model: 'offline-classifier' },
+    })
+    expect(classify).toHaveBeenCalledTimes(1)
+  })
+
+  it('returns aborted before a nonresponsive classifier reaches its deadline', async () => {
+    const configuration = validRecommendationConfiguration()
+    if (configuration.status !== 'valid') {
+      throw new Error('Expected valid fixture configuration')
+    }
+    configuration.configuration.policy.overallDeadlineMs = 20
+    const controller = new AbortController()
+    let markStarted!: () => void
+    let complete!: (result: Awaited<ReturnType<RecommendationDependencies['classify']>>) => void
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve
+    })
+    const pendingResult = new Promise<Awaited<ReturnType<RecommendationDependencies['classify']>>>((resolve) => {
+      complete = resolve
+    })
+    const classify = vi.fn<RecommendationDependencies['classify']>(() => {
+      markStarted()
+      return pendingResult
+    })
+    const resultPromise = recommendSubagentModel(validRecommendationRequest(), {
+      configuration,
+      candidateModels: [chatModel()],
+      classify,
+      signal: controller.signal,
+      ...thinkingHelpers,
+    })
+
+    await started
+    controller.abort()
+    const result = await resultPromise
+
+    expect(result).toMatchObject({
+      status: 'aborted',
+      classifier: { provider: 'llama.cpp', model: 'offline-classifier' },
+    })
+    complete(validClassifierResult())
+  })
+
+  it('does not accept a classifier response after caller cancellation', async () => {
+    const configuration = validRecommendationConfiguration()
+    if (configuration.status !== 'valid') {
+      throw new Error('Expected valid fixture configuration')
+    }
+    const controller = new AbortController()
+    const classify = vi.fn<RecommendationDependencies['classify']>(() => {
+      controller.abort()
+      return Promise.resolve(validClassifierResult())
+    })
+    const result = await recommendSubagentModel(validRecommendationRequest(), {
+      configuration,
+      candidateModels: [chatModel()],
+      classify,
+      signal: controller.signal,
+      ...thinkingHelpers,
+    })
+
+    expect(result).toMatchObject({
+      status: 'aborted',
+      classifier: { provider: 'llama.cpp', model: 'offline-classifier' },
+    })
+  })
+
   it('rejects an unknown explicitly selected profile before classifier execution', async () => {
     const configuration = validRecommendationConfiguration()
     if (configuration.status !== 'valid') {

@@ -78,6 +78,13 @@ export async function recommendSubagentModel(
       dependencies.classify(context, options),
     signal,
   })
+  if (signal?.aborted) {
+    return {
+      status: 'aborted',
+      classifier: configuration.configuration.classifier,
+      ...('usage' in classified && classified.usage ? { usage: classified.usage } : {}),
+    }
+  }
   if (classified.status !== 'classified') {
     return classified
   }

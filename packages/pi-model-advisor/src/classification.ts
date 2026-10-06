@@ -208,7 +208,14 @@ export async function classifyRecommendation(input: {
 
   const controller = new AbortController()
   let deadlineTimer: ReturnType<typeof setTimeout> | undefined
-  const handleAbort = () => controller.abort(signal?.reason)
+  let resolveCallerAbort: () => void = () => undefined
+  const callerAbort = new Promise<{ kind: 'caller_abort' }>((resolve) => {
+    resolveCallerAbort = () => resolve({ kind: 'caller_abort' })
+  })
+  const handleAbort = () => {
+    controller.abort(signal?.reason)
+    resolveCallerAbort()
+  }
   signal?.addEventListener('abort', handleAbort, { once: true })
   const deadline = new Promise<{ kind: 'deadline' }>((resolve) => {
     deadlineTimer = setTimeout(() => {
@@ -224,7 +231,11 @@ export async function classifyRecommendation(input: {
     )
 
   try {
-    const outcome = await Promise.race([nativeRequest, deadline])
+    const outcome = await Promise.race([nativeRequest, deadline, callerAbort])
+    if (signal?.aborted || outcome.kind === 'caller_abort') {
+      const usage = outcome.kind === 'response' ? (outcome.result.usage as NativeUsage | undefined) : undefined
+      return aborted(classifier, usage)
+    }
     if (outcome.kind === 'deadline') {
       return classifierFailure(classifier, 'deadline', DEADLINE_MESSAGE)
     }
