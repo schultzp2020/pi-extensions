@@ -389,6 +389,7 @@ export async function discoverAdvisorModels(
   const availableKeys = new Set(available.map((model) => identityKey(modelIdentity(model))))
   const configured = configuration ? configuredModels(configuration) : []
   const configuredKeys = new Set(configured.map(({ identity }) => identityKey(identity)))
+  const unsupportedThinkingModels = new Set<string>()
   const classifierIdentity = configuration?.classifier
   let classifierAvailable = false
   if (configuration) {
@@ -427,6 +428,7 @@ export async function discoverAdvisorModels(
         return levelIndex >= low && levelIndex <= high && levelIndex >= modelLow && levelIndex <= modelHigh
       })
       if (!permitted) {
+        unsupportedThinkingModels.add(identityKey(model.identity))
         issues.push({
           path: `${model.path}/thinking`,
           code: 'unsupported_thinking',
@@ -437,7 +439,10 @@ export async function discoverAdvisorModels(
   }
 
   const eligible = candidates
-    .filter((model) => configuredKeys.has(identityKey(modelIdentity(model))))
+    .filter((model) => {
+      const key = identityKey(modelIdentity(model))
+      return configuredKeys.has(key) && !unsupportedThinkingModels.has(key)
+    })
     .map(modelIdentity)
   const unclassified = candidates
     .filter((model) => !configuredKeys.has(identityKey(modelIdentity(model))))

@@ -195,7 +195,7 @@ describe('discoverAdvisorModels', () => {
     expect(
       result.issues.some(({ path, code }) => path === '/models/light/0/thinking' && code === 'unsupported_thinking'),
     ).toBeTruthy()
-    expect(result.eligible).toEqual([{ provider: 'openai', model: 'gpt-luna' }])
+    expect(result.eligible).toEqual([])
     expect(getAvailableOfType).toHaveBeenCalledExactlyOnceWith('classifier')
     expect(classify).not.toHaveBeenCalled()
   })
