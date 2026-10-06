@@ -43,6 +43,17 @@ function hasModelIdentity(value: unknown): boolean {
   return Boolean(identity && isNonemptyString(identity.provider) && isNonemptyString(identity.id))
 }
 
+function isRuntimeSnapshotHost(value: unknown): boolean {
+  const host = record(value)
+  const events = record(host?.events)
+  return typeof events?.emit === 'function' && typeof host?.getCommands === 'function'
+}
+
+function isMcpSelection(value: unknown): boolean {
+  const selection = record(value)
+  return Boolean(selection && isNonemptyString(selection.name) && isNonemptyString(selection.selector))
+}
+
 function invalidHostSnapshots(host: unknown): string[] {
   const snapshots = record(host)
   if (!snapshots) {
@@ -158,18 +169,46 @@ export async function verifySubagentRecommendation<Resolver extends ResolveSubag
     }
   }
   if (!resolved.ok) {
+    if (
+      !isNonemptyString(resolved.code) ||
+      !isNonemptyString(resolved.message) ||
+      !Array.isArray(resolved.diagnostics) ||
+      !resolved.diagnostics.every(isDiagnostic)
+    ) {
+      return {
+        status: 'verification_failed',
+        category: 'unresolved_contract',
+        message: 'The launch preflight did not return a complete rejection.',
+      }
+    }
+
+    const missingFacts = missingHostFacts(resolved.diagnostics)
+    if (missingFacts) {
+      return {
+        status: 'verification_failed',
+        category: 'host_required',
+        message: missingFacts.join(' '),
+        missingHostFacts: missingFacts,
+      }
+    }
+
     return {
       status: 'verification_failed',
       category: 'preflight_rejected',
-      message:
-        typeof resolved.message === 'string' && resolved.message.trim()
-          ? resolved.message
-          : 'The launch preflight rejected the intended child launch.',
+      message: resolved.message,
     }
   }
 
   const contract = record(resolved.contract)
-  if (!contract || !Array.isArray(contract.diagnostics) || !contract.diagnostics.every(isDiagnostic)) {
+  const tools = record(contract?.tools)
+  if (
+    !contract ||
+    !Array.isArray(contract.diagnostics) ||
+    !contract.diagnostics.every(isDiagnostic) ||
+    !tools ||
+    !Array.isArray(tools.mcp) ||
+    !tools.mcp.every(isMcpSelection)
+  ) {
     return {
       status: 'verification_failed',
       category: 'unresolved_contract',
@@ -197,6 +236,15 @@ export async function verifySubagentRecommendation<Resolver extends ResolveSubag
       status: 'verification_failed',
       category: 'preflight_rejected',
       message: blockingMessages.join(' '),
+    }
+  }
+
+  if (tools.mcp.length > 0 && !isRuntimeSnapshotHost(input.host.runtimeSnapshotHost)) {
+    return {
+      status: 'verification_failed',
+      category: 'host_required',
+      message: 'Current host snapshots are required: runtimeSnapshotHost.',
+      missingHostFacts: ['runtimeSnapshotHost'],
     }
   }
 

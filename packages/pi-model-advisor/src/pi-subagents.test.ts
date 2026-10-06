@@ -23,9 +23,14 @@ const recommendation = {
 type TestPreflightResult =
   | {
       ok: true
-      contract: { model: string | undefined; thinking: string; diagnostics: unknown[] }
+      contract: {
+        model: string | undefined
+        thinking: string
+        diagnostics: unknown[]
+        tools: { mcp: unknown[] }
+      }
     }
-  | { ok: false; message: string }
+  | { ok: false; code: string; message: string; diagnostics: unknown[] }
 type TestResolver = (input: Parameters<typeof resolveSubagentLaunchContract>[0]) => Promise<TestPreflightResult>
 
 describe('verifySubagentRecommendation', () => {
@@ -37,6 +42,7 @@ describe('verifySubagentRecommendation', () => {
           model: input.model,
           thinking: 'max',
           diagnostics: [],
+          tools: { mcp: [] },
         },
       }),
     )
@@ -77,7 +83,7 @@ describe('verifySubagentRecommendation', () => {
     const resolve = vi.fn<TestResolver>((_input) =>
       Promise.resolve({
         ok: true as const,
-        contract: { model, thinking, diagnostics: [] },
+        contract: { model, thinking, diagnostics: [], tools: { mcp: [] } },
       }),
     )
 
@@ -103,7 +109,7 @@ describe('verifySubagentRecommendation', () => {
     const resolve = vi.fn<TestResolver>((input) =>
       Promise.resolve({
         ok: true as const,
-        contract: { model: input.model, thinking: 'max', diagnostics: [] },
+        contract: { model: input.model, thinking: 'max', diagnostics: [], tools: { mcp: [] } },
       }),
     )
     const launch = {
@@ -195,6 +201,106 @@ describe('verifySubagentRecommendation', () => {
     expect(resolve).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ model: 'openai-codex/gpt-6-luna:max' }))
   })
 
+  it('requires the current Pi host snapshot when direct MCP selections resolve', async () => {
+    const resolve = vi.fn<TestResolver>((input) =>
+      Promise.resolve({
+        ok: true,
+        contract: {
+          model: input.model,
+          thinking: 'max',
+          diagnostics: [],
+          tools: { mcp: [{ name: 'mcp__docs__search', selector: 'docs/search' }] },
+        },
+      }),
+    )
+
+    const result = await verifySubagentRecommendation({
+      recommendation,
+      launch: { agent: 'worker', task: 'Implement the requested subtask.', cwd: process.cwd() },
+      host: {
+        parentModel: { provider: 'openai', id: 'gpt-6-sol' },
+        scopedModelIds: ['openai-codex/gpt-6-luna'],
+        availableModels: [{ provider: 'openai-codex', id: 'gpt-6-luna' }],
+      },
+      resolveSubagentLaunchContract: resolve,
+    })
+
+    expect(result).toEqual({
+      status: 'verification_failed',
+      category: 'host_required',
+      message: 'Current host snapshots are required: runtimeSnapshotHost.',
+      missingHostFacts: ['runtimeSnapshotHost'],
+    })
+  })
+
+  it('forwards the calling Pi host when direct MCP selections resolve', async () => {
+    const runtimeSnapshotHost = {
+      events: { emit: (_event: string, _request: object) => undefined },
+      getCommands: () => [],
+    }
+    const resolve = vi.fn<TestResolver>((input) =>
+      Promise.resolve({
+        ok: true,
+        contract: {
+          model: input.model,
+          thinking: 'max',
+          diagnostics: [],
+          tools: { mcp: [{ name: 'mcp__docs__search', selector: 'docs/search' }] },
+        },
+      }),
+    )
+
+    const result = await verifySubagentRecommendation({
+      recommendation,
+      launch: { agent: 'worker', task: 'Implement the requested subtask.', cwd: process.cwd() },
+      host: {
+        parentModel: { provider: 'openai', id: 'gpt-6-sol' },
+        scopedModelIds: ['openai-codex/gpt-6-luna'],
+        availableModels: [{ provider: 'openai-codex', id: 'gpt-6-luna' }],
+        runtimeSnapshotHost,
+      },
+      resolveSubagentLaunchContract: resolve,
+    })
+
+    expect(result).toEqual({ status: 'verified', selection })
+    expect(resolve.mock.calls[0]?.[0].runtimeSnapshotHost).toBe(runtimeSnapshotHost)
+  })
+
+  it('reports host_required diagnostics returned alongside a preflight rejection', async () => {
+    const resolve = vi.fn<TestResolver>(() =>
+      Promise.resolve({
+        ok: false,
+        code: 'invalid_cwd',
+        message: 'The launch working directory is invalid.',
+        diagnostics: [
+          {
+            code: 'host_required',
+            severity: 'host-required',
+            message: 'The current parent-session snapshot is required.',
+          },
+        ],
+      }),
+    )
+
+    const result = await verifySubagentRecommendation({
+      recommendation,
+      launch: { agent: 'worker', task: 'Implement the requested subtask.', cwd: process.cwd() },
+      host: {
+        parentModel: { provider: 'openai', id: 'gpt-6-sol' },
+        scopedModelIds: ['openai-codex/gpt-6-luna'],
+        availableModels: [{ provider: 'openai-codex', id: 'gpt-6-luna' }],
+      },
+      resolveSubagentLaunchContract: resolve,
+    })
+
+    expect(result).toEqual({
+      status: 'verification_failed',
+      category: 'host_required',
+      message: 'The current parent-session snapshot is required.',
+      missingHostFacts: ['The current parent-session snapshot is required.'],
+    })
+  })
+
   it('returns unresolved_contract when the injected preflight throws without retrying', async () => {
     const resolve = vi.fn<typeof resolveSubagentLaunchContract>(() =>
       Promise.reject(new Error('private preflight detail')),
@@ -227,6 +333,7 @@ describe('verifySubagentRecommendation', () => {
           model: input.model,
           thinking: 'max',
           diagnostics: [{ code: 'model_scope', severity: 'error', message: 'The selection is outside scope.' }],
+          tools: { mcp: [] },
         },
       }),
     )
@@ -253,7 +360,7 @@ describe('verifySubagentRecommendation', () => {
     const resolve = vi.fn<TestResolver>((input) =>
       Promise.resolve({
         ok: true as const,
-        contract: { model: input.model, thinking: 'max', diagnostics: [] },
+        contract: { model: input.model, thinking: 'max', diagnostics: [], tools: { mcp: [] } },
       }),
     )
     const launch = {
@@ -290,6 +397,7 @@ describe('verifySubagentRecommendation', () => {
           model: input.model,
           thinking: 'max',
           diagnostics: [{ severity: 'host-required' }],
+          tools: { mcp: [] },
         },
       }),
     )
@@ -315,7 +423,7 @@ describe('verifySubagentRecommendation', () => {
     const resolve = vi.fn<TestResolver>((input) =>
       Promise.resolve({
         ok: true as const,
-        contract: { model: input.model, thinking: 'max', diagnostics: [] },
+        contract: { model: input.model, thinking: 'max', diagnostics: [], tools: { mcp: [] } },
       }),
     )
 
@@ -352,6 +460,7 @@ describe('verifySubagentRecommendation', () => {
               message: 'The exact parent session snapshot is required.',
             },
           ],
+          tools: { mcp: [] },
         },
       }),
     )
