@@ -289,7 +289,7 @@ describe('recommendSubagentModel selection', () => {
       standard: [
         modelConfiguration('z-provider', 'a-output-cost', undefined, 0),
         modelConfiguration('z-provider', 'b-input-cost', undefined, 0),
-        modelConfiguration('z-provider', 'c-cache-cost', undefined, 0),
+        modelConfiguration('a-provider', 'a-cache-cost', undefined, 0),
         modelConfiguration('z-provider', 'd-tie', undefined, 0),
         modelConfiguration('a-provider', 'z-tie', undefined, 0),
         modelConfiguration('a-provider', 'e-tie', undefined, 0),
@@ -306,7 +306,7 @@ describe('recommendSubagentModel selection', () => {
       candidateModels: [
         pricedModel('z-provider', 'a-output-cost', 2, 0, 0),
         pricedModel('z-provider', 'b-input-cost', 1, 9, 0),
-        pricedModel('z-provider', 'c-cache-cost', 1, 4, 9),
+        pricedModel('a-provider', 'a-cache-cost', 1, 4, 9),
         pricedModel('z-provider', 'd-tie', 1, 4, 1),
         pricedModel('a-provider', 'z-tie', 1, 4, 1),
         pricedModel('a-provider', 'e-tie', 1, 4, 1),
