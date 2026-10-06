@@ -4,9 +4,10 @@ A monorepo for [Pi](https://github.com/badlogic/pi) coding agent extensions.
 
 ## Packages
 
-| Package                          | Description                                                                 |
-| -------------------------------- | --------------------------------------------------------------------------- |
-| [pi-cursor](packages/pi-cursor/) | Access Cursor subscription models in Pi via a local OpenAI-compatible proxy |
+| Package                                        | Description                                                                 |
+| ---------------------------------------------- | --------------------------------------------------------------------------- |
+| [pi-cursor](packages/pi-cursor/)               | Access Cursor subscription models in Pi via a local OpenAI-compatible proxy |
+| [pi-model-advisor](packages/pi-model-advisor/) | Recommend Pi chat models and thinking levels for explicit subtasks          |
 
 ## Development
 
