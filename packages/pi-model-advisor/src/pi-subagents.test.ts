@@ -298,6 +298,50 @@ describe('verifySubagentRecommendation', () => {
     ])
   })
 
+  it('checks the same Pi host snapshot that preflight received', async () => {
+    type RuntimeSnapshotHost = NonNullable<Parameters<typeof resolveSubagentLaunchContract>[0]['runtimeSnapshotHost']>
+    let resolvePreflight!: (result: TestPreflightResult) => void
+    const preflight = new Promise<TestPreflightResult>((resolve) => {
+      resolvePreflight = resolve
+    })
+    const resolve = vi.fn<TestResolver>(() => preflight)
+    const host = {
+      parentModel: { provider: 'openai', id: 'gpt-6-sol' },
+      scopedModelIds: ['openai-codex/gpt-6-luna'],
+      availableModels: [{ provider: 'openai-codex', id: 'gpt-6-luna' }],
+      runtimeSnapshotHost: undefined as RuntimeSnapshotHost | undefined,
+    }
+    const verification = verifySubagentRecommendation({
+      recommendation,
+      launch: { agent: 'worker', task: 'Implement the requested subtask.', cwd: process.cwd() },
+      host,
+      resolveSubagentLaunchContract: resolve,
+    })
+
+    expect(resolve.mock.calls[0]?.[0].runtimeSnapshotHost).toBeUndefined()
+    host.runtimeSnapshotHost = {
+      events: { emit: (_event: string, _request: object) => undefined },
+      getCommands: () => [],
+    }
+    resolvePreflight({
+      ok: true,
+      contract: {
+        model: 'openai-codex/gpt-6-luna:max',
+        thinking: 'max',
+        diagnostics: [],
+        tools: { mcp: [{ name: 'mcp__docs__search', selector: 'docs/search' }] },
+      },
+    })
+
+    expect(await verification).toEqual({
+      status: 'verification_failed',
+      category: 'host_required',
+      message: 'Current host snapshots are required: runtimeSnapshotHost.',
+      missingHostFacts: ['runtimeSnapshotHost'],
+    })
+    expect(resolve).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ runtimeSnapshotHost: undefined }))
+  })
+
   it('requires the current Pi host snapshot when direct MCP selections resolve', async () => {
     const resolve = vi.fn<TestResolver>((input) =>
       Promise.resolve({
