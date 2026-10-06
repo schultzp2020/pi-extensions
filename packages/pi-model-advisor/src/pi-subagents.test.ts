@@ -75,6 +75,43 @@ describe('verifySubagentRecommendation', () => {
     expect(recommendation.status).toBe('approval_required')
   })
 
+  it('returns the recommendation snapshot captured before awaiting preflight', async () => {
+    const mutableSelection = { ...selection }
+    const mutableRecommendation = {
+      status: 'approval_required',
+      selection: mutableSelection,
+    } as RecommendationResult
+    let resolvePreflight!: (result: TestPreflightResult) => void
+    const preflight = new Promise<TestPreflightResult>((resolve) => {
+      resolvePreflight = resolve
+    })
+    const resolve = vi.fn<TestResolver>(() => preflight)
+    const verification = verifySubagentRecommendation({
+      recommendation: mutableRecommendation,
+      launch: { agent: 'worker', task: 'Implement the requested subtask.', cwd: process.cwd() },
+      host: {
+        parentModel: { provider: 'openai', id: 'gpt-6-sol' },
+        scopedModelIds: ['openai-codex/gpt-6-luna'],
+        availableModels: [{ provider: 'openai-codex', id: 'gpt-6-luna' }],
+      },
+      resolveSubagentLaunchContract: resolve,
+    })
+
+    mutableSelection.provider = 'openai'
+    resolvePreflight({
+      ok: true,
+      contract: {
+        model: 'openai-codex/gpt-6-luna:max',
+        thinking: 'max',
+        diagnostics: [],
+        tools: { mcp: [] },
+      },
+    })
+
+    expect(resolve.mock.calls[0]?.[0].model).toBe('openai-codex/gpt-6-luna:max')
+    expect(await verification).toEqual({ status: 'verified', selection })
+  })
+
   it.each([
     { field: 'provider', model: 'openai/gpt-6-luna:max', thinking: 'max' },
     { field: 'model', model: 'openai-codex/gpt-6-sol:max', thinking: 'max' },
@@ -199,6 +236,66 @@ describe('verifySubagentRecommendation', () => {
       message: 'Agent worker is not available.',
     })
     expect(resolve).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ model: 'openai-codex/gpt-6-luna:max' }))
+  })
+
+  it('rechecks changed host policy; an earlier verification reserves nothing', async () => {
+    const resolve = vi.fn<TestResolver>((input) => {
+      const modelRemainsScoped = input.scopedModelIds?.includes('openai-codex/gpt-6-luna') === true
+      return Promise.resolve(
+        modelRemainsScoped
+          ? {
+              ok: true,
+              contract: {
+                model: input.model,
+                thinking: 'max',
+                diagnostics: [],
+                tools: { mcp: [] },
+              },
+            }
+          : {
+              ok: false,
+              code: 'model_scope',
+              message: 'The model is no longer in scope.',
+              diagnostics: [
+                {
+                  code: 'model_scope',
+                  severity: 'error',
+                  message: 'The model is no longer in scope.',
+                },
+              ],
+            },
+      )
+    })
+    const launch = { agent: 'worker', task: 'Implement the requested subtask.', cwd: process.cwd() }
+    const baseHost = {
+      parentModel: { provider: 'openai', id: 'gpt-6-sol' },
+      availableModels: [{ provider: 'openai-codex', id: 'gpt-6-luna' }],
+    }
+
+    const first = await verifySubagentRecommendation({
+      recommendation,
+      launch,
+      host: { ...baseHost, scopedModelIds: ['openai-codex/gpt-6-luna'] },
+      resolveSubagentLaunchContract: resolve,
+    })
+    const second = await verifySubagentRecommendation({
+      recommendation,
+      launch,
+      host: { ...baseHost, scopedModelIds: ['openai/gpt-6-sol'] },
+      resolveSubagentLaunchContract: resolve,
+    })
+
+    expect(first).toEqual({ status: 'verified', selection })
+    expect(second).toEqual({
+      status: 'verification_failed',
+      category: 'preflight_rejected',
+      message: 'The model is no longer in scope.',
+    })
+    expect(resolve).toHaveBeenCalledTimes(2)
+    expect(resolve.mock.calls.map(([input]) => input.scopedModelIds)).toEqual([
+      ['openai-codex/gpt-6-luna'],
+      ['openai/gpt-6-sol'],
+    ])
   })
 
   it('requires the current Pi host snapshot when direct MCP selections resolve', async () => {

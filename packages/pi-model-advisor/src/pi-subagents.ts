@@ -138,7 +138,7 @@ export async function verifySubagentRecommendation<Resolver extends ResolveSubag
     }
   }
 
-  const { selection } = recommendation
+  const selection = { ...recommendation.selection }
   const launchModel = `${selection.provider}/${selection.model}:${selection.thinking}`
   const launchInputs = { ...input.launch } as Parameters<Resolver>[0]
   delete launchInputs.model
@@ -264,5 +264,5 @@ export async function verifySubagentRecommendation<Resolver extends ResolveSubag
     }
   }
 
-  return { status: 'verified', selection: { ...selection } }
+  return { status: 'verified', selection }
 }
