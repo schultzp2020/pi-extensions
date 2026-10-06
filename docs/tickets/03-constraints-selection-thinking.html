@@ -1,0 +1,326 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Ticket 03: Apply hard constraints, deterministic ranking, and thinking clamps</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #0b1020;
+        --panel: #121a2e;
+        --panel-2: #18233d;
+        --text: #e7edf8;
+        --muted: #a9b6cc;
+        --line: #31415f;
+        --accent: #68d5c4;
+        --accent-2: #8cb4ff;
+        --warn: #f5c26b;
+        --danger: #ff8f8f;
+        --ok: #82d99b;
+        --code: #080d19;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html {
+        scroll-behavior: smooth;
+      }
+      body {
+        margin: 0;
+        background: linear-gradient(145deg, #080c18 0%, var(--bg) 45%, #101a31 100%);
+        color: var(--text);
+        font-family:
+          Inter,
+          ui-sans-serif,
+          system-ui,
+          -apple-system,
+          BlinkMacSystemFont,
+          'Segoe UI',
+          sans-serif;
+        line-height: 1.6;
+      }
+      a {
+        color: var(--accent-2);
+        text-decoration-thickness: 1px;
+        text-underline-offset: 3px;
+      }
+      a:hover {
+        color: var(--accent);
+      }
+      header {
+        border-bottom: 1px solid var(--line);
+        background: rgba(8, 13, 25, 0.88);
+        position: sticky;
+        top: 0;
+        z-index: 10;
+        backdrop-filter: blur(12px);
+      }
+      nav {
+        max-width: 1120px;
+        margin: auto;
+        padding: 0.8rem 1.25rem;
+        display: flex;
+        gap: 1rem;
+        flex-wrap: wrap;
+      }
+      nav a {
+        color: var(--muted);
+        text-decoration: none;
+        font-weight: 650;
+      }
+      main {
+        max-width: 1120px;
+        margin: auto;
+        padding: 3rem 1.25rem 5rem;
+      }
+      h1 {
+        font-size: clamp(2.2rem, 5vw, 4.4rem);
+        letter-spacing: -0.045em;
+        line-height: 1;
+        margin: 0 0 1rem;
+      }
+      h2 {
+        margin-top: 3rem;
+        border-top: 1px solid var(--line);
+        padding-top: 1.5rem;
+      }
+      h3 {
+        margin-top: 2rem;
+      }
+      h1,
+      h2,
+      h3 {
+        color: #f7f9fd;
+      }
+      .eyebrow {
+        color: var(--accent);
+        text-transform: uppercase;
+        letter-spacing: 0.16em;
+        font-size: 0.76rem;
+        font-weight: 800;
+      }
+      .lede {
+        max-width: 860px;
+        color: var(--muted);
+        font-size: 1.16rem;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+        gap: 1rem;
+      }
+      .card,
+      .ticket,
+      .callout {
+        background: linear-gradient(180deg, rgba(24, 35, 61, 0.96), rgba(18, 26, 46, 0.96));
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        padding: 1.15rem 1.25rem;
+        box-shadow: 0 14px 34px rgba(0, 0, 0, 0.18);
+      }
+      .callout {
+        border-left: 4px solid var(--accent);
+      }
+      .warning {
+        border-left-color: var(--warn);
+      }
+      .danger {
+        border-left-color: var(--danger);
+      }
+      .ok {
+        border-left-color: var(--ok);
+      }
+      .tag {
+        display: inline-block;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        padding: 0.15rem 0.55rem;
+        color: var(--muted);
+        font-size: 0.82rem;
+        margin: 0 0.35rem 0.35rem 0;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 1rem 0 2rem;
+        background: rgba(18, 26, 46, 0.8);
+      }
+      th,
+      td {
+        padding: 0.75rem;
+        border: 1px solid var(--line);
+        text-align: left;
+        vertical-align: top;
+      }
+      th {
+        background: var(--panel-2);
+      }
+      code,
+      pre {
+        font-family: 'Cascadia Code', 'SFMono-Regular', Consolas, monospace;
+      }
+      code {
+        color: #b9f1e7;
+      }
+      pre {
+        background: var(--code);
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 1rem;
+        overflow-x: auto;
+      }
+      li + li {
+        margin-top: 0.45rem;
+      }
+      .flow {
+        display: grid;
+        gap: 0.65rem;
+        max-width: 780px;
+        margin: 1.5rem auto;
+      }
+      .flow .node {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 0.8rem 1rem;
+        text-align: center;
+      }
+      .flow .arrow {
+        color: var(--accent);
+        text-align: center;
+        font-size: 1.4rem;
+        line-height: 1;
+      }
+      .split {
+        display: grid;
+        grid-template-columns: 1fr auto 1fr;
+        gap: 0.75rem;
+        align-items: center;
+      }
+      .muted {
+        color: var(--muted);
+      }
+      .status {
+        font-weight: 750;
+        color: var(--ok);
+      }
+      .blocked {
+        color: var(--warn);
+      }
+      .checklist {
+        list-style: none;
+        padding-left: 0;
+      }
+      .checklist li::before {
+        content: '☐';
+        color: var(--accent);
+        margin-right: 0.6rem;
+      }
+      footer {
+        max-width: 1120px;
+        margin: auto;
+        padding: 2rem 1.25rem 4rem;
+        color: var(--muted);
+        border-top: 1px solid var(--line);
+      }
+      @media (max-width: 650px) {
+        .split {
+          grid-template-columns: 1fr;
+        }
+        .split .arrow {
+          transform: rotate(90deg);
+        }
+      }
+      @media print {
+        header {
+          position: static;
+        }
+        body {
+          background: white;
+          color: #111;
+        }
+        .card,
+        .ticket,
+        .callout,
+        table {
+          background: white;
+          box-shadow: none;
+        }
+        h1,
+        h2,
+        h3 {
+          color: #111;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <nav>
+        <a href="../index.html">Overview</a>
+        <a href="../pi-model-advisor-spec.html">Specification</a>
+        <a href="../pi-model-advisor-tickets.html">Tickets</a>
+        <a href="../pi-model-advisor-handoff.html">Handoff</a>
+      </nav>
+    </header>
+    <main>
+      <p class="eyebrow">Planned slice · Ticket 03</p>
+      <h1>Apply hard constraints, deterministic ranking, and thinking clamps</h1>
+      <p>
+        <strong>What to build:</strong> Recommendations honor caller narrowing, deterministic ranking, and native
+        supported thinking levels while preserving global, per-model, and caller minimum/maximum bounds.
+      </p>
+      <p>
+        <strong>Blocked by:</strong>
+        <span class="blocked">02: Deliver the first end-to-end native classifier recommendation</span>
+      </p>
+      <p>
+        <strong>Status:</strong> <span class="status">pending</span> — implementation authorized; close after local
+        verification.
+      </p>
+      <h2>Acceptance criteria</h2>
+      <ul class="checklist">
+        <li>
+          Image, context, provider, request levels, and thinking bounds are hard and never expand Pi scope. Task
+          profiles define the normal pool; stronger sufficient compatible models above its highest level require fresh
+          exact approval. Empty task/request lists block both pools.
+        </li>
+        <li>
+          Ranking applies lowest sufficient capability, user priority, semantic context preference,
+          output/input/cache-read price, and exact identity in that order.
+        </li>
+        <li>
+          Use getSupportedThinkingLevels() and clampThinkingLevel(): next supported higher level, then lower, not
+          nearest-level/higher-on-tie.
+        </li>
+        <li>
+          Resolve thinking inside the intersection of global, per-model, and caller bounds. Recheck native results
+          against hard bounds; a native upward adjustment never overrides a ceiling.
+        </li>
+        <li>
+          Invalid configured supported ranges produce configuration_error; inverted caller bounds are rejected as
+          invalid input.
+        </li>
+        <li>
+          A model with no supported level inside caller/configured bounds is ineligible. No surviving candidate returns
+          no_eligible_model with mechanical rejection details.
+        </li>
+        <li>
+          Boundary tests cover custom names/descriptions, unknown-name errors, routine versus hard-level pools, stronger
+          approval_required proposals, no implicit approval, omitted/empty rules, sparse supported thinking levels, both
+          caller bounds, non-reasoning models, and distinct exact provider identities. Include minimum=maximum=max, as
+          required by the user's Luna configuration: lower caller ceilings exclude the model rather than reducing
+          thinking, and max effort never raises capability class.
+        </li>
+      </ul>
+      <h2>References</h2>
+      <ul>
+        <li><a href="../pi-model-advisor-spec.html">Canonical specification</a></li>
+        <li><a href="../pi-model-advisor-tickets.html">Ticket dependency graph</a></li>
+        <li><a href="../pi-model-advisor-handoff.html">Agent handoff</a></li>
+      </ul>
+    </main>
+    <footer>Pi Model Advisor design artifacts · updated 6 October 2026</footer>
+  </body>
+</html>
