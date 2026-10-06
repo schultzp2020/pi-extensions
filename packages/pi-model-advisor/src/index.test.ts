@@ -10,6 +10,13 @@ function registerToolStub(): ExtensionAPI['registerTool'] {
   return () => undefined
 }
 
+function extensionApi(
+  registerCommand: ExtensionAPI['registerCommand'],
+  registerTool = registerToolStub(),
+): Pick<ExtensionAPI, 'registerCommand' | 'registerTool' | 'on' | 'appendEntry'> {
+  return { registerCommand, registerTool, on: () => () => undefined, appendEntry: () => undefined }
+}
+
 function validConfiguration(): ConfigurationResult {
   return {
     status: 'valid' as const,
@@ -79,12 +86,9 @@ describe('registerModelAdvisorExtension', () => {
     const registerCommand = vi.fn<ExtensionAPI['registerCommand']>()
     const registerTool = registerToolStub()
     const loadConfiguration = vi.fn<() => Promise<ConfigurationResult>>(() => Promise.resolve(validConfiguration()))
-    await registerModelAdvisorExtension(
-      { registerCommand, registerTool },
-      {
-        loadConfiguration,
-      },
-    )
+    await registerModelAdvisorExtension(extensionApi(registerCommand, registerTool), {
+      loadConfiguration,
+    })
     const [[, command]] = registerCommand.mock.calls
     const { context, classify, notify } = commandContext()
 
@@ -100,17 +104,19 @@ describe('registerModelAdvisorExtension', () => {
     expect(notify).toHaveBeenCalledWith(expect.stringContaining('gpt-unclassified'), 'info')
     expect(notify).toHaveBeenCalledWith(expect.stringContaining('No classifier inference was made.'), 'info')
     expect(notify).toHaveBeenCalledWith(expect.stringContaining('Active configuration snapshot:'), 'info')
-    expect(notify).toHaveBeenCalledWith(expect.stringContaining('Pi /reload only.'), 'info')
+    expect(notify).toHaveBeenCalledWith(
+      expect.stringContaining('Configuration edits apply only after extension initialization or Pi /reload.'),
+      'info',
+    )
     expect(classify).not.toHaveBeenCalled()
   })
 
   it('reports unavailable classifier diagnostics and retains the configuration snapshot', async () => {
     const registerCommand = vi.fn<ExtensionAPI['registerCommand']>()
     const registerTool = registerToolStub()
-    await registerModelAdvisorExtension(
-      { registerCommand, registerTool },
-      { loadConfiguration: () => Promise.resolve(validConfiguration()) },
-    )
+    await registerModelAdvisorExtension(extensionApi(registerCommand, registerTool), {
+      loadConfiguration: () => Promise.resolve(validConfiguration()),
+    })
     const [[, command]] = registerCommand.mock.calls
     const { context, notify, classify } = commandContext([])
 
@@ -126,10 +132,9 @@ describe('registerModelAdvisorExtension', () => {
   it('previews an explicit task without reading parent transcript state', async () => {
     const registerCommand = vi.fn<ExtensionAPI['registerCommand']>()
     const registerTool = registerToolStub()
-    await registerModelAdvisorExtension(
-      { registerCommand, registerTool },
-      { loadConfiguration: () => Promise.resolve(validConfiguration()) },
-    )
+    await registerModelAdvisorExtension(extensionApi(registerCommand, registerTool), {
+      loadConfiguration: () => Promise.resolve(validConfiguration()),
+    })
     const [[, command]] = registerCommand.mock.calls
     const classifier = {
       type: 'classifier',
@@ -174,6 +179,14 @@ describe('registerModelAdvisorExtension', () => {
       'high_consequence',
     ])
     expect(notify).toHaveBeenCalledWith(expect.stringContaining('"status": "recommended"'), 'info')
+    expect(notify).toHaveBeenCalledWith(
+      expect.stringContaining('Configuration edits apply only after extension initialization or Pi /reload.'),
+      'info',
+    )
+    expect(notify).toHaveBeenCalledWith(
+      expect.stringContaining('Privacy: explicit task state is sent to the configured Pi classifier'),
+      'info',
+    )
   })
 
   it('uses a fresh configuration after Pi reconstructs the extension', async () => {
@@ -186,7 +199,7 @@ describe('registerModelAdvisorExtension', () => {
         status: 'configuration_error' as const,
         issues: [{ path: '', code: 'invalid_json' as const, message: 'Configuration file contains invalid JSON.' }],
       })
-    const api: Pick<ExtensionAPI, 'registerCommand' | 'registerTool'> = { registerCommand, registerTool }
+    const api = extensionApi(registerCommand, registerTool)
 
     await registerModelAdvisorExtension(api, { loadConfiguration })
     await registerModelAdvisorExtension(api, { loadConfiguration })

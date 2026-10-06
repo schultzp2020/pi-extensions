@@ -272,7 +272,7 @@
         genuine blockers.
       </p>
       <div class="callout warning">
-        <strong>Status:</strong> Tickets 01–04 completed locally; tickets 05–07 pending local verification.
+        <strong>Status:</strong> Tickets 01–04 and 06 completed locally; tickets 05 and 07 pending local verification.
       </div>
       <h2>Dependency graph</h2>
       <pre><code>01 Package + global config + diagnostics
@@ -570,6 +570,13 @@
             >03: Apply hard constraints, deterministic ranking, and thinking clamps; 04: Return typed native classifier
             failures without fallback</span
           >
+        </p>
+        <p>
+          <strong>Local completion:</strong> Verified at integration commit
+          <code>8806634639f088bab0fd8ec24bddeb1c077134c8</code>; approved leaf-06:G1 passed twice after merge and
+          independent G2 review accepted with no findings (run 20937f82-092f-4f6e-a1cb-69feddbedee2). Writer handoff
+          run de03de50-f303-44f4-bffb-0cb46ab9f4c3 records red/green regressions, 75 passing package tests, and
+          TypeScript/build/lint/format checks.
         </p>
         <p>
           <strong>What it delivers:</strong> Users and Pi extensions inspect, preview, diagnose, and reuse one advisor
