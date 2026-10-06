@@ -4,6 +4,7 @@ export default defineConfig({
   input: {
     index: 'src/index.ts',
     core: 'src/core.ts',
+    'pi-subagents': 'src/pi-subagents.ts',
   },
   output: {
     dir: 'dist',
