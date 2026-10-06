@@ -412,13 +412,13 @@ export async function discoverAdvisorModels(
 
   if (configuration) {
     for (const model of configured) {
-      const availableModel = available.find(
-        (candidate) => identityKey(modelIdentity(candidate)) === identityKey(model.identity),
-      )
-      if (!availableModel) {
+      const modelMetadata =
+        candidates.find((candidate) => identityKey(modelIdentity(candidate)) === identityKey(model.identity)) ??
+        available.find((candidate) => identityKey(modelIdentity(candidate)) === identityKey(model.identity))
+      if (!modelMetadata) {
         continue
       }
-      const supported = getSupportedThinkingLevels(availableModel)
+      const supported = getSupportedThinkingLevels(modelMetadata)
       const low = thinkingIndex(configuration.thinking.minimum)
       const high = thinkingIndex(configuration.thinking.maximum)
       const modelLow = thinkingIndex(model.thinking.minimum)

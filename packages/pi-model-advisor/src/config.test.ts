@@ -136,6 +136,30 @@ describe('discoverAdvisorModels', () => {
     expect(classify).not.toHaveBeenCalled()
   })
 
+  it('validates thinking support for scoped models absent from Pi available inventory', async () => {
+    const staleScopedModel = chatModel('openai', 'gpt-stale')
+    const registry = {
+      getAvailable: () => [],
+      getAvailableOfType: () => Promise.resolve([{ provider: 'openrouter', id: 'typesafe/jev-1.13' }]),
+    } as unknown as AdvisorModelRegistry
+    const result = await discoverAdvisorModels(
+      validateAdvisorConfiguration({
+        classifier: { provider: 'openrouter', model: 'typesafe/jev-1.13' },
+        models: {
+          light: [{ provider: 'openai', model: 'gpt-stale', thinking: { minimum: 'max', maximum: 'max' } }],
+        },
+      }),
+      registry,
+      [{ model: staleScopedModel }],
+    )
+
+    expect(result.status).toBe('configuration_error')
+    expect(
+      result.issues.some(({ path, code }) => path === '/models/light/0/thinking' && code === 'unsupported_thinking'),
+    ).toBeTruthy()
+    expect(result.eligible).toEqual([])
+  })
+
   it('accepts an exact native local classifier from Pi’s classifier inventory', async () => {
     const getAvailableOfType = vi.fn<(type: string) => Promise<{ provider: string; id: string }[]>>(() =>
       Promise.resolve([{ provider: 'llama.cpp', id: 'local-clef-id' }]),
