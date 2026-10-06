@@ -272,7 +272,7 @@
         genuine blockers.
       </p>
       <div class="callout warning">
-        <strong>Status:</strong> Tickets 01–06 completed locally; ticket 07 pending local verification.
+        <strong>Status:</strong> Tickets 01–07 completed locally; no publication or live inference.
       </div>
       <h2>Dependency graph</h2>
       <pre><code>01 Package + global config + diagnostics
@@ -632,6 +632,13 @@
             >05: Add optional caller-owned pi-subagents preflight verification; 06: Complete command UX, privacy-safe
             observability, and core reuse</span
           >
+        </p>
+        <p>
+          <strong>Local completion:</strong> Verified at integration merge
+          <code>3040811bdde0aa7cc4c5fdb5ca421ab258fb1f15</code>; approved leaf-07:G1 passed after merge (9 focused tests),
+          and independent G2 review accepted with no findings (run 4d87c055-ce60-4ca8-b617-3432699950cd; candidate
+          <code>5031f8280e003ddb08d63b052ae4ae2acff21af3</code>). Full package suite (106 tests), TypeScript/declaration/
+          Rolldown builds, lint/format checks, and <code>npm pack --dry-run</code> (17 intended files) passed.
         </p>
         <p>
           <strong>What it delivers:</strong> The future 0.1.0 package is documented, built, and verified with native
