@@ -1,8 +1,14 @@
+import type { ClassifierContext, ClassifierModel, ClassifierResult } from '@earendil-works/pi-ai'
 import type { ExtensionCommandContext, ExtensionAPI } from '@earendil-works/pi-coding-agent'
 import { describe, expect, it, vi } from 'vitest'
 
 import type { ConfigurationResult } from './config.ts'
 import { registerModelAdvisorExtension } from './index.ts'
+import { chatModel, validClassifierResult } from './test-fixtures.ts'
+
+function registerToolStub(): ExtensionAPI['registerTool'] {
+  return () => undefined
+}
 
 function validConfiguration(): ConfigurationResult {
   return {
@@ -71,9 +77,10 @@ function commandContext(classifiers = [{ provider: 'openrouter', id: 'typesafe/j
 describe('registerModelAdvisorExtension', () => {
   it('loads one configuration snapshot and reports classifier and chat eligibility without inference', async () => {
     const registerCommand = vi.fn<ExtensionAPI['registerCommand']>()
+    const registerTool = registerToolStub()
     const loadConfiguration = vi.fn<() => Promise<ConfigurationResult>>(() => Promise.resolve(validConfiguration()))
     await registerModelAdvisorExtension(
-      { registerCommand },
+      { registerCommand, registerTool },
       {
         loadConfiguration,
       },
@@ -99,8 +106,9 @@ describe('registerModelAdvisorExtension', () => {
 
   it('reports unavailable classifier diagnostics and retains the configuration snapshot', async () => {
     const registerCommand = vi.fn<ExtensionAPI['registerCommand']>()
+    const registerTool = registerToolStub()
     await registerModelAdvisorExtension(
-      { registerCommand },
+      { registerCommand, registerTool },
       { loadConfiguration: () => Promise.resolve(validConfiguration()) },
     )
     const [[, command]] = registerCommand.mock.calls
@@ -115,8 +123,62 @@ describe('registerModelAdvisorExtension', () => {
     expect(classify).not.toHaveBeenCalled()
   })
 
+  it('previews an explicit task without reading parent transcript state', async () => {
+    const registerCommand = vi.fn<ExtensionAPI['registerCommand']>()
+    const registerTool = registerToolStub()
+    await registerModelAdvisorExtension(
+      { registerCommand, registerTool },
+      { loadConfiguration: () => Promise.resolve(validConfiguration()) },
+    )
+    const [[, command]] = registerCommand.mock.calls
+    const classifier = {
+      type: 'classifier',
+      provider: 'openrouter',
+      id: 'typesafe/jev-1.13',
+      api: 'typesafe-system-one',
+      name: 'offline test classifier',
+      baseUrl: 'https://example.invalid',
+      input: ['text'],
+    } as ClassifierModel<string>
+    const response: ClassifierResult = {
+      ...validClassifierResult(),
+      provider: classifier.provider,
+      model: classifier.id,
+    }
+    const classify = vi.fn<(model: ClassifierModel<string>, context: ClassifierContext) => Promise<ClassifierResult>>(
+      () => Promise.resolve(response),
+    )
+    const notify = vi.fn<ExtensionCommandContext['ui']['notify']>()
+    const context = {
+      scopedModels: [],
+      signal: undefined,
+      ui: { notify },
+      modelRegistry: {
+        getAvailable: () => [chatModel()],
+        getAvailableOfType: () => Promise.resolve([classifier]),
+        getModelOfType: () => classifier,
+        classify,
+      },
+    } as unknown as ExtensionCommandContext
+
+    await command.handler('recommend Implement this explicit task.', context)
+
+    expect(classify).toHaveBeenCalledTimes(1)
+    const [call] = classify.mock.calls
+    const [, classifierContext] = call
+    expect(classifierContext.state).toEqual({ task: 'Implement this explicit task.' })
+    expect(Object.keys(classifierContext.questions)).toEqual([
+      'required_capability',
+      'reasoning_effort',
+      'context_demand',
+      'high_consequence',
+    ])
+    expect(notify).toHaveBeenCalledWith(expect.stringContaining('"status": "recommended"'), 'info')
+  })
+
   it('uses a fresh configuration after Pi reconstructs the extension', async () => {
     const registerCommand = vi.fn<ExtensionAPI['registerCommand']>()
+    const registerTool = registerToolStub()
     const loadConfiguration = vi
       .fn<() => Promise<ConfigurationResult>>()
       .mockResolvedValueOnce(validConfiguration())
@@ -124,7 +186,7 @@ describe('registerModelAdvisorExtension', () => {
         status: 'configuration_error' as const,
         issues: [{ path: '', code: 'invalid_json' as const, message: 'Configuration file contains invalid JSON.' }],
       })
-    const api: Pick<ExtensionAPI, 'registerCommand'> = { registerCommand }
+    const api: Pick<ExtensionAPI, 'registerCommand' | 'registerTool'> = { registerCommand, registerTool }
 
     await registerModelAdvisorExtension(api, { loadConfiguration })
     await registerModelAdvisorExtension(api, { loadConfiguration })

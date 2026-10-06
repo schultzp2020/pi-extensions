@@ -1,11 +1,13 @@
 import type { ExtensionAPI, ExtensionCommandContext } from '@earendil-works/pi-coding-agent'
 
+import { recommendWithPi, registerModelAdvisorTool } from './adapter.ts'
 import {
   discoverAdvisorModels,
   loadAdvisorConfiguration,
   type ConfigurationResult,
   type ModelIdentity,
 } from './config.ts'
+import type { RecommendationRequest } from './types.ts'
 
 export interface ModelAdvisorExtensionOptions {
   loadConfiguration?: () => Promise<ConfigurationResult>
@@ -72,10 +74,11 @@ async function notifyConfiguration(ctx: ExtensionCommandContext, result: Configu
 }
 
 export async function registerModelAdvisorExtension(
-  pi: Pick<ExtensionAPI, 'registerCommand'>,
+  pi: Pick<ExtensionAPI, 'registerCommand' | 'registerTool'>,
   options: ModelAdvisorExtensionOptions = {},
 ): Promise<void> {
   const configuration = await (options.loadConfiguration ?? loadAdvisorConfiguration)()
+  registerModelAdvisorTool(pi, configuration)
 
   pi.registerCommand('model-advisor', {
     description: 'Inspect Pi Model Advisor configuration and model eligibility',
@@ -92,9 +95,22 @@ export async function registerModelAdvisorExtension(
           await notifyInventory(ctx, configuration, command)
           return
         }
+        case 'recommend': {
+          const task = args.trim().slice(command.length).trim()
+          if (!task) {
+            ctx.ui.notify('Usage: /model-advisor recommend <task>', 'info')
+            return
+          }
+          const result = await recommendWithPi({ task } satisfies RecommendationRequest, configuration, ctx)
+          ctx.ui.notify(
+            JSON.stringify(result, null, 2),
+            result.status === 'recommended' || result.status === 'approval_required' ? 'info' : 'error',
+          )
+          return
+        }
         default: {
           ctx.ui.notify(
-            'Usage: /model-advisor [status|models|config|doctor]. Configuration edits apply after Pi /reload.',
+            'Usage: /model-advisor [status|models|config|doctor|recommend <task>]. Configuration edits apply after Pi /reload.',
             'info',
           )
         }
