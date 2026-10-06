@@ -272,7 +272,7 @@
         genuine blockers.
       </p>
       <div class="callout warning">
-        <strong>Status:</strong> Tickets 01, 02, and 04 completed locally; tickets 03 and 05–07 pending local verification.
+        <strong>Status:</strong> Tickets 01–04 completed locally; tickets 05–07 pending local verification.
       </div>
       <h2>Dependency graph</h2>
       <pre><code>01 Package + global config + diagnostics
@@ -407,8 +407,13 @@
           >
         </h2>
         <p>
-          <strong>Blocked by:</strong>
-          <span class="blocked">02: Deliver the first end-to-end native classifier recommendation</span>
+          <strong>Blocked by:</strong> <span class="blocked">None</span>
+        </p>
+        <p>
+          <strong>Local completion:</strong> Verified at integration merge <code>c8c15c995400433ad252b9ecadee2480b6aecbd4</code>;
+          approved leaf-03:G1 passed (13 selection tests) and independent G2 review accepted with no findings
+          (run 5e954fa8-6ee1-4cba-bb7d-75399b3f1d08). Full package suite passed (65 tests), including cache-read
+          mutation red/green evidence; TypeScript/build/lint/format checks passed in the writer handoff.
         </p>
         <p>
           <strong>What it delivers:</strong> Recommendations honor caller narrowing, deterministic ranking, and native
