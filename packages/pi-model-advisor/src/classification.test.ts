@@ -189,7 +189,7 @@ function recommendWithClassifier(
 
 describe('recommendSubagentModel classifier lifecycle', () => {
   it.each([
-    ['native error stop reason', { stopReason: 'error' as const, errorMessage: 'Provider request failed.' }],
+    ['native error stop reason', { stopReason: 'error' as const }],
     ['native error message', { errorMessage: 'Provider request failed.' }],
   ])('returns transport failure for a %s and preserves usage', async (_description, nativeError) => {
     const response = { ...validClassifierResult(), ...nativeError }
