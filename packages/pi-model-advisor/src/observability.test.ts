@@ -53,23 +53,28 @@ function recommendationResult(): Promise<RecommendationResult> {
   })
 }
 
-function observabilityContext() {
+function observabilityContext(
+  models = [
+    chatModel(),
+    chatModel('openai-codex', 'gpt-luna'),
+    { ...chatModel(), id: 'pi-virtual', api: 'pi-virtual' },
+  ],
+) {
   const context = {
     scopedModels: [],
     modelRegistry: {
-      getAvailable: () => [
-        chatModel(),
-        chatModel('openai-codex', 'gpt-luna'),
-        { ...chatModel(), id: 'pi-virtual', api: 'pi-virtual' },
-      ],
+      getAvailable: () => models,
     },
   }
   return context as unknown as ExtensionContext
 }
 
-async function recordToolResult(includeTask: boolean, resultOverride?: RecommendationResult) {
+async function recordToolResult(
+  includeTask: boolean,
+  resultOverride?: RecommendationResult,
+  request = validRecommendationRequest(),
+) {
   const { appendEntry, handlers } = await registerObservability(includeTask)
-  const request = validRecommendationRequest()
   const result = resultOverride ?? (await recommendationResult())
   const context = observabilityContext()
   const toolCallId = 'advisor-call-1'
@@ -131,6 +136,20 @@ describe('model advisor observability', () => {
     })
   })
 
+  it('records early configuration failures for unknown task profiles without building classifier state', async () => {
+    const request = { ...validRecommendationRequest(), taskKind: 'missing-profile' }
+    const failure: RecommendationResult = {
+      status: 'configuration_error',
+      issues: [{ path: 'classifier', code: 'classifier_unavailable', message: 'Classifier is unavailable.' }],
+    }
+
+    const { entry, appendEntry } = await recordToolResult(true, failure, request)
+
+    expect(entry).toMatchObject({ status: 'configuration_error', failureCategory: 'configuration_error' })
+    expect(entry).not.toHaveProperty('taskState')
+    expect(appendEntry).toHaveBeenCalledTimes(1)
+  })
+
   it('records slash-command recommendations through the same task-free metadata path', async () => {
     const recommend: NonNullable<ModelAdvisorExtensionOptions['recommend']> = () => recommendationResult()
     const { appendEntry, command } = await registerObservability(false, recommend)
@@ -148,6 +167,39 @@ describe('model advisor observability', () => {
     expect(entry).not.toHaveProperty('taskState')
     expect(JSON.stringify(entry)).not.toContain('Sensitive command text.')
     expect(notify).toHaveBeenCalledWith(expect.stringContaining('Pi may independently retain'), 'info')
+  })
+
+  it('releases start-time candidate snapshots when tool execution ends', async () => {
+    const { appendEntry, handlers } = await registerObservability(false)
+    const request = validRecommendationRequest()
+    const result = await recommendationResult()
+    const toolCallId = 'advisor-ended-call'
+    const startContext = observabilityContext([chatModel('stale-provider', 'stale-candidate')])
+    const resultContext = observabilityContext([chatModel('current-provider', 'current-candidate')])
+
+    handlers.get('tool_execution_start')?.(
+      { type: 'tool_execution_start', toolCallId, toolName: 'recommend_subagent_model', args: request },
+      startContext,
+    )
+    handlers.get('tool_execution_end')?.(
+      { type: 'tool_execution_end', toolCallId, toolName: 'recommend_subagent_model', result: {}, isError: false },
+      startContext,
+    )
+    handlers.get('tool_result')?.(
+      {
+        type: 'tool_result',
+        toolCallId,
+        toolName: 'recommend_subagent_model',
+        input: request,
+        structuredContent: result,
+        isError: false,
+        content: [],
+      },
+      resultContext,
+    )
+
+    const [[, entry]] = appendEntry.mock.calls
+    expect(entry).toMatchObject({ candidates: [{ provider: 'current-provider', model: 'current-candidate' }] })
   })
 
   it('records typed classifier failure categories without retaining raw provider errors', async () => {

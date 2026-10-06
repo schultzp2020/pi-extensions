@@ -71,7 +71,9 @@ function recommendationMetadata(
     ...('answers' in result && result.answers ? { answers: result.answers } : {}),
     ...('selection' in result ? { selection: result.selection } : {}),
     ...(failureCategory ? { failureCategory } : {}),
-    ...(configuration.status === 'valid' && configuration.configuration.logging.includeTask
+    ...(configuration.status === 'valid' &&
+    configuration.configuration.logging.includeTask &&
+    (request.taskKind === undefined || Object.hasOwn(configuration.configuration.tasks, request.taskKind))
       ? { taskState: createClassifierContext(request, configuration.configuration).state }
       : {}),
   }
@@ -94,6 +96,11 @@ export function registerModelAdvisorObservability(
   pi.on('tool_execution_start', (event, context) => {
     if (event.toolName === RECOMMENDATION_TOOL_NAME) {
       candidatesByCallId.set(event.toolCallId, candidateIdentities(context))
+    }
+  })
+  pi.on('tool_execution_end', (event) => {
+    if (event.toolName === RECOMMENDATION_TOOL_NAME) {
+      candidatesByCallId.delete(event.toolCallId)
     }
   })
   pi.on('tool_result', (event, context) => {
