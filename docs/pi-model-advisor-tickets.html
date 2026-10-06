@@ -272,7 +272,7 @@
         genuine blockers.
       </p>
       <div class="callout warning">
-        <strong>Status:</strong> Ticket 01 completed locally; tickets 02–07 pending local verification.
+        <strong>Status:</strong> Tickets 01, 02, and 04 completed locally; tickets 03 and 05–07 pending local verification.
       </div>
       <h2>Dependency graph</h2>
       <pre><code>01 Package + global config + diagnostics
@@ -458,6 +458,12 @@
         <p>
           <strong>Blocked by:</strong>
           <span class="blocked">02: Deliver the first end-to-end native classifier recommendation</span>
+        </p>
+        <p>
+          <strong>Local completion:</strong> Verified at integration commit
+          <code>8ce376ae004738be67473263ec1d00790dd59bee</code>; approved leaf-04:G1 passed after merge and independent G2
+          review accepted with no findings (run a4a64706-4eb0-4817-b3de-d8761b48ab5b). The valid 2147483648 ms
+          deadline/cancellation regression and timer cleanup passed.
         </p>
         <p>
           <strong>What it delivers:</strong> Native classifier errors, invalid answers, deadlines, and cancellation
