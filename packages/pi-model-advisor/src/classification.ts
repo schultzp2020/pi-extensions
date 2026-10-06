@@ -43,6 +43,7 @@ const CONTEXT_RUBRICS = {
 const INVALID_ANSWER_MESSAGE = 'Classifier returned invalid answers.'
 const TRANSPORT_ERROR_MESSAGE = 'Classifier request failed.'
 const DEADLINE_MESSAGE = 'Classifier deadline exceeded.'
+const MAX_TIMER_DELAY_MS = 2_147_483_647
 
 function taskState(request: RecommendationRequest, configuration: AdvisorConfiguration): Record<string, JsonValue> {
   const state: Record<string, JsonValue> = { task: request.task }
@@ -218,10 +219,22 @@ export async function classifyRecommendation(input: {
   }
   signal?.addEventListener('abort', handleAbort, { once: true })
   const deadline = new Promise<{ kind: 'deadline' }>((resolve) => {
-    deadlineTimer = setTimeout(() => {
-      controller.abort(new Error(DEADLINE_MESSAGE))
-      resolve({ kind: 'deadline' })
-    }, configuration.policy.overallDeadlineMs)
+    const startedAt = performance.now()
+    const scheduleDeadline = () => {
+      const remaining = configuration.policy.overallDeadlineMs - (performance.now() - startedAt)
+      deadlineTimer = setTimeout(
+        () => {
+          if (configuration.policy.overallDeadlineMs - (performance.now() - startedAt) > 0) {
+            scheduleDeadline()
+            return
+          }
+          controller.abort(new Error(DEADLINE_MESSAGE))
+          resolve({ kind: 'deadline' })
+        },
+        Math.min(MAX_TIMER_DELAY_MS, Math.max(0, remaining)),
+      )
+    }
+    scheduleDeadline()
   })
   const nativeRequest = Promise.resolve()
     .then(() => classify(createClassifierContext(request, configuration), { signal: controller.signal }))
@@ -248,7 +261,7 @@ export async function classifyRecommendation(input: {
     if (result.stopReason === 'aborted') {
       return aborted(classifier, usage)
     }
-    if (result.stopReason === 'error') {
+    if (result.stopReason === 'error' || result.errorMessage !== undefined) {
       return classifierFailure(classifier, 'transport', TRANSPORT_ERROR_MESSAGE, usage)
     }
     if (result.provider !== classifier.provider || result.model !== classifier.model) {
