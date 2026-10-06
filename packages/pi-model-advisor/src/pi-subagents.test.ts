@@ -203,6 +203,30 @@ describe('verifySubagentRecommendation', () => {
       })
 
       expect(result).toEqual({ status: 'verified', selection })
+
+      const collidingHost = {
+        parentModel: { provider: 'openai', id: 'gpt-6-sol' },
+        scopedModelIds: ['openai-codex/gpt-6-luna'],
+        availableModels: [{ provider: 'openai-codex', id: 'gpt-6-luna', fullId: 'openai-codex/gpt-6-luna' }],
+        thinkingCeiling: undefined,
+      }
+      const constrained = await verifySubagentRecommendation({
+        recommendation,
+        launch: {
+          agent: 'worker',
+          task: 'Implement the requested subtask.',
+          cwd: project,
+          context: 'fresh',
+          sessionRoot: join(root, 'sessions'),
+          thinkingCeiling: 'low',
+        },
+        host: collidingHost,
+        resolveSubagentLaunchContract,
+      })
+      expect(constrained).toMatchObject({
+        status: 'verification_failed',
+        category: 'preflight_rejected',
+      })
     } finally {
       vi.unstubAllEnvs()
       rmSync(root, { recursive: true, force: true })

@@ -128,8 +128,13 @@ export async function verifySubagentRecommendation<Resolver extends ResolveSubag
     }
   }
 
-  const host = { ...input.host }
-  const missingSnapshots = invalidHostSnapshots(host)
+  const hostSnapshots = {
+    parentModel: input.host.parentModel,
+    scopedModelIds: input.host.scopedModelIds,
+    availableModels: input.host.availableModels,
+    runtimeSnapshotHost: input.host.runtimeSnapshotHost,
+  }
+  const missingSnapshots = invalidHostSnapshots(hostSnapshots)
   if (missingSnapshots.length > 0) {
     return {
       status: 'verification_failed',
@@ -150,7 +155,7 @@ export async function verifySubagentRecommendation<Resolver extends ResolveSubag
     resolved = record(
       await input.resolveSubagentLaunchContract({
         ...launchInputs,
-        ...host,
+        ...hostSnapshots,
         model: launchModel,
       }),
     )
@@ -240,7 +245,7 @@ export async function verifySubagentRecommendation<Resolver extends ResolveSubag
     }
   }
 
-  if (tools.mcp.length > 0 && !isRuntimeSnapshotHost(host.runtimeSnapshotHost)) {
+  if (tools.mcp.length > 0 && !isRuntimeSnapshotHost(hostSnapshots.runtimeSnapshotHost)) {
     return {
       status: 'verification_failed',
       category: 'host_required',
