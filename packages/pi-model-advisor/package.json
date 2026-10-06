@@ -26,6 +26,10 @@
     "./core": {
       "types": "./dist/core.d.ts",
       "import": "./dist/core.js"
+    },
+    "./pi-subagents": {
+      "types": "./dist/pi-subagents.d.ts",
+      "import": "./dist/pi-subagents.js"
     }
   },
   "scripts": {
