@@ -1,7 +1,14 @@
-import { clampThinkingLevel, getSupportedThinkingLevels, type Usage, type JsonValue } from '@earendil-works/pi-ai'
+import {
+  clampThinkingLevel,
+  getSupportedThinkingLevels,
+  type AuthOperationOptions,
+  type JsonValue,
+  type ModelType,
+  type Usage,
+} from '@earendil-works/pi-ai'
 import type { ExtensionAPI, ExtensionContext, ExtensionToolContext } from '@earendil-works/pi-coding-agent'
 
-import { discoverAdvisorModels, type ConfigurationResult } from './config.ts'
+import { discoverAdvisorModels, type AdvisorModelRegistry, type ConfigurationResult } from './config.ts'
 import { recommendSubagentModel } from './core.ts'
 import {
   RecommendationRequestSchema,
@@ -20,13 +27,45 @@ export async function recommendWithPi(
   context: RecommendationContext,
   signal = context.signal,
 ): Promise<RecommendationResult> {
+  if (signal?.aborted) {
+    return {
+      status: 'aborted',
+      ...(configuration.status === 'valid' ? { classifier: configuration.configuration.classifier } : {}),
+    }
+  }
   if (configuration.status === 'configuration_error') {
     return { status: 'configuration_error', issues: configuration.issues }
   }
 
   const { modelRegistry } = context
-  const inventory = await discoverAdvisorModels(configuration, modelRegistry, context.scopedModels)
+  const discoveryRegistry: AdvisorModelRegistry = {
+    getAvailable: () => modelRegistry.getAvailable(),
+    getAvailableOfType: <TType extends ModelType>(type: TType, provider?: string, options?: AuthOperationOptions) =>
+      modelRegistry.getAvailableOfType(type, provider, signal ? { ...options, signal } : options),
+  }
+  let resolveCallerAbort: () => void = () => undefined
+  const callerAbort = new Promise<{ cancelled: true }>((resolve) => {
+    resolveCallerAbort = () => resolve({ cancelled: true })
+  })
+  const handleAbort = () => resolveCallerAbort()
+  signal?.addEventListener('abort', handleAbort, { once: true })
+  let inventory: Awaited<ReturnType<typeof discoverAdvisorModels>>
+  try {
+    const outcome = await Promise.race([
+      discoverAdvisorModels(configuration, discoveryRegistry, context.scopedModels),
+      callerAbort,
+    ])
+    if (signal?.aborted || 'cancelled' in outcome) {
+      return { status: 'aborted', classifier: configuration.configuration.classifier }
+    }
+    inventory = outcome
+  } finally {
+    signal?.removeEventListener('abort', handleAbort)
+  }
   if (inventory.status === 'configuration_error') {
+    if (signal?.aborted) {
+      return { status: 'aborted', classifier: configuration.configuration.classifier }
+    }
     return { status: 'configuration_error', issues: inventory.issues }
   }
 

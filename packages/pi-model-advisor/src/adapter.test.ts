@@ -1,4 +1,4 @@
-import type { ClassifierContext } from '@earendil-works/pi-ai'
+import type { AuthOperationOptions, ClassifierContext } from '@earendil-works/pi-ai'
 import type { ExtensionAPI, ExtensionToolContext, ToolDefinition } from '@earendil-works/pi-coding-agent'
 import { Value } from 'typebox/value'
 import { describe, expect, it } from 'vitest'
@@ -74,6 +74,58 @@ describe('registerModelAdvisorExtension', () => {
     expect(result.usage).toEqual(validClassifierResult().usage)
     expect(classifierContexts).toHaveLength(1)
     expect(classifierContexts[0].state).toMatchObject({ task: validRecommendationRequest().task })
+  })
+
+  it('returns aborted promptly and forwards caller cancellation during classifier authentication discovery', async () => {
+    const { definition } = await registerAdvisorTool()
+    type ClassifierInventory = readonly { provider: string; id: string }[]
+    let completeDiscovery!: (models: ClassifierInventory) => void
+    let markStarted!: () => void
+    let authOptions: AuthOperationOptions | undefined
+    const discoveryStarted = new Promise<void>((resolve) => {
+      markStarted = resolve
+    })
+    const classifierInventory = new Promise<ClassifierInventory>((resolve) => {
+      completeDiscovery = resolve
+    })
+    const controller = new AbortController()
+    const context = {
+      scopedModels: [],
+      signal: undefined,
+      modelRegistry: {
+        getAvailable: () => [chatModel()],
+        getAvailableOfType: (_type: string, _provider?: string, options?: AuthOperationOptions) => {
+          authOptions = options
+          markStarted()
+          return classifierInventory
+        },
+        getModelOfType: () => undefined,
+        classify: () => Promise.resolve(validClassifierResult()),
+      },
+    } as unknown as ExtensionToolContext
+    const execution = definition.execute(
+      'call-cancel',
+      validRecommendationRequest(),
+      controller.signal,
+      undefined,
+      context,
+    )
+
+    await discoveryStarted
+    controller.abort()
+    const settledPromptly = await Promise.race([
+      execution.then(() => true),
+      new Promise<boolean>((resolve) => {
+        setTimeout(() => resolve(false), 25)
+      }),
+    ])
+    completeDiscovery([])
+    const result = await execution
+
+    expect(authOptions?.signal).toBe(controller.signal)
+    expect(settledPromptly).toBeTruthy()
+    expect(result.details).toMatchObject({ status: 'aborted' })
+    expect(Value.Check(RecommendationResultSchema, result.structuredContent)).toBeTruthy()
   })
 
   it('returns a typed configuration failure without classifier execution when no configured classifier is available', async () => {
