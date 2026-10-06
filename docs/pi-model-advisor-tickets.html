@@ -272,7 +272,7 @@
         genuine blockers.
       </p>
       <div class="callout warning">
-        <strong>Status:</strong> implementation authorized; seven tickets pending local verification.
+        <strong>Status:</strong> Ticket 01 completed locally; tickets 02–07 pending local verification.
       </div>
       <h2>Dependency graph</h2>
       <pre><code>01 Package + global config + diagnostics
@@ -291,6 +291,11 @@
           >
         </h2>
         <p><strong>Blocked by:</strong> <span class="blocked">None</span></p>
+        <p>
+          <strong>Local completion:</strong> Verified at integration commit
+          <code>526fe22145822aeb64a8036194874fbc8db2a279</code>; approved leaf-01:G1 passed and independent G2 review
+          accepted with no findings (run 1baecae1-83d4-41b7-b4d4-871ba34d8ccc).
+        </p>
         <p>
           <strong>What it delivers:</strong> A loadable Pi 1.0.4 package with native classifier discovery, strict global
           configuration, explicit /reload behavior, and diagnostics that explain why recommendation is unavailable.
