@@ -15,9 +15,12 @@
     "directory": "packages/pi-model-advisor"
   },
   "files": [
-    "dist/"
+    "dist/",
+    "README.md",
+    "LICENSE"
   ],
   "type": "module",
+  "types": "./dist/index.d.ts",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -33,11 +36,12 @@
     }
   },
   "scripts": {
-    "build": "tsc --noEmit -p tsconfig.json && tsc --noEmit false --emitDeclarationOnly -p tsconfig.json && rolldown --config rolldown.config.ts",
+    "build": "tsc --noEmit -p tsconfig.json && tsc -p tsconfig.build.json && rolldown --config rolldown.config.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "oxlint --type-aware --type-check --deny-warnings .",
-    "format:check": "oxfmt --check ."
+    "format:check": "oxfmt --check .",
+    "prepublishOnly": "pnpm run build"
   },
   "devDependencies": {
     "@earendil-works/pi-agent-core": "1.0.4",
