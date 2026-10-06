@@ -128,12 +128,17 @@ export async function verifySubagentRecommendation<Resolver extends ResolveSubag
     }
   }
 
-  const hostSnapshots = {
-    parentModel: input.host.parentModel,
-    scopedModelIds: input.host.scopedModelIds,
-    availableModels: input.host.availableModels,
-    runtimeSnapshotHost: input.host.runtimeSnapshotHost,
-  }
+  const hostInput = record(input.host)
+  const hostSnapshots: Partial<CurrentHostSnapshots<Parameters<Resolver>[0]>> = hostInput
+    ? {
+        ...(Object.hasOwn(hostInput, 'parentModel') ? { parentModel: input.host.parentModel } : {}),
+        ...(Object.hasOwn(hostInput, 'scopedModelIds') ? { scopedModelIds: input.host.scopedModelIds } : {}),
+        ...(Object.hasOwn(hostInput, 'availableModels') ? { availableModels: input.host.availableModels } : {}),
+        ...(Object.hasOwn(hostInput, 'runtimeSnapshotHost')
+          ? { runtimeSnapshotHost: input.host.runtimeSnapshotHost }
+          : {}),
+      }
+    : {}
   const missingSnapshots = invalidHostSnapshots(hostSnapshots)
   if (missingSnapshots.length > 0) {
     return {

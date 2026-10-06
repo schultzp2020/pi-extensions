@@ -584,6 +584,66 @@ describe('verifySubagentRecommendation', () => {
     })
   })
 
+  it('distinguishes omitted parentModel from an explicit undefined snapshot', async () => {
+    const resolve = vi.fn<TestResolver>((input) =>
+      Promise.resolve({
+        ok: true as const,
+        contract: { model: input.model, thinking: 'max', diagnostics: [], tools: { mcp: [] } },
+      }),
+    )
+    const snapshots = {
+      scopedModelIds: ['openai-codex/gpt-6-luna'],
+      availableModels: [{ provider: 'openai-codex', id: 'gpt-6-luna' }],
+    }
+    const launch = { agent: 'worker', task: 'Implement the requested subtask.', cwd: process.cwd() }
+    const missing = await verifySubagentRecommendation({
+      recommendation,
+      launch,
+      host: snapshots as never,
+      resolveSubagentLaunchContract: resolve,
+    })
+
+    expect(missing).toEqual({
+      status: 'verification_failed',
+      category: 'host_required',
+      message: 'Current host snapshots are required: parentModel.',
+      missingHostFacts: ['parentModel'],
+    })
+    expect(resolve).not.toHaveBeenCalled()
+
+    const explicitUndefined = await verifySubagentRecommendation({
+      recommendation,
+      launch,
+      host: { ...snapshots, parentModel: undefined },
+      resolveSubagentLaunchContract: resolve,
+    })
+    expect(explicitUndefined).toEqual({ status: 'verified', selection })
+    expect(resolve).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ parentModel: undefined }))
+  })
+
+  it.each([null, undefined])('returns host_required for a %s host snapshot', async (host) => {
+    const resolve = vi.fn<TestResolver>((input) =>
+      Promise.resolve({
+        ok: true as const,
+        contract: { model: input.model, thinking: 'max', diagnostics: [], tools: { mcp: [] } },
+      }),
+    )
+    const result = await verifySubagentRecommendation({
+      recommendation,
+      launch: { agent: 'worker', task: 'Implement the requested subtask.', cwd: process.cwd() },
+      host: host as never,
+      resolveSubagentLaunchContract: resolve,
+    })
+
+    expect(result).toEqual({
+      status: 'verification_failed',
+      category: 'host_required',
+      message: 'Current host snapshots are required: parentModel, scopedModelIds, availableModels.',
+      missingHostFacts: ['parentModel', 'scopedModelIds', 'availableModels'],
+    })
+    expect(resolve).not.toHaveBeenCalled()
+  })
+
   it('rejects omitted current host snapshots before invoking preflight', async () => {
     const resolve = vi.fn<TestResolver>((input) =>
       Promise.resolve({
