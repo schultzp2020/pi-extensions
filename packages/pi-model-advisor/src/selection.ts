@@ -351,6 +351,18 @@ function comparePrice(left: Model<Api>, right: Model<Api>, key: 'output' | 'inpu
   return leftPrice - rightPrice
 }
 
+function compareContextWindow(left: Model<Api>, right: Model<Api>): number {
+  const leftContextWindow = Number.isFinite(left.contextWindow) ? left.contextWindow : undefined
+  const rightContextWindow = Number.isFinite(right.contextWindow) ? right.contextWindow : undefined
+  if (leftContextWindow === undefined) {
+    return rightContextWindow === undefined ? 0 : 1
+  }
+  if (rightContextWindow === undefined) {
+    return -1
+  }
+  return rightContextWindow - leftContextWindow
+}
+
 function compareCandidates(left: PreparationCandidate, right: PreparationCandidate, preferContext: boolean): number {
   const capabilityDifference = CAPABILITIES.indexOf(left.capability) - CAPABILITIES.indexOf(right.capability)
   if (capabilityDifference !== 0) {
@@ -360,8 +372,11 @@ function compareCandidates(left: PreparationCandidate, right: PreparationCandida
   if (priorityDifference !== 0) {
     return priorityDifference
   }
-  if (preferContext && left.model.contextWindow !== right.model.contextWindow) {
-    return right.model.contextWindow - left.model.contextWindow
+  if (preferContext) {
+    const contextDifference = compareContextWindow(left.model, right.model)
+    if (contextDifference !== 0) {
+      return contextDifference
+    }
   }
   for (const key of ['output', 'input', 'cacheRead'] as const) {
     const difference = comparePrice(left.model, right.model, key)
