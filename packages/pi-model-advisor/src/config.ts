@@ -96,7 +96,10 @@ const TaskProfileSchema = Type.Object(
   },
   { additionalProperties: false },
 )
-const TaskProfilesSchema = Type.Record(Type.String(), Type.Union([LevelsSchema, TaskProfileSchema]))
+const TaskProfilesSchema = Type.Record(
+  Type.String({ pattern: '^[\\s\\S]*$' }),
+  Type.Union([LevelsSchema, TaskProfileSchema]),
+)
 const PolicySchema = Type.Object(
   {
     capabilityPercentile: Type.Optional(Type.Number({ exclusiveMinimum: 0, maximum: 100 })),
@@ -138,12 +141,45 @@ export const AdvisorConfigurationSchema = Type.Object(
 
 const DEFAULT_THINKING: ThinkingRange = { minimum: 'off', maximum: 'max' }
 
-function issuePath(path: string | undefined): string {
-  return path ?? ''
-}
-
 function escapePointerSegment(segment: string): string {
   return segment.replaceAll('~', '~0').replaceAll('/', '~1')
+}
+
+function schemaIssues(
+  errors: readonly ReturnType<typeof Value.Errors>[number][],
+  pathPrefix = '',
+): ConfigurationIssue[] {
+  return errors.flatMap((error) => {
+    if (error.keyword === 'additionalProperties') {
+      return error.params.additionalProperties.map((property) => ({
+        path: `${pathPrefix}${error.instancePath}/${escapePointerSegment(property)}`,
+        code: 'schema_invalid',
+        message: error.message,
+      }))
+    }
+    if (error.keyword === 'boolean' && error.schemaPath.endsWith('/additionalProperties')) {
+      return []
+    }
+    return [
+      {
+        path: `${pathPrefix}${error.instancePath}`,
+        code: 'schema_invalid',
+        message: error.message,
+      },
+    ]
+  })
+}
+
+function taskProfileIssues(tasks: unknown): ConfigurationIssue[] {
+  if (typeof tasks !== 'object' || tasks === null || Array.isArray(tasks)) {
+    return []
+  }
+
+  return Object.entries(tasks).flatMap(([taskName, profile]) => {
+    const schema = Array.isArray(profile) ? LevelsSchema : TaskProfileSchema
+    const errors = [...Value.Errors(schema, profile)]
+    return schemaIssues(errors, `/tasks/${escapePointerSegment(taskName)}`)
+  })
 }
 
 function thinkingIndex(level: string): number {
@@ -206,21 +242,19 @@ function normalizeConfiguration(source: RawAdvisorConfiguration): AdvisorConfigu
 }
 
 export function validateAdvisorConfiguration(value: unknown): ConfigurationResult {
-  const validationErrors = Value.Errors(AdvisorConfigurationSchema, value).filter(
-    (error) => error.keyword !== 'additionalProperties',
-  )
-  if (validationErrors.length > 0) {
-    return {
-      status: 'configuration_error',
-      issues: validationErrors.map((error) => ({
-        path: issuePath(error.instancePath),
-        code: 'schema_invalid',
-        message: error.message,
-      })),
-    }
+  const allValidationErrors = [...Value.Errors(AdvisorConfigurationSchema, value)]
+  const taskSchemaPrefix = '#/properties/tasks/patternProperties/'
+  const validationErrors = allValidationErrors.filter((error) => !error.schemaPath.startsWith(taskSchemaPrefix))
+  const schemaValidationIssues = schemaIssues(validationErrors)
+  if (schemaValidationIssues.length > 0) {
+    return { status: 'configuration_error', issues: schemaValidationIssues }
   }
 
   const source = value as RawAdvisorConfiguration
+  const taskIssues = taskProfileIssues(source.tasks)
+  if (taskIssues.length > 0) {
+    return { status: 'configuration_error', issues: taskIssues }
+  }
   const seenModels = new Set<string>()
   const semanticIssues: ConfigurationIssue[] = []
   const ranges: { path: string; range?: Partial<ThinkingRange> }[] = [{ path: '/thinking', range: source.thinking }]

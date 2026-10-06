@@ -31,7 +31,7 @@ function validConfiguration(): ConfigurationResult {
   }
 }
 
-function commandContext() {
+function commandContext(classifiers = [{ provider: 'openrouter', id: 'typesafe/jev-1.13' }]) {
   const classify = vi.fn<() => void>()
   const notify = vi.fn<ExtensionCommandContext['ui']['notify']>()
   const context = {
@@ -60,7 +60,7 @@ function commandContext() {
           input: ['text'],
         },
       ],
-      getAvailableOfType: () => Promise.resolve([{ provider: 'openrouter', id: 'typesafe/jev-1.13' }]),
+      getAvailableOfType: () => Promise.resolve(classifiers),
       classify,
     },
     ui: { notify },
@@ -94,6 +94,24 @@ describe('registerModelAdvisorExtension', () => {
     expect(notify).toHaveBeenCalledWith(expect.stringContaining('No classifier inference was made.'), 'info')
     expect(notify).toHaveBeenCalledWith(expect.stringContaining('Active configuration snapshot:'), 'info')
     expect(notify).toHaveBeenCalledWith(expect.stringContaining('Pi /reload only.'), 'info')
+    expect(classify).not.toHaveBeenCalled()
+  })
+
+  it('reports unavailable classifier diagnostics and retains the configuration snapshot', async () => {
+    const registerCommand = vi.fn<ExtensionAPI['registerCommand']>()
+    await registerModelAdvisorExtension(
+      { registerCommand },
+      { loadConfiguration: () => Promise.resolve(validConfiguration()) },
+    )
+    const [[, command]] = registerCommand.mock.calls
+    const { context, notify, classify } = commandContext([])
+
+    await command.handler('config', context)
+
+    expect(notify).toHaveBeenCalledWith(expect.stringContaining('Configuration: configuration_error'), 'error')
+    expect(notify).toHaveBeenCalledWith(expect.stringContaining('Classifier: unavailable'), 'error')
+    expect(notify).toHaveBeenCalledWith(expect.stringContaining('classifier_unavailable'), 'error')
+    expect(notify).toHaveBeenCalledWith(expect.stringContaining('Active configuration snapshot:'), 'error')
     expect(classify).not.toHaveBeenCalled()
   })
 

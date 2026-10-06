@@ -243,6 +243,60 @@ describe('validateAdvisorConfiguration', () => {
     }
   })
 
+  it('validates task profiles with multiline names', () => {
+    const taskName = 'custom\nreview'
+    const result = validateAdvisorConfiguration({
+      ...configuration(),
+      tasks: { [taskName]: 42 },
+    })
+
+    expect(result.status).toBe('configuration_error')
+    if (result.status !== 'configuration_error') {
+      throw new Error('Expected invalid configuration')
+    }
+    expect(
+      result.issues.some(({ path, code }) => path === `/tasks/${taskName}` && code === 'schema_invalid'),
+    ).toBeTruthy()
+  })
+
+  it('escapes slashes and tildes in configuration issue paths', () => {
+    const invalidRootKey = validateAdvisorConfiguration({ ...configuration(), 'unknown/key~name': true })
+    const invalidTaskProfile = validateAdvisorConfiguration({
+      ...configuration(),
+      tasks: { 'custom/key~name': 42 },
+    })
+    const invalidNestedTaskProfile = validateAdvisorConfiguration({
+      ...configuration(),
+      tasks: { 'custom/key~name': { levels: ['light'], 'unknown/key~name': true } },
+    })
+
+    expect(invalidRootKey.status).toBe('configuration_error')
+    if (invalidRootKey.status !== 'configuration_error') {
+      throw new Error('Expected invalid configuration')
+    }
+    expect(
+      invalidRootKey.issues.some(({ path, code }) => path === '/unknown~1key~0name' && code === 'schema_invalid'),
+    ).toBeTruthy()
+    expect(invalidTaskProfile.status).toBe('configuration_error')
+    if (invalidTaskProfile.status !== 'configuration_error') {
+      throw new Error('Expected invalid configuration')
+    }
+    expect(
+      invalidTaskProfile.issues.some(
+        ({ path, code }) => path === '/tasks/custom~1key~0name' && code === 'schema_invalid',
+      ),
+    ).toBeTruthy()
+    expect(invalidNestedTaskProfile.status).toBe('configuration_error')
+    if (invalidNestedTaskProfile.status !== 'configuration_error') {
+      throw new Error('Expected invalid configuration')
+    }
+    expect(
+      invalidNestedTaskProfile.issues.some(
+        ({ path, code }) => path === '/tasks/custom~1key~0name/unknown~1key~0name' && code === 'schema_invalid',
+      ),
+    ).toBeTruthy()
+  })
+
   it('rejects unknown top-level settings with their exact configuration path', () => {
     const result = validateAdvisorConfiguration({ ...configuration(), endpoint: 'https://example.invalid' })
 

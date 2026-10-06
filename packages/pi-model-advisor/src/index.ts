@@ -50,18 +50,25 @@ function notifyInventory(
   })
 }
 
-function notifyConfiguration(ctx: ExtensionCommandContext, result: ConfigurationResult): void {
+async function notifyConfiguration(ctx: ExtensionCommandContext, result: ConfigurationResult): Promise<void> {
   const lines = [
     'Source: Pi global agent directory; project configuration is ignored.',
     'Reload boundary: configuration loads at extension initialization and Pi /reload only.',
   ]
-  if (result.status === 'valid') {
-    lines.push(`Active configuration snapshot:\n${JSON.stringify(result.configuration, null, 2)}`)
-    ctx.ui.notify(lines.join('\n'), 'info')
+  if (result.status !== 'valid') {
+    lines.push('Configuration: configuration_error', ...formatIssues(result))
+    ctx.ui.notify(lines.join('\n'), 'error')
     return
   }
-  lines.push('Configuration: configuration_error', ...formatIssues(result))
-  ctx.ui.notify(lines.join('\n'), 'error')
+
+  const inventory = await discoverAdvisorModels(result, ctx.modelRegistry, ctx.scopedModels)
+  lines.push(
+    `Configuration: ${inventory.status}`,
+    `Classifier: ${inventory.classifier.status}`,
+    ...formatIssues({ status: 'configuration_error', issues: inventory.issues }),
+    `Active configuration snapshot:\n${JSON.stringify(result.configuration, null, 2)}`,
+  )
+  ctx.ui.notify(lines.join('\n'), inventory.status === 'configuration_error' ? 'error' : 'info')
 }
 
 export async function registerModelAdvisorExtension(
@@ -76,7 +83,7 @@ export async function registerModelAdvisorExtension(
       const command = args.trim().split(/\s+/, 1)[0] || 'status'
       switch (command) {
         case 'config': {
-          notifyConfiguration(ctx, configuration)
+          await notifyConfiguration(ctx, configuration)
           return
         }
         case 'doctor':
