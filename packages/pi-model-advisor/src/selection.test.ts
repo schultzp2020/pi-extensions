@@ -19,6 +19,7 @@ import { chatModel, validClassifierResult } from './test-fixtures.ts'
 
 interface ClassifierOverrides {
   capability?: Capability
+  capabilityProbabilities?: Record<Capability, number>
   reasoningEffort?: ThinkingLevel
   contextDemand?: 'narrow' | 'moderate' | 'broad' | 'exceptional'
   consequenceProbability?: number
@@ -27,6 +28,12 @@ interface ClassifierOverrides {
 function classifierResult(overrides: ClassifierOverrides = {}): ClassifierResult {
   const base = validClassifierResult()
   const capability = overrides.capability ?? 'light'
+  const capabilityProbabilities = overrides.capabilityProbabilities ?? {
+    light: capability === 'light' ? 1 : 0,
+    standard: capability === 'standard' ? 1 : 0,
+    advanced: capability === 'advanced' ? 1 : 0,
+    frontier: capability === 'frontier' ? 1 : 0,
+  }
   const effort = overrides.reasoningEffort ?? 'max'
   const demand = overrides.contextDemand ?? 'narrow'
   return {
@@ -35,12 +42,7 @@ function classifierResult(overrides: ClassifierOverrides = {}): ClassifierResult
       required_capability: {
         type: 'choice',
         choice: capability,
-        probabilities: {
-          light: capability === 'light' ? 1 : 0,
-          standard: capability === 'standard' ? 1 : 0,
-          advanced: capability === 'advanced' ? 1 : 0,
-          frontier: capability === 'frontier' ? 1 : 0,
-        },
+        probabilities: capabilityProbabilities,
         confidence: 1,
       },
       reasoning_effort: {
@@ -80,12 +82,17 @@ function configuration(
   models: Partial<Record<Capability, { provider: string; model: string; priority?: number; thinking?: object }[]>>,
   tasks: Record<string, unknown> = { custom_implementation: ['light'] },
   thinking?: object,
+  policy?: {
+    capabilityPercentile?: number
+    consequenceThresholds?: { advanced?: number; frontier?: number }
+  },
 ): AdvisorConfiguration {
   const result = validateAdvisorConfiguration({
     classifier: { provider: 'llama.cpp', model: 'offline-classifier' },
     models,
     tasks,
     ...(thinking ? { thinking } : {}),
+    ...(policy ? { policy } : {}),
   })
   if (result.status !== 'valid') {
     throw new Error(`Expected valid test configuration: ${JSON.stringify(result.issues)}`)
@@ -241,6 +248,141 @@ describe('recommendSubagentModel selection', () => {
         { provider: 'openai', model: 'gpt-sol-advanced', reasons: ['caller_level_excluded'] },
       ]),
     )
+  })
+
+  it.each([
+    { percentile: 75, expected: 'advanced' as const },
+    { percentile: 50, expected: 'standard' as const },
+    { percentile: 100, expected: 'frontier' as const },
+  ])(
+    'selects the configured $percentile capability percentile rather than the choice',
+    async ({ percentile, expected }) => {
+      const probabilities = { light: 0.2, standard: 0.4, advanced: 0.2, frontier: 0.2 }
+      const result = await recommend({
+        configuration: configuration(
+          {
+            light: [modelConfiguration('openai', 'gpt-light')],
+            standard: [modelConfiguration('openai', 'gpt-standard')],
+            advanced: [modelConfiguration('openai', 'gpt-advanced')],
+            frontier: [modelConfiguration('openai', 'gpt-frontier')],
+          },
+          undefined,
+          undefined,
+          { capabilityPercentile: percentile },
+        ),
+        candidateModels: [
+          chatModel('openai', 'gpt-light'),
+          chatModel('openai', 'gpt-standard'),
+          chatModel('openai', 'gpt-advanced'),
+          chatModel('openai', 'gpt-frontier'),
+        ],
+        request: request({ taskKind: undefined }),
+        classifier: classifierResult({ capabilityProbabilities: probabilities }),
+      })
+
+      expect(result).toMatchObject({
+        status: 'recommended',
+        selection: { model: `gpt-${expected}`, capability: expected },
+        answers: { required_capability: { choice: 'light', probabilities } },
+        policy: { capabilityPercentile: percentile, baseCapability: expected, requiredCapability: expected },
+      })
+    },
+  )
+
+  it.each([
+    { probability: 0.699, expected: 'light' as const, status: 'recommended' as const },
+    {
+      probability: 0.7,
+      expected: 'advanced' as const,
+      status: 'approval_required' as const,
+      floor: 'advanced' as const,
+    },
+    {
+      probability: 0.899,
+      expected: 'advanced' as const,
+      status: 'approval_required' as const,
+      floor: 'advanced' as const,
+    },
+    {
+      probability: 0.9,
+      expected: 'frontier' as const,
+      status: 'approval_required' as const,
+      floor: 'frontier' as const,
+    },
+  ])('applies default consequence floor at $probability', async ({ probability, expected, status, floor }) => {
+    const result = await recommend({
+      configuration: configuration({
+        light: [modelConfiguration('openai', 'gpt-light')],
+        advanced: [modelConfiguration('openai', 'gpt-advanced')],
+        frontier: [modelConfiguration('openai', 'gpt-frontier')],
+      }),
+      candidateModels: [
+        chatModel('openai', 'gpt-light'),
+        chatModel('openai', 'gpt-advanced'),
+        chatModel('openai', 'gpt-frontier'),
+      ],
+      classifier: classifierResult({ consequenceProbability: probability }),
+    })
+
+    expect(result).toMatchObject({
+      status,
+      selection: { model: `gpt-${expected}`, capability: expected },
+      policy: {
+        ...(floor ? { consequenceFloor: floor } : {}),
+        requiredCapability: expected,
+      },
+    })
+  })
+
+  it('uses configured consequence thresholds and keeps hard level restrictions absolute', async () => {
+    const configuredThresholds = await recommend({
+      configuration: configuration(
+        {
+          light: [modelConfiguration('openai', 'gpt-light')],
+          advanced: [modelConfiguration('openai', 'gpt-advanced')],
+          frontier: [modelConfiguration('openai', 'gpt-frontier')],
+        },
+        undefined,
+        undefined,
+        { consequenceThresholds: { advanced: 0.6, frontier: 0.8 } },
+      ),
+      candidateModels: [
+        chatModel('openai', 'gpt-light'),
+        chatModel('openai', 'gpt-advanced'),
+        chatModel('openai', 'gpt-frontier'),
+      ],
+      classifier: classifierResult({ consequenceProbability: 0.8 }),
+    })
+    expect(configuredThresholds).toMatchObject({
+      status: 'approval_required',
+      selection: { model: 'gpt-frontier', capability: 'frontier' },
+      policy: { consequenceFloor: 'frontier', requiredCapability: 'frontier' },
+    })
+
+    const hardRestricted = await recommend({
+      configuration: configuration({
+        light: [modelConfiguration('openai', 'gpt-light')],
+        advanced: [modelConfiguration('openai', 'gpt-advanced')],
+        frontier: [modelConfiguration('openai', 'gpt-frontier')],
+      }),
+      candidateModels: [
+        chatModel('openai', 'gpt-light'),
+        chatModel('openai', 'gpt-advanced'),
+        chatModel('openai', 'gpt-frontier'),
+      ],
+      request: request({ levels: ['light', 'advanced'] }),
+      classifier: classifierResult({ consequenceProbability: 0.9 }),
+    })
+
+    expect(hardRestricted.status).toBe('no_eligible_model')
+    if (hardRestricted.status !== 'no_eligible_model') {
+      throw new Error('Expected hard caller levels to exclude the consequence-floor candidate.')
+    }
+    expect(hardRestricted.rejections).toContainEqual({
+      provider: 'openai',
+      model: 'gpt-frontier',
+      reasons: ['caller_level_excluded'],
+    })
   })
 
   it('distinguishes omitted task rules from empty task and request level lists', async () => {

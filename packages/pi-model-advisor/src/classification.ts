@@ -16,6 +16,12 @@ export type ClassificationOutcome =
   | { status: 'classified'; answers: ClassifierAnswers; usage?: NativeUsage }
   | Extract<RecommendationResult, { status: 'classifier_failed' | 'aborted' }>
 
+export type ClassifierLifecycleOutcome =
+  | { kind: 'response'; result: ClassifierResult }
+  | { kind: 'transport_error' }
+  | { kind: 'deadline' }
+  | { kind: 'caller_abort' }
+
 const CAPABILITY_RUBRICS = {
   light: 'Routine, mechanical, or tightly bounded work.',
   standard: 'Ordinary localized work with multiple steps.',
@@ -195,16 +201,15 @@ function aborted(classifier: ModelIdentity, usage?: NativeUsage): Classification
   return { status: 'aborted', classifier, ...(usage ? { usage } : {}) }
 }
 
-export async function classifyRecommendation(input: {
-  request: RecommendationRequest
-  configuration: AdvisorConfiguration
+export async function runClassifierWithDeadline(input: {
+  context: ClassifierContext
   classify: ClassifierExecution
+  deadlineMs: number
   signal?: AbortSignal
-}): Promise<ClassificationOutcome> {
-  const { request, configuration, classify, signal } = input
-  const { classifier } = configuration
+}): Promise<ClassifierLifecycleOutcome> {
+  const { context, classify, deadlineMs, signal } = input
   if (signal?.aborted) {
-    return aborted(classifier)
+    return { kind: 'caller_abort' }
   }
 
   const controller = new AbortController()
@@ -221,10 +226,10 @@ export async function classifyRecommendation(input: {
   const deadline = new Promise<{ kind: 'deadline' }>((resolve) => {
     const startedAt = performance.now()
     const scheduleDeadline = () => {
-      const remaining = configuration.policy.overallDeadlineMs - (performance.now() - startedAt)
+      const remaining = deadlineMs - (performance.now() - startedAt)
       deadlineTimer = setTimeout(
         () => {
-          if (configuration.policy.overallDeadlineMs - (performance.now() - startedAt) > 0) {
+          if (deadlineMs - (performance.now() - startedAt) > 0) {
             scheduleDeadline()
             return
           }
@@ -237,44 +242,64 @@ export async function classifyRecommendation(input: {
     scheduleDeadline()
   })
   const nativeRequest = Promise.resolve()
-    .then(() => classify(createClassifierContext(request, configuration), { signal: controller.signal }))
+    .then(() => classify(context, { signal: controller.signal }))
     .then(
       (result) => ({ kind: 'response' as const, result }),
       () => ({ kind: 'transport_error' as const }),
     )
 
   try {
-    const outcome = await Promise.race([nativeRequest, deadline, callerAbort])
-    if (signal?.aborted || outcome.kind === 'caller_abort') {
-      const usage = outcome.kind === 'response' ? (outcome.result.usage as NativeUsage | undefined) : undefined
-      return aborted(classifier, usage)
-    }
-    if (outcome.kind === 'deadline') {
-      return classifierFailure(classifier, 'deadline', DEADLINE_MESSAGE)
-    }
-    if (outcome.kind === 'transport_error') {
-      return classifierFailure(classifier, 'transport', TRANSPORT_ERROR_MESSAGE)
-    }
-
-    const { result } = outcome
-    const usage = result.usage as NativeUsage | undefined
-    if (result.stopReason === 'aborted') {
-      return aborted(classifier, usage)
-    }
-    if (result.stopReason === 'error' || result.errorMessage !== undefined) {
-      return classifierFailure(classifier, 'transport', TRANSPORT_ERROR_MESSAGE, usage)
-    }
-    if (result.provider !== classifier.provider || result.model !== classifier.model) {
-      return classifierFailure(classifier, 'invalid_answer', INVALID_ANSWER_MESSAGE, usage)
-    }
-    const answers = validateAnswers(result.answers)
-    return answers
-      ? { status: 'classified', answers, ...(usage ? { usage } : {}) }
-      : classifierFailure(classifier, 'invalid_answer', INVALID_ANSWER_MESSAGE, usage)
+    return await Promise.race([nativeRequest, deadline, callerAbort])
   } finally {
     if (deadlineTimer !== undefined) {
       clearTimeout(deadlineTimer)
     }
     signal?.removeEventListener('abort', handleAbort)
   }
+}
+
+export async function classifyRecommendation(input: {
+  request: RecommendationRequest
+  configuration: AdvisorConfiguration
+  classify: ClassifierExecution
+  signal?: AbortSignal
+}): Promise<ClassificationOutcome> {
+  const { request, configuration, classify, signal } = input
+  const { classifier } = configuration
+  if (signal?.aborted) {
+    return aborted(classifier)
+  }
+
+  const outcome = await runClassifierWithDeadline({
+    context: createClassifierContext(request, configuration),
+    classify,
+    deadlineMs: configuration.policy.overallDeadlineMs,
+    signal,
+  })
+  if (signal?.aborted || outcome.kind === 'caller_abort') {
+    const usage = outcome.kind === 'response' ? (outcome.result.usage as NativeUsage | undefined) : undefined
+    return aborted(classifier, usage)
+  }
+  if (outcome.kind === 'deadline') {
+    return classifierFailure(classifier, 'deadline', DEADLINE_MESSAGE)
+  }
+  if (outcome.kind === 'transport_error') {
+    return classifierFailure(classifier, 'transport', TRANSPORT_ERROR_MESSAGE)
+  }
+
+  const { result } = outcome
+  const usage = result.usage as NativeUsage | undefined
+  if (result.stopReason === 'aborted') {
+    return aborted(classifier, usage)
+  }
+  if (result.stopReason === 'error' || result.errorMessage !== undefined) {
+    return classifierFailure(classifier, 'transport', TRANSPORT_ERROR_MESSAGE, usage)
+  }
+  if (result.provider !== classifier.provider || result.model !== classifier.model) {
+    return classifierFailure(classifier, 'invalid_answer', INVALID_ANSWER_MESSAGE, usage)
+  }
+  const answers = validateAnswers(result.answers)
+  return answers
+    ? { status: 'classified', answers, ...(usage ? { usage } : {}) }
+    : classifierFailure(classifier, 'invalid_answer', INVALID_ANSWER_MESSAGE, usage)
 }
