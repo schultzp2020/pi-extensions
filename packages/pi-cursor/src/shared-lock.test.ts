@@ -36,9 +36,10 @@ describe('withSharedLock', () => {
     let queuedOwnerEntered = false
 
     try {
+      // Windows may need its bounded PowerShell process-identity probe before the first owner can acquire.
       const first = withSharedLock(
         lockPath,
-        1_000,
+        4_000,
         () => 'first',
         undefined,
         async () => {
@@ -46,8 +47,15 @@ describe('withSharedLock', () => {
           await finalizationRelease
         },
       )
-      await finalizationReady
-      const second = withSharedLock(lockPath, 1_000, () => {
+      await Promise.race([
+        finalizationReady,
+        first.then(({ acquired }) => {
+          if (!acquired) {
+            throw new Error('Initial shared-lock owner timed out before finalization started')
+          }
+        }),
+      ])
+      const second = withSharedLock(lockPath, 4_000, () => {
         queuedOwnerEntered = true
         return 'second'
       })
