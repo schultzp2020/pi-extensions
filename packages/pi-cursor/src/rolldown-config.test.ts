@@ -8,6 +8,7 @@ import { loadConfig } from 'rolldown/config'
 import { describe, expect, it } from 'vitest'
 
 describe('published extension bundle', () => {
+  // 15 s subprocess bound + 244 ms measured config/build/setup/cleanup + 5 s scheduling headroom.
   it('bundles legacy lazy streaming while preserving host adapter dispatch', async () => {
     const configPath = fileURLToPath(new URL('../rolldown.config.ts', import.meta.url))
     const packageDir = fileURLToPath(new URL('..', import.meta.url))
@@ -198,5 +199,5 @@ try {
       } catch {}
       rmSync(outputDir, { recursive: true, force: true })
     }
-  })
+  }, 20_000)
 })

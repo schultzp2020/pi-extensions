@@ -24,10 +24,11 @@ import type * as DebugLoggerModule from './proxy/debug-logger.ts'
 type SpawnFn = (command: string, args: readonly string[], options: SpawnOptions) => ChildProcess
 
 const spawnMock = vi.hoisted(() => vi.fn<SpawnFn>())
+const spawnSyncMock = vi.hoisted(() => vi.fn<typeof ChildProcessModule.spawnSync>())
 
-// The real spawn, captured by the child_process mock factory so the
-// real-child test can delegate to it.
+// The real child_process functions, captured by the mock factory for controlled test delegation.
 const realSpawnRef = vi.hoisted(() => ({ current: null as SpawnFn | null }))
+const realSpawnSyncRef = vi.hoisted(() => ({ current: null as typeof ChildProcessModule.spawnSync | null }))
 
 // Captured at module load, before any fake-timer activation, so tests can
 // schedule real-time bounds while timers are faked. The fake clearTimeout
@@ -38,7 +39,9 @@ const realClearTimeout = clearTimeout
 vi.mock('node:child_process', async (importOriginal) => {
   const actual = await importOriginal<typeof ChildProcessModule>()
   realSpawnRef.current = actual.spawn
-  return { ...actual, spawn: spawnMock }
+  realSpawnSyncRef.current = actual.spawnSync
+  spawnSyncMock.mockImplementation((...args) => actual.spawnSync(...args))
+  return { ...actual, spawn: spawnMock, spawnSync: spawnSyncMock }
 })
 
 const logProxyStderrMock = vi.hoisted(() => vi.fn<(sessionId: string, output: string) => void>())
@@ -240,6 +243,13 @@ describe('proxy-lifecycle session ID resolution', () => {
     vi.useRealTimers()
     vi.unstubAllGlobals()
     vi.clearAllMocks()
+    spawnSyncMock.mockImplementation((...args) => {
+      const spawnSync = realSpawnSyncRef.current
+      if (!spawnSync) {
+        throw new Error('Real child_process.spawnSync was not captured')
+      }
+      return spawnSync(...args)
+    })
     recorded.length = 0
   })
 
@@ -249,8 +259,60 @@ describe('proxy-lifecycle session ID resolution', () => {
       JSON.stringify({ port: 45678, pid: process.pid, generation: new Date().toISOString() }),
     )
 
+    let resolveInitialProbeFailure: (() => void) | undefined
+    const initialProbeFailure = new Promise<void>((resolve) => {
+      resolveInitialProbeFailure = resolve
+    })
+    if (process.platform === 'win32') {
+      let failFirstProbe = true
+      spawnSyncMock.mockImplementation((command, args, options) => {
+        if (command === 'powershell.exe' && failFirstProbe) {
+          failFirstProbe = false
+          resolveInitialProbeFailure?.()
+          return {
+            pid: 0,
+            output: [null, '', ''],
+            stdout: '',
+            stderr: '',
+            status: 1,
+            signal: null,
+          }
+        }
+        const spawnSync = realSpawnSyncRef.current
+        if (!spawnSync) {
+          throw new Error('Real child_process.spawnSync was not captured')
+        }
+        return spawnSync(command, args, options)
+      })
+    }
+
     let currentId = BOOTSTRAP_SESSION_ID
-    const result = await connectToTestProxy(() => currentId, null)
+    const pending = connectToTestProxy(() => currentId, null)
+    if (process.platform === 'win32') {
+      await withRealDeadline(initialProbeFailure, 2_500, 'controlled Windows process-identity failure')
+    }
+    const retryObservationTimeoutMs = process.platform === 'win32' ? 50 : 2_500
+    const retryObservation = await withRealDeadline(
+      pending,
+      retryObservationTimeoutMs,
+      'proxy adoption during lock retry',
+    ).then(
+      () => 'settled',
+      (error) =>
+        error instanceof Error &&
+        error.message ===
+          `proxy adoption during lock retry did not settle within ${String(retryObservationTimeoutMs)} ms`
+          ? 'deadline'
+          : 'rejected',
+    )
+    expect(retryObservation).toBe(process.platform === 'win32' ? 'deadline' : 'settled')
+    if (process.platform === 'win32') {
+      await vi.advanceTimersToNextTimerAsync()
+    }
+    const result = await pending
+    expect(spawnSyncMock.mock.calls.filter(([command]) => command === 'powershell.exe')).toHaveLength(
+      process.platform === 'win32' ? 2 : 0,
+    )
     expect(result.port).toBe(45678)
 
     // The immediate heartbeat uses the ID current at connect time (bootstrap).
