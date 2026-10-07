@@ -9,6 +9,9 @@ vi.mock('pi-subagents', () => {
 vi.mock('pi-subagents/preflight', () => {
   throw new Error('The default extension/core entry points must not import the optional preflight entry.')
 })
+vi.mock('./llama-cpp-provider.ts', () => {
+  throw new Error('The default extension/core entry points must not import the optional llama.cpp provider.')
+})
 
 const packageDirectory = fileURLToPath(new URL('../', import.meta.url))
 const packageJson = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as {
@@ -37,6 +40,14 @@ describe('published package contents', () => {
     )
   })
 
+  it('documents the llama.cpp provider as a separately loaded opt-in extension', () => {
+    const packageReadme = readFileSync(new URL('../README.md', import.meta.url), 'utf8')
+    expect(packageJson.pi.extensions).toEqual(['./dist/index.js'])
+    expect(packageReadme).toContain('../npm/node_modules/@schultzp2020/pi-model-advisor/dist/llama-cpp-provider.js')
+    expect(packageReadme).toContain('remove the shim and run `/reload`')
+    expect(packageReadme).toContain('architecture.output_modalities')
+  })
+
   it('lists the public package in the monorepo package table', () => {
     const rootReadme = readFileSync(new URL('../../../README.md', import.meta.url), 'utf8')
     expect(rootReadme).toMatch(/^\| \[pi-model-advisor\]\(packages\/pi-model-advisor\/\) \|/m)
@@ -58,6 +69,10 @@ describe('published package contents', () => {
         '.': { types: './dist/index.d.ts', import: './dist/index.js' },
         './core': { types: './dist/core.d.ts', import: './dist/core.js' },
         './pi-subagents': { types: './dist/pi-subagents.d.ts', import: './dist/pi-subagents.js' },
+        './llama-cpp-provider': {
+          types: './dist/llama-cpp-provider.d.ts',
+          import: './dist/llama-cpp-provider.js',
+        },
       },
     })
   })
@@ -67,6 +82,7 @@ describe('published package contents', () => {
     expect(buildConfig).toContain("index: 'src/index.ts'")
     expect(buildConfig).toContain("core: 'src/core.ts'")
     expect(buildConfig).toContain("'pi-subagents': 'src/pi-subagents.ts'")
+    expect(buildConfig).toContain("'llama-cpp-provider': 'src/llama-cpp-provider.ts'")
   })
 
   it('runs the package build from the publish lifecycle hook', () => {

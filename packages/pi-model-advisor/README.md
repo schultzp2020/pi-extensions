@@ -6,7 +6,7 @@ A Pi 1.0.4 extension and reusable core that recommends an eligible chat model an
 
 - Pi 1.0.4 or later compatible with its native typed-classifier API; this package targets and tests against Pi 1.0.4.
 - An authenticated Pi classifier and at least one eligible chat model for recommendations.
-- For local classification, Pi's native `llama.cpp` provider connected to a local llama.cpp router. The advisor does not start or configure that server.
+- For local classification, an authenticated Pi classifier; the package also provides a separately enabled native `llama.cpp` provider for a local router. The advisor does not start or configure that server.
 
 ## Install
 
@@ -16,7 +16,7 @@ After the package is released:
 pi install npm:@schultzp2020/pi-model-advisor
 ```
 
-The package manifest registers the built extension with Pi. For development, build the package first and load `dist/index.js` as an extension. Installation does not configure a classifier or model policy.
+The package manifest loads only the default Advisor extension. For development, build the package first and load `dist/index.js` as an extension. Installation does not configure a classifier, model policy, or optional provider.
 
 ## Configure Pi's classifier
 
@@ -24,7 +24,17 @@ Pi owns classifier discovery, provider registration, authentication, transport, 
 
 Authenticate the provider in Pi with `/login <provider>` or its documented environment variable. For example, OpenRouter supports `/login openrouter` or `OPENROUTER_API_KEY`. Pi 1.0.4 exposes available native classifiers separately from chat models; the configured `provider` and `model` must match one of those exact entries. See Pi's [classifier model documentation](https://github.com/earendil-works/pi/blob/v1.0.4/packages/coding-agent/docs/models.md#use-classifier-models) for providers and IDs.
 
-For local classification, start `llama-server` in router mode (without `--model` or `-m`), configure Pi's built-in provider with `/login llama.cpp` or `LLAMA_BASE_URL` and optional `LLAMA_API_KEY`, and load a model with `/llama`. Then select the exact authenticated classifier ID Pi exposes for that model. Pi's native llama.cpp classifier uses typed questions and next-token label probabilities. The advisor starts no server, downloads no model, adds no endpoint or key to its configuration, and never falls back to a hosted classifier. A provider ID by itself does not prove where an endpoint runs or how it handles data.
+For local classification, start `llama-server` in router mode (without `--model` or `-m`). The package's optional provider extension is not loaded by the default Advisor manifest and does not take over Pi's built-in `llama.cpp` provider unless explicitly enabled. After installing the package with Pi, add a shim at `<getAgentDir()>/extensions/llama-cpp-provider.ts` that imports the managed build directly; Pi's npm packages live under `<getAgentDir()>/npm/node_modules`, outside normal extension module resolution:
+
+```ts
+import llamaCppProvider from '../npm/node_modules/@schultzp2020/pi-model-advisor/dist/llama-cpp-provider.js'
+
+export default llamaCppProvider
+```
+
+Then use `/login llama.cpp` or `LLAMA_BASE_URL` and optional `LLAMA_API_KEY`, and select the exact authenticated classifier ID Pi exposes. To disable the optional provider, remove the shim and run `/reload`; the native registration is removed and Pi's built-in provider is restored. This changes no server settings, downloads no models, and adds no Advisor configuration fields. The managed provider loader is verified with Pi 1.0.4 on Node 24.14; Bun runtime and compiled Bun-binary execution are unverified.
+
+The provider selects TypeSafe System One for catalog models whose validated `architecture.output_modalities` contains `decisions` (a Clef model is one example, not a name-based exception). Ordinary decoder models use Pi's native llama.cpp next-token classifier API; decision-only models are not listed as chat models. The Advisor starts no server and never falls back to a hosted classifier. A provider ID by itself does not prove where an endpoint runs or how it handles data.
 
 ## Configure the advisor
 

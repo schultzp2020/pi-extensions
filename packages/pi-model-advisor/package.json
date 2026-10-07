@@ -33,6 +33,10 @@
     "./pi-subagents": {
       "types": "./dist/pi-subagents.d.ts",
       "import": "./dist/pi-subagents.js"
+    },
+    "./llama-cpp-provider": {
+      "types": "./dist/llama-cpp-provider.d.ts",
+      "import": "./dist/llama-cpp-provider.js"
     }
   },
   "scripts": {
