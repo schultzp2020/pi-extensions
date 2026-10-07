@@ -15,14 +15,14 @@ function extensionApi() {
   }
 }
 
-function commandContext(availableModels = [chatModel(), chatModel('openai-codex', 'gpt-luna')]) {
+function commandContext(availableModels = [chatModel(), chatModel('openai-codex', 'gpt-luna')], signal?: AbortSignal) {
   const notify = vi.fn<ExtensionCommandContext['ui']['notify']>()
   const classify = vi.fn<ExtensionCommandContext['modelRegistry']['classify']>(() =>
     Promise.resolve(validClassifierResult()),
   )
   const context = {
     scopedModels: [],
-    signal: undefined,
+    signal,
     ui: { notify },
     modelRegistry: {
       getAvailable: () => availableModels,
@@ -79,6 +79,22 @@ describe('model advisor commands', () => {
     expect(notify).toHaveBeenCalledWith(expect.stringContaining('Connectivity probe: classifier responded.'), 'info')
   })
 
+  it('rejects invalid native connectivity answers separately from lifecycle outcomes', async () => {
+    const { command } = await register()
+    const { context, notify, classify } = commandContext([])
+    classify.mockResolvedValue({
+      ...validClassifierResult(),
+      answers: { connectivity: { type: 'bool', probability: 2 } },
+    })
+
+    await command.handler('doctor --connectivity', context)
+
+    expect(notify).toHaveBeenCalledWith(
+      expect.stringContaining('Connectivity probe: classifier_failed (invalid_answer)'),
+      'error',
+    )
+  })
+
   it('enforces the configured deadline for an unresolved native connectivity probe', async () => {
     const configuration = validRecommendationConfiguration()
     if (configuration.status === 'valid') {
@@ -103,6 +119,81 @@ describe('model advisor commands', () => {
       expect.stringContaining('Connectivity probe: classifier_failed (deadline)'),
       'error',
     )
+    expect(timerCount).toBe(0)
+  })
+
+  it('propagates caller cancellation to a native connectivity probe and clears its timer', async () => {
+    const configuration = validRecommendationConfiguration()
+    if (configuration.status === 'valid') {
+      configuration.configuration.policy.overallDeadlineMs = 100
+    }
+    const { command } = await register({ loadConfiguration: () => Promise.resolve(configuration) })
+    const caller = new AbortController()
+    const { context, notify, classify } = commandContext([], caller.signal)
+    let nativeSignal: AbortSignal | undefined
+    let markStarted!: () => void
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve
+    })
+    classify.mockImplementation(
+      (_classifier, _classifierContext, options) =>
+        new Promise(() => {
+          nativeSignal = options?.signal
+          markStarted()
+        }),
+    )
+
+    vi.useFakeTimers()
+    let timerCount = -1
+    try {
+      const probe = command.handler('doctor --connectivity', context)
+      await started
+      expect(vi.getTimerCount()).toBe(1)
+      caller.abort()
+      await probe
+      timerCount = vi.getTimerCount()
+    } finally {
+      vi.useRealTimers()
+    }
+
+    expect(nativeSignal?.aborted).toBeTruthy()
+    expect(notify).toHaveBeenCalledWith(expect.stringContaining('Connectivity probe: aborted.'), 'error')
+    expect(timerCount).toBe(0)
+  })
+
+  it('honors long valid deadlines for native connectivity probes without timer overflow', async () => {
+    const configuration = validRecommendationConfiguration()
+    if (configuration.status === 'valid') {
+      configuration.configuration.policy.overallDeadlineMs = 2_147_483_648
+    }
+    const { command } = await register({ loadConfiguration: () => Promise.resolve(configuration) })
+    const { context, notify, classify } = commandContext([])
+    classify.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          setTimeout(
+            () =>
+              resolve({
+                ...validClassifierResult(),
+                answers: { connectivity: { type: 'bool', probability: 1 } },
+              }),
+            5,
+          )
+        }),
+    )
+
+    vi.useFakeTimers()
+    let timerCount = -1
+    try {
+      const probe = command.handler('doctor --connectivity', context)
+      await vi.advanceTimersByTimeAsync(5)
+      await probe
+      timerCount = vi.getTimerCount()
+    } finally {
+      vi.useRealTimers()
+    }
+
+    expect(notify).toHaveBeenCalledWith(expect.stringContaining('Connectivity probe: classifier responded.'), 'info')
     expect(timerCount).toBe(0)
   })
 

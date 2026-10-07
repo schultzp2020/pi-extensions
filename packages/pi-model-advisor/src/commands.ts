@@ -1,7 +1,8 @@
-import type { ClassifierContext, ClassifierResult } from '@earendil-works/pi-ai'
+import type { ClassifierContext } from '@earendil-works/pi-ai'
 import type { ExtensionAPI, ExtensionCommandContext } from '@earendil-works/pi-coding-agent'
 
 import { recommendWithPi, type RecommendationContext } from './adapter.ts'
+import { runClassifierWithDeadline, type ClassifierExecution } from './classification.ts'
 import {
   discoverAdvisorModels,
   type AdvisorModelInventory,
@@ -25,8 +26,6 @@ const PRIVACY_BOUNDARY =
   'Privacy: explicit task state is sent to the configured Pi classifier and may leave this machine; advisor logs omit it by default, while Pi may independently retain command/tool arguments and session transcripts.'
 const USAGE =
   'Usage: /model-advisor [status|models|config|doctor [--connectivity]|recommend <task>]. Configuration edits apply only after extension initialization or Pi /reload.'
-const MAX_TIMER_DELAY_MS = 2_147_483_647
-
 type ConnectivityProbeResult =
   | { status: 'responded' }
   | { status: 'classifier_failed'; category: 'transport' | 'deadline' | 'invalid_answer' }
@@ -40,7 +39,7 @@ async function probeClassifier(
   classifier: ModelIdentity,
   deadlineMs: number,
   signal: AbortSignal | undefined,
-  classify: (context: ClassifierContext, options: { signal?: AbortSignal }) => Promise<ClassifierResult>,
+  classify: ClassifierExecution,
 ): Promise<ConnectivityProbeResult> {
   if (signal?.aborted) {
     return { status: 'aborted' }
@@ -56,86 +55,43 @@ async function probeClassifier(
       },
     },
   }
-  const controller = new AbortController()
-  let deadlineTimer: ReturnType<typeof setTimeout> | undefined
-  let resolveCallerAbort: () => void = () => undefined
-  const callerAbort = new Promise<{ kind: 'caller_abort' }>((resolve) => {
-    resolveCallerAbort = () => resolve({ kind: 'caller_abort' })
-  })
-  const handleAbort = () => {
-    controller.abort(signal?.reason)
-    resolveCallerAbort()
+  const outcome = await runClassifierWithDeadline({ context, classify, deadlineMs, signal })
+  if (signal?.aborted || outcome.kind === 'caller_abort') {
+    return { status: 'aborted' }
   }
-  signal?.addEventListener('abort', handleAbort, { once: true })
-  const deadline = new Promise<{ kind: 'deadline' }>((resolve) => {
-    const startedAt = performance.now()
-    const scheduleDeadline = () => {
-      const remaining = deadlineMs - (performance.now() - startedAt)
-      deadlineTimer = setTimeout(
-        () => {
-          if (deadlineMs - (performance.now() - startedAt) > 0) {
-            scheduleDeadline()
-            return
-          }
-          controller.abort(new Error('Classifier deadline exceeded.'))
-          resolve({ kind: 'deadline' })
-        },
-        Math.min(MAX_TIMER_DELAY_MS, Math.max(0, remaining)),
-      )
-    }
-    scheduleDeadline()
-  })
-  const nativeRequest = Promise.resolve()
-    .then(() => classify(context, { signal: controller.signal }))
-    .then(
-      (result) => ({ kind: 'response' as const, result }),
-      () => ({ kind: 'transport_error' as const }),
-    )
-
-  try {
-    const outcome = await Promise.race([nativeRequest, deadline, callerAbort])
-    if (signal?.aborted || outcome.kind === 'caller_abort') {
-      return { status: 'aborted' }
-    }
-    if (outcome.kind === 'deadline') {
-      return { status: 'classifier_failed', category: 'deadline' }
-    }
-    if (outcome.kind === 'transport_error') {
-      return { status: 'classifier_failed', category: 'transport' }
-    }
-
-    const { result } = outcome
-    if (result.stopReason === 'aborted') {
-      return { status: 'aborted' }
-    }
-    if (result.stopReason === 'error' || result.errorMessage !== undefined) {
-      return { status: 'classifier_failed', category: 'transport' }
-    }
-    if (result.provider !== classifier.provider || result.model !== classifier.model) {
-      return { status: 'classifier_failed', category: 'invalid_answer' }
-    }
-    const answers: unknown = result.answers
-    if (!isRecord(answers) || Object.keys(answers).length !== 1 || !isRecord(answers.connectivity)) {
-      return { status: 'classifier_failed', category: 'invalid_answer' }
-    }
-    const answer = answers.connectivity
-    if (
-      Object.keys(answer).length !== 2 ||
-      answer.type !== 'bool' ||
-      typeof answer.probability !== 'number' ||
-      !Number.isFinite(answer.probability) ||
-      answer.probability < 0 ||
-      answer.probability > 1
-    ) {
-      return { status: 'classifier_failed', category: 'invalid_answer' }
-    }
-    return { status: 'responded' }
-  } finally {
-    if (deadlineTimer !== undefined) {
-      clearTimeout(deadlineTimer)
-    }
-    signal?.removeEventListener('abort', handleAbort)
+  if (outcome.kind === 'deadline') {
+    return { status: 'classifier_failed', category: 'deadline' }
   }
+  if (outcome.kind === 'transport_error') {
+    return { status: 'classifier_failed', category: 'transport' }
+  }
+
+  const { result } = outcome
+  if (result.stopReason === 'aborted') {
+    return { status: 'aborted' }
+  }
+  if (result.stopReason === 'error' || result.errorMessage !== undefined) {
+    return { status: 'classifier_failed', category: 'transport' }
+  }
+  if (result.provider !== classifier.provider || result.model !== classifier.model) {
+    return { status: 'classifier_failed', category: 'invalid_answer' }
+  }
+  const answers: unknown = result.answers
+  if (!isRecord(answers) || Object.keys(answers).length !== 1 || !isRecord(answers.connectivity)) {
+    return { status: 'classifier_failed', category: 'invalid_answer' }
+  }
+  const answer = answers.connectivity
+  if (
+    Object.keys(answer).length !== 2 ||
+    answer.type !== 'bool' ||
+    typeof answer.probability !== 'number' ||
+    !Number.isFinite(answer.probability) ||
+    answer.probability < 0 ||
+    answer.probability > 1
+  ) {
+    return { status: 'classifier_failed', category: 'invalid_answer' }
+  }
+  return { status: 'responded' }
 }
 
 function formatIdentities(identities: readonly ModelIdentity[]): string {
