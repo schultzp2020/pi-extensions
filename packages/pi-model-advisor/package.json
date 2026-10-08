@@ -1,6 +1,6 @@
 {
   "name": "@schultzp2020/pi-model-advisor",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Pi extension and core API for model recommendations",
   "keywords": [
     "model-advisor",
