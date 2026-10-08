@@ -1,6 +1,6 @@
 # Native Pi 1.1.0 integration
 
-Both Pi Cursor and Pi Model Advisor require Pi 1.1.0 or later. Development and compatibility checks target Pi 1.1.0.
+Pi Model Advisor requires Pi 1.1.0 or later. Development and compatibility checks target Pi 1.1.0.
 
 ## Model Advisor
 
@@ -11,10 +11,6 @@ Pi 1.1.0 discovers decision models from `architecture.output_modalities`, expose
 Classifier selection remains explicit in `model-advisor.json`. OpenAI's `openai/gpt-6-luna` is an optional classifier; it requires API-key authentication rather than ChatGPT/Codex login. Pi's documentation notes that an `openai` login can take precedence over `OPENAI_API_KEY`; resolve that authentication choice explicitly before configuring Luna. The Advisor does not switch classifiers, rewrite provider identities, or add image input.
 
 Invalid candidate context or output token limits exclude the affected model with a diagnostic. Other valid candidates remain usable. The Advisor never invents replacement limits.
-
-## Pi Cursor
-
-Cursor uses Pi's supported provider registration interface and public streaming APIs. Its local proxy handles Cursor transport, authentication and model variants.
 
 ## Native-provider validation gaps
 
