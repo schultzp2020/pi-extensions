@@ -6,6 +6,7 @@ import {
   type AdvisorConfiguration,
   type Capability,
   type ConfiguredModel,
+  invalidModelLimitReasons,
   type ModelIdentity,
   type ThinkingLevel,
 } from './config.ts'
@@ -172,6 +173,13 @@ export function prepareRecommendationSelection(input: {
     const key = identityKey(identity)
     if (model.api === 'pi-virtual') {
       addRejection(rejections, identity, 'virtual_model')
+      continue
+    }
+    const invalidLimits = invalidModelLimitReasons(model)
+    if (invalidLimits.length > 0) {
+      for (const reason of invalidLimits) {
+        addRejection(rejections, identity, reason)
+      }
       continue
     }
     if (!candidateByIdentity.has(key)) {

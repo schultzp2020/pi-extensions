@@ -136,6 +136,38 @@ describe('discoverAdvisorModels', () => {
     expect(classify).not.toHaveBeenCalled()
   })
 
+  it('excludes invalid model token limits from eligibility and exposes diagnostic reasons', async () => {
+    const invalidContext = { ...chatModel('openai', 'invalid-context'), contextWindow: 1.5 } as Model<Api>
+    const invalidMaxTokens = { ...chatModel('openai', 'invalid-max-tokens'), maxTokens: 0 } as Model<Api>
+    const valid = chatModel('openai', 'valid')
+    const registry = {
+      getAvailable: () => [invalidContext, invalidMaxTokens, valid],
+      getAvailableOfType: () => Promise.resolve([{ provider: 'openrouter', id: 'typesafe/jev-1.13' }]),
+    } as unknown as AdvisorModelRegistry
+    const result = await discoverAdvisorModels(
+      validateAdvisorConfiguration({
+        classifier: { provider: 'openrouter', model: 'typesafe/jev-1.13' },
+        models: {
+          light: [
+            { provider: 'openai', model: 'invalid-context' },
+            { provider: 'openai', model: 'invalid-max-tokens' },
+            { provider: 'openai', model: 'valid' },
+          ],
+        },
+      }),
+      registry,
+      [],
+    )
+
+    expect(result.status).toBe('ready')
+    expect(result.eligible).toEqual([{ provider: 'openai', model: 'valid' }])
+    expect(result.invalidLimits).toEqual([
+      { provider: 'openai', model: 'invalid-context', reasons: ['invalid_context_window'] },
+      { provider: 'openai', model: 'invalid-max-tokens', reasons: ['invalid_max_tokens'] },
+    ])
+    expect(result.candidateModels).toHaveLength(3)
+  })
+
   it('validates thinking support for scoped models absent from Pi available inventory', async () => {
     const staleScopedModel = chatModel('openai', 'gpt-stale')
     const registry = {

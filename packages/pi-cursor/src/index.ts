@@ -2,10 +2,9 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
-import * as piAi from '@earendil-works/pi-ai'
 import type { OAuthCredentials, OAuthLoginCallbacks } from '@earendil-works/pi-ai'
 import { lazyStream } from '@earendil-works/pi-ai/api/lazy'
-import type { streamSimple as openAIStreamSimple } from '@earendil-works/pi-ai/api/openai-completions'
+import { streamSimple as compatStreamSimple } from '@earendil-works/pi-ai/compat'
 import type { ExtensionAPI, ProviderModelConfig } from '@earendil-works/pi-coding-agent'
 
 import { generateCursorAuthParams, getTokenExpiry, pollCursorAuth, refreshCursorToken } from './auth.ts'
@@ -38,33 +37,12 @@ const PROVIDER_ID = 'cursor'
 const CURSOR_API = 'cursor-openai-completions'
 const AGENT_DIR = join(homedir(), '.pi', 'agent')
 const MODEL_CACHE_PATH = join(AGENT_DIR, 'cursor-model-cache.json')
-type HostStreamSimple = typeof openAIStreamSimple
-interface HostStreamResolution {
-  streamSimple: HostStreamSimple
-  legacy: boolean
-}
-
-let hostStreamResolution: HostStreamResolution | null = null
 
 interface ProxyReconnectState {
   controller: AbortController
   promise: Promise<number | null>
   consumers: number
   settled: boolean
-}
-
-async function resolveHostStreamSimple(): Promise<HostStreamResolution> {
-  if (hostStreamResolution) {
-    return hostStreamResolution
-  }
-  const legacyStreamSimple = (piAi as typeof piAi & { streamSimple?: HostStreamSimple }).streamSimple
-  if (legacyStreamSimple) {
-    hostStreamResolution = { streamSimple: legacyStreamSimple, legacy: true }
-    return hostStreamResolution
-  }
-  const compat = await import('@earendil-works/pi-ai/compat')
-  hostStreamResolution = { streamSimple: compat.streamSimple, legacy: false }
-  return hostStreamResolution
 }
 
 async function waitForSharedRecovery<T>(recovery: Promise<T>, signal?: AbortSignal): Promise<T> {
@@ -100,21 +78,6 @@ async function waitForReconnectConsumer(state: ProxyReconnectState, signal?: Abo
       state.controller.abort(signal?.reason ?? new Error('Cursor proxy recovery cancelled'))
     }
   }
-}
-
-function supportsLegacyXhigh(modelId: string): boolean {
-  return (
-    modelId.includes('gpt-5.2') ||
-    modelId.includes('gpt-5.3') ||
-    modelId.includes('gpt-5.4') ||
-    modelId.includes('gpt-5.5') ||
-    modelId.includes('deepseek-v4-pro') ||
-    modelId.includes('deepseek-v4-flash') ||
-    modelId.includes('opus-4-6') ||
-    modelId.includes('opus-4.6') ||
-    modelId.includes('opus-4-7') ||
-    modelId.includes('opus-4.7')
-  )
 }
 
 function loadModelCache(): CursorModel[] {
@@ -370,21 +333,20 @@ export default async function (pi: ExtensionAPI): Promise<void> {
           options?.apiKey && options.apiKey !== CURSOR_PROXY_API_KEY ? options.apiKey : currentAccessToken
         return lazyStream(model, async () => {
           options?.signal?.throwIfAborted()
-          const hostStream = await waitForSharedRecovery(resolveHostStreamSimple(), options?.signal)
-          options?.signal?.throwIfAborted()
           if (!(await ensureProxyForRequest(requestAccessToken, options?.signal)) || !currentPort) {
             throw new Error('Cursor proxy is unavailable after one reconnect attempt')
           }
           const configuredModel = providerModels.find((candidate) => candidate.id === model.id)
-          const thinkingLevelMap =
-            model.thinkingLevelMap ??
-            configuredModel?.thinkingLevelMap ??
-            (hostStream.legacy && supportsLegacyXhigh(model.id) ? { xhigh: 'xhigh' as const } : undefined)
+          const configuredThinkingLevelMap =
+            configuredModel && configuredModel.type !== 'image' && configuredModel.type !== 'classifier'
+              ? configuredModel.thinkingLevelMap
+              : undefined
+          const thinkingLevelMap = model.thinkingLevelMap ?? configuredThinkingLevelMap
           const requestOptions =
             requestAccessToken && options?.apiKey === CURSOR_PROXY_API_KEY
               ? { ...options, apiKey: requestAccessToken }
               : options
-          return hostStream.streamSimple(
+          return compatStreamSimple(
             {
               ...model,
               api: 'openai-completions',

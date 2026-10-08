@@ -5,7 +5,6 @@ export default defineConfig({
     index: 'src/index.ts',
     core: 'src/core.ts',
     'pi-subagents': 'src/pi-subagents.ts',
-    'llama-cpp-provider': 'src/llama-cpp-provider.ts',
   },
   output: {
     dir: 'dist',

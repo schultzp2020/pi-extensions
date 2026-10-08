@@ -13,7 +13,7 @@ A [Pi](https://github.com/badlogic/pi) extension that gives you access to all yo
 
 ## Requirements
 
-- [Pi](https://github.com/badlogic/pi) v0.71+
+- [Pi](https://github.com/badlogic/pi) v1.1.0 or newer
 - [Node.js](https://nodejs.org) v22+
 - An active [Cursor](https://cursor.com) subscription
 

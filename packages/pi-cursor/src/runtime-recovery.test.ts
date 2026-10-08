@@ -1,4 +1,5 @@
-import { clampThinkingLevel, type Context, type Model, type SimpleStreamOptions } from '@earendil-works/pi-ai'
+import type { Model, SimpleStreamOptions, TranscriptContext } from '@earendil-works/pi-ai/compat'
+import { normalizeContext } from '@earendil-works/pi-ai/utils/transcript'
 import type { ExtensionAPI, ProviderConfig } from '@earendil-works/pi-coding-agent'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -18,18 +19,20 @@ const lifecycle = vi.hoisted(() => ({
 }))
 
 const delegatedStream = vi.hoisted(() =>
-  vi.fn<(model: Model<'openai-completions'>, context: Context, options?: SimpleStreamOptions) => AsyncIterable<never>>(
-    () => ({
-      async *[Symbol.asyncIterator]() {},
-    }),
-  ),
+  vi.fn<
+    (
+      model: Model<'openai-completions'>,
+      context: TranscriptContext,
+      options?: SimpleStreamOptions,
+    ) => AsyncIterable<never>
+  >(() => ({
+    async *[Symbol.asyncIterator]() {},
+  })),
 )
 
 vi.mock('node:os', () => ({ homedir: () => '/nonexistent/pi-cursor-runtime-recovery-test' }))
-vi.mock('@earendil-works/pi-ai', async (importOriginal) => ({
-  // Vitest's typed importOriginal helper intentionally uses an import type query.
-  // oxlint-disable-next-line typescript/consistent-type-imports
-  ...(await importOriginal<typeof import('@earendil-works/pi-ai')>()),
+vi.mock('@earendil-works/pi-ai/compat', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   streamSimple: delegatedStream,
 }))
 vi.mock('./proxy-lifecycle.ts', () => ({
@@ -49,6 +52,10 @@ vi.mock('./proxy-lifecycle.ts', () => ({
 }))
 
 import cursorExtension from './index.ts'
+
+function emptyContext(): TranscriptContext {
+  return normalizeContext({ systemPrompt: '', messages: [], tools: [] })
+}
 
 beforeEach(() => {
   lifecycle.connectToProxy.mockReset().mockResolvedValue({ port: 4100, pid: 41, models: [] })
@@ -86,7 +93,7 @@ describe('request-time proxy recovery', () => {
     const initialProvider = registrations.at(-1)
     expect(initialProvider?.api).toBe('cursor-openai-completions')
     expect(initialProvider?.baseUrl).toBe('http://localhost:4100/v1')
-    initialProvider?.streamSimple?.(model, { systemPrompt: '', messages: [], tools: [] }, { apiKey: 'stale-access' })
+    initialProvider?.streamSimple?.(model, emptyContext(), { apiKey: 'stale-access' })
     await vi.waitFor(() => expect(delegatedStream).toHaveBeenCalledOnce())
     await vi.waitFor(() => expect(lifecycle.isProxyHealthy).toHaveBeenCalledWith(4100, undefined))
 
@@ -94,7 +101,7 @@ describe('request-time proxy recovery', () => {
     expect(registrations.at(-1)?.baseUrl).toBe('http://localhost:0/v1')
 
     lifecycle.connectToProxy.mockResolvedValueOnce({ port: 4200, pid: 42, models: [] })
-    initialProvider?.streamSimple?.(model, { systemPrompt: '', messages: [], tools: [] }, { apiKey: 'fresh-access' })
+    initialProvider?.streamSimple?.(model, emptyContext(), { apiKey: 'fresh-access' })
 
     await vi.waitFor(() => expect(delegatedStream).toHaveBeenCalledTimes(2))
     expect(lifecycle.connectToProxy).toHaveBeenLastCalledWith(expect.any(Function), 'fresh-access', {
@@ -108,9 +115,7 @@ describe('request-time proxy recovery', () => {
 
     lifecycle.exitListener?.({ port: 4200, childPid: 42 })
     lifecycle.connectToProxy.mockResolvedValueOnce({ port: 4300, pid: 43, models: [] })
-    registrations
-      .at(-1)
-      ?.streamSimple?.(model, { systemPrompt: '', messages: [], tools: [] }, { apiKey: 'cursor-proxy' })
+    registrations.at(-1)?.streamSimple?.(model, emptyContext(), { apiKey: 'cursor-proxy' })
 
     await vi.waitFor(() => expect(delegatedStream).toHaveBeenCalledTimes(3))
     expect(lifecycle.connectToProxy).toHaveBeenLastCalledWith(expect.any(Function), 'fresh-access', {
@@ -145,9 +150,7 @@ describe('request-time proxy recovery', () => {
       contextWindow: 1000,
       maxTokens: 100,
     }
-    registrations
-      .at(-1)
-      ?.streamSimple?.(model, { systemPrompt: '', messages: [], tools: [] }, { apiKey: 'fresh-access' })
+    registrations.at(-1)?.streamSimple?.(model, emptyContext(), { apiKey: 'fresh-access' })
 
     await vi.waitFor(() => expect(delegatedStream).toHaveBeenCalledOnce())
     expect(lifecycle.isProxyHealthy).toHaveBeenCalledOnce()
@@ -183,9 +186,7 @@ describe('request-time proxy recovery', () => {
       contextWindow: 1000,
       maxTokens: 100,
     }
-    const stream = registrations
-      .at(-1)
-      ?.streamSimple?.(model, { systemPrompt: '', messages: [], tools: [] }, { apiKey: 'fresh-access' })
+    const stream = registrations.at(-1)?.streamSimple?.(model, emptyContext(), { apiKey: 'fresh-access' })
     if (!stream) {
       throw new Error('Cursor provider did not return a request stream')
     }
@@ -226,9 +227,7 @@ describe('request-time proxy recovery', () => {
       contextWindow: 1000,
       maxTokens: 100,
     }
-    registrations
-      .at(-1)
-      ?.streamSimple?.(model, { systemPrompt: '', messages: [], tools: [] }, { apiKey: 'fresh-access' })
+    registrations.at(-1)?.streamSimple?.(model, emptyContext(), { apiKey: 'fresh-access' })
 
     await vi.waitFor(() => expect(delegatedStream).toHaveBeenCalledOnce())
     expect(lifecycle.connectToProxy).toHaveBeenCalledTimes(2)
@@ -263,9 +262,7 @@ describe('request-time proxy recovery', () => {
       contextWindow: 1000,
       maxTokens: 100,
     }
-    registrations
-      .at(-1)
-      ?.streamSimple?.(model, { systemPrompt: '', messages: [], tools: [] }, { apiKey: 'fresh-access' })
+    registrations.at(-1)?.streamSimple?.(model, emptyContext(), { apiKey: 'fresh-access' })
 
     await vi.waitFor(() => expect(delegatedStream).toHaveBeenCalledOnce())
     expect(lifecycle.connectToProxy).toHaveBeenCalledTimes(2)
@@ -308,21 +305,16 @@ describe('request-time proxy recovery', () => {
     }
     const controller = new AbortController()
     const provider = registrations.at(-1)
-    const cancelledStream = provider?.streamSimple?.(
-      model,
-      { systemPrompt: '', messages: [], tools: [] },
-      { apiKey: 'fresh-access', signal: controller.signal },
-    )
+    const cancelledStream = provider?.streamSimple?.(model, emptyContext(), {
+      apiKey: 'fresh-access',
+      signal: controller.signal,
+    })
     if (!cancelledStream) {
       throw new Error('Cursor provider did not return a request stream')
     }
     await vi.waitFor(() => expect(lifecycle.connectToProxy).toHaveBeenCalledTimes(2))
 
-    const sharedStream = provider?.streamSimple?.(
-      model,
-      { systemPrompt: '', messages: [], tools: [] },
-      { apiKey: 'newer-access' },
-    )
+    const sharedStream = provider?.streamSimple?.(model, emptyContext(), { apiKey: 'newer-access' })
     if (!sharedStream) {
       throw new Error('Cursor provider did not return a shared request stream')
     }
@@ -397,11 +389,7 @@ describe('request-time proxy recovery', () => {
     const controller = new AbortController()
     const stream = registrations
       .at(-1)
-      ?.streamSimple?.(
-        model,
-        { systemPrompt: '', messages: [], tools: [] },
-        { apiKey: 'fresh-access', signal: controller.signal },
-      )
+      ?.streamSimple?.(model, emptyContext(), { apiKey: 'fresh-access', signal: controller.signal })
     if (!stream) {
       throw new Error('Cursor provider did not return a request stream')
     }
@@ -443,11 +431,7 @@ describe('request-time proxy recovery', () => {
     }
     const stream = registrations
       .at(-1)
-      ?.streamSimple?.(
-        model,
-        { systemPrompt: '', messages: [], tools: [] },
-        { apiKey: 'fresh-access', signal: controller.signal },
-      )
+      ?.streamSimple?.(model, emptyContext(), { apiKey: 'fresh-access', signal: controller.signal })
     if (!stream) {
       throw new Error('Cursor provider did not return a request stream')
     }
@@ -505,18 +489,14 @@ describe('request-time proxy recovery', () => {
       contextWindow: 1000,
       maxTokens: 100,
     }
-    disconnectedProvider?.streamSimple?.(
-      model,
-      { systemPrompt: '', messages: [], tools: [] },
-      { apiKey: 'fresh-access' },
-    )
+    disconnectedProvider?.streamSimple?.(model, emptyContext(), { apiKey: 'fresh-access' })
 
     await vi.waitFor(() => expect(delegatedStream).toHaveBeenCalledOnce())
     expect(lifecycle.connectToProxy).toHaveBeenCalledTimes(2)
     expect(registrations.at(-1)?.baseUrl).toBe('http://localhost:4400/v1')
   })
 
-  it('preserves legacy xhigh support when Pi omits model thinking metadata', async () => {
+  it('preserves the current per-model reasoning map through Pi’s compat stream', async () => {
     const registrations: ProviderConfig[] = []
     const pi = {
       on: vi.fn<(event: string, handler: (...args: unknown[]) => unknown) => void>(),
@@ -538,18 +518,17 @@ describe('request-time proxy recovery', () => {
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
       contextWindow: 200_000,
       maxTokens: 64_000,
+      thinkingLevelMap: { xhigh: 'max' },
     }
-    const context = { systemPrompt: '', messages: [], tools: [] }
+    const context = emptyContext()
     const options = { apiKey: 'cursor-proxy', reasoning: 'xhigh' as const }
     registrations.at(-1)?.streamSimple?.(model, context, options)
 
     await vi.waitFor(() => expect(delegatedStream).toHaveBeenCalledOnce())
-    const delegatedModel = delegatedStream.mock.calls[0]?.[0]
-    expect(delegatedModel).toMatchObject({
+    expect(delegatedStream.mock.calls[0]?.[0]).toMatchObject({
       api: 'openai-completions',
-      thinkingLevelMap: { xhigh: 'xhigh' },
+      thinkingLevelMap: { xhigh: 'max' },
     })
-    expect(clampThinkingLevel(delegatedModel, 'xhigh')).toBe('xhigh')
     expect(delegatedStream.mock.calls[0]?.[1]).toBe(context)
     expect(delegatedStream.mock.calls[0]?.[2]).toBe(options)
   })

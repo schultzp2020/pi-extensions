@@ -220,6 +220,75 @@ describe('recommendSubagentModel', () => {
     expect(classify).not.toHaveBeenCalled()
   })
 
+  it('rejects candidates with invalid token limits while keeping valid alternatives eligible', async () => {
+    const configuration = validRecommendationConfiguration()
+    if (configuration.status !== 'valid') {
+      throw new Error('Expected valid fixture configuration')
+    }
+    const [configuredModel] = configuration.configuration.models.light ?? []
+    configuration.configuration.models.light = [
+      { ...configuredModel, model: 'invalid-context' },
+      { ...configuredModel, model: 'invalid-max-tokens' },
+      { ...configuredModel, model: 'valid-alternative' },
+    ]
+    const invalidContext = { ...chatModel('openai', 'invalid-context'), contextWindow: 0 }
+    const invalidMaxTokens = {
+      ...chatModel('openai', 'invalid-max-tokens'),
+      maxTokens: Number.MAX_SAFE_INTEGER + 1,
+    }
+    const validAlternative = chatModel('openai', 'valid-alternative')
+    const classify = vi.fn<RecommendationDependencies['classify']>(() => Promise.resolve(validClassifierResult()))
+
+    const result = await recommendSubagentModel(validRecommendationRequest(), {
+      configuration,
+      candidateModels: [invalidContext, invalidMaxTokens, validAlternative],
+      classify,
+      ...thinkingHelpers,
+    })
+
+    expect(result).toMatchObject({
+      status: 'recommended',
+      selection: { provider: 'openai', model: 'valid-alternative' },
+      rejections: [
+        { provider: 'openai', model: 'invalid-context', reasons: ['invalid_context_window'] },
+        { provider: 'openai', model: 'invalid-max-tokens', reasons: ['invalid_max_tokens'] },
+      ],
+    })
+    expect(Value.Check(RecommendationResultSchema, result)).toBeTruthy()
+  })
+
+  it('returns no_eligible_model without classifying when every candidate has invalid token limits', async () => {
+    const configuration = validRecommendationConfiguration()
+    if (configuration.status !== 'valid') {
+      throw new Error('Expected valid fixture configuration')
+    }
+    const [configuredModel] = configuration.configuration.models.light ?? []
+    configuration.configuration.models.light = [
+      { ...configuredModel, model: 'invalid-context' },
+      { ...configuredModel, model: 'invalid-max-tokens' },
+    ]
+    const classify = vi.fn<RecommendationDependencies['classify']>(() => Promise.resolve(validClassifierResult()))
+    const result = await recommendSubagentModel(validRecommendationRequest(), {
+      configuration,
+      candidateModels: [
+        { ...chatModel('openai', 'invalid-context'), contextWindow: 0 },
+        { ...chatModel('openai', 'invalid-max-tokens'), maxTokens: 0 },
+      ],
+      classify,
+      ...thinkingHelpers,
+    })
+
+    expect(result).toMatchObject({
+      status: 'no_eligible_model',
+      rejections: [
+        { provider: 'openai', model: 'invalid-context', reasons: ['invalid_context_window'] },
+        { provider: 'openai', model: 'invalid-max-tokens', reasons: ['invalid_max_tokens'] },
+      ],
+    })
+    expect(classify).not.toHaveBeenCalled()
+    expect(Value.Check(RecommendationResultSchema, result)).toBeTruthy()
+  })
+
   it('returns no_eligible_model without classifying when Pi supplies no physical candidates', async () => {
     const configuration = validRecommendationConfiguration()
     if (configuration.status !== 'valid') {

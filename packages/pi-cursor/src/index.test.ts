@@ -51,6 +51,13 @@ vi.mock('@earendil-works/pi-ai/compat', async (importOriginal) => {
   return { ...actual, streamSimple: compatMocks.streamSimple }
 })
 
+const legacyHostMocks = vi.hoisted(() => ({ streamSimple: vi.fn<(...args: unknown[]) => unknown>() }))
+
+vi.mock('@earendil-works/pi-ai', async (importOriginal) => {
+  const actual = await importOriginal<Record<string, unknown>>()
+  return { ...actual, streamSimple: legacyHostMocks.streamSimple }
+})
+
 const debugLoggerMocks = vi.hoisted(() => ({
   initDebugLogger: vi.fn<() => void>(),
   logLifecycle: vi.fn<(sessionId: string, requestId: string, payload: { event: string }) => void>(),
@@ -140,7 +147,7 @@ describe('extension session shutdown', () => {
 })
 
 describe('host stream adapter selection', () => {
-  it('does not inject the legacy xhigh map into the Pi 0.84 compat adapter', async () => {
+  it('uses Pi’s public compat stream even when the removed root stream API exists', async () => {
     const providers: unknown[] = []
     const handlers = new Map<string, unknown>()
     const pi = {
@@ -205,6 +212,7 @@ describe('host stream adapter selection', () => {
       .streamSimple(model, { systemPrompt: '', messages: [], tools: [] }, { apiKey: 'request-token' })
       .result()
 
+    expect(legacyHostMocks.streamSimple).not.toHaveBeenCalled()
     expect(compatMocks.streamSimple).toHaveBeenCalledOnce()
     expect(compatMocks.streamSimple.mock.calls[0]?.[0]).toMatchObject({
       id: model.id,

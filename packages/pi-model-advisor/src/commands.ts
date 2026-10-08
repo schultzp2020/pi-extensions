@@ -118,6 +118,13 @@ function inventoryLines(
     `Configuration: ${inventory.status}`,
     `Classifier: ${inventory.classifier.status}`,
     `Chat models: ${inventory.eligible.length} eligible, ${inventory.unclassified.length} unclassified, ${inventory.unavailable.length} unavailable, ${inventory.rejected.length} outside Pi scope.`,
+    `Invalid model limits: ${
+      inventory.invalidLimits.length > 0
+        ? inventory.invalidLimits
+            .map(({ provider, model, reasons }) => `${provider}/${model} (${reasons.join(', ')})`)
+            .join(', ')
+        : 'none'
+    }.`,
   ]
   if (mode === 'models') {
     lines.push(

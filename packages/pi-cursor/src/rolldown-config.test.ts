@@ -9,7 +9,7 @@ import { describe, expect, it } from 'vitest'
 
 describe('published extension bundle', () => {
   // 15 s subprocess bound + 244 ms measured config/build/setup/cleanup + 5 s scheduling headroom.
-  it('bundles legacy lazy streaming while preserving host adapter dispatch', async () => {
+  it('loads through Pi 1.1 and recovers a request through the public compat stream', async () => {
     const configPath = fileURLToPath(new URL('../rolldown.config.ts', import.meta.url))
     const packageDir = fileURLToPath(new URL('..', import.meta.url))
     // The harness uses process.kill(pid, 'SIGKILL'): Node reports code 1 on Windows and SIGKILL on POSIX.
@@ -34,10 +34,9 @@ describe('published extension bundle', () => {
       const dynamicImports = chunks.flatMap((chunk) => chunk.dynamicImports)
       const moduleIds = chunks.flatMap((chunk) => chunk.moduleIds.map((id) => id.replaceAll('\\', '/')))
 
-      expect(imports).not.toContain('@earendil-works/pi-ai/api/lazy')
-      expect(imports).not.toContain('@earendil-works/pi-ai/api/openai-completions')
-      expect(imports).toContain('@earendil-works/pi-ai')
-      expect(dynamicImports).toContain('@earendil-works/pi-ai/compat')
+      expect(imports).not.toContain('@earendil-works/pi-ai')
+      expect(imports).toContain('@earendil-works/pi-ai/compat')
+      expect(dynamicImports).not.toContain('@earendil-works/pi-ai/compat')
       expect(moduleIds.some((id) => id.endsWith('/dist/api/lazy.js'))).toBeTruthy()
       expect(moduleIds.some((id) => id.endsWith('/dist/api/openai-completions.js'))).toBeFalsy()
 
@@ -52,10 +51,8 @@ describe('published extension bundle', () => {
         harnessPath,
         `import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import extension from './index.js'
+import { DefaultResourceLoader, createAgentSession, SessionManager } from '@earendil-works/pi-coding-agent'
 
-const providers = []
-const handlers = new Map()
 const agentDir = join(process.env.HOME, '.pi', 'agent')
 const portFilePath = join(agentDir, 'cursor-proxy.json')
 const lifecycleFilePath = join(agentDir, 'cursor-proxy-lifecycle.json')
@@ -67,23 +64,35 @@ const waitFor = async (condition, message) => {
   }
   throw new Error(message)
 }
-await extension({
-  registerProvider(_name, provider) {
-    providers.push(provider)
-  },
-  registerCommand() {},
-  on(event, handler) {
-    handlers.set(event, handler)
-  },
+const resourceLoader = new DefaultResourceLoader({
+  cwd: process.cwd(),
+  agentDir,
+  additionalExtensionPaths: [join(process.cwd(), 'index.js')],
+  noSkills: true,
+  noPromptTemplates: true,
+  noThemes: true,
+  noContextFiles: true,
 })
-const initialProvider = providers.at(-1)
+await resourceLoader.reload()
+const { session, extensionsResult } = await createAgentSession({
+  cwd: process.cwd(),
+  agentDir,
+  resourceLoader,
+  sessionManager: SessionManager.inMemory(),
+  tools: [],
+})
+if (extensionsResult.errors.length > 0) throw new Error('Pi failed to load Cursor extension')
+const initialModel = session.modelRuntime.getPhysicalModel('cursor', 'gpt-5.4')
+if (!initialModel) throw new Error('Pi did not register the Cursor provider model')
+const initialProviderBaseUrl = initialModel.baseUrl
 const firstProxy = JSON.parse(readFileSync(portFilePath, 'utf8'))
 process.kill(firstProxy.pid, 'SIGKILL')
 await waitFor(
-  () => providers.at(-1)?.baseUrl === 'http://localhost:0/v1',
+  () => session.modelRuntime.getPhysicalModel('cursor', 'gpt-5.4')?.baseUrl === 'http://localhost:0/v1',
   'Provider stayed pinned to the exited proxy',
 )
-const disconnectedProvider = providers.at(-1)
+const disconnectedModel = session.modelRuntime.getPhysicalModel('cursor', 'gpt-5.4')
+if (!disconnectedModel) throw new Error('Pi lost the Cursor model after proxy exit')
 await waitFor(() => {
   try {
     return JSON.parse(readFileSync(lifecycleFilePath, 'utf8')).childPid === firstProxy.pid
@@ -92,20 +101,8 @@ await waitFor(() => {
   }
 }, 'Exited proxy lifecycle was not persisted')
 
-const model = {
-  id: 'cursor-test',
-  name: 'Cursor Test',
-  provider: 'cursor',
-  api: 'cursor-openai-completions',
-  baseUrl: initialProvider.baseUrl,
-  reasoning: false,
-  input: ['text'],
-  cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-  contextWindow: 1_000,
-  maxTokens: 100,
-}
-const stream = disconnectedProvider?.streamSimple?.(
-  model,
+const result = await session.modelRuntime.completeSimple(
+  initialModel,
   {
     systemPrompt: '',
     messages: [{ role: 'user', content: 'prove the same request recovers', timestamp: Date.now() }],
@@ -113,8 +110,6 @@ const stream = disconnectedProvider?.streamSimple?.(
   },
   { apiKey: 'fresh-bundle-token' },
 )
-if (!stream) throw new Error('Cursor provider did not return a request stream')
-const result = await stream.result()
 const secondProxy = JSON.parse(readFileSync(portFilePath, 'utf8'))
 await waitFor(() => {
   try {
@@ -125,14 +120,15 @@ await waitFor(() => {
 }, 'Successful proxy restart was not persisted')
 const lifecycleText = readFileSync(lifecycleFilePath, 'utf8')
 const lifecycle = JSON.parse(lifecycleText)
+const replacementModel = session.modelRuntime.getPhysicalModel('cursor', 'gpt-5.4')
 const responseText = result.content
   .filter((block) => block.type === 'text')
   .map((block) => block.text)
   .join('')
 process.stdout.write(JSON.stringify({
-  initial: { ...firstProxy, providerBaseUrl: initialProvider.baseUrl },
-  afterExit: { providerBaseUrl: disconnectedProvider.baseUrl },
-  replacement: { ...secondProxy, providerBaseUrl: providers.at(-1)?.baseUrl },
+  initial: { ...firstProxy, providerBaseUrl: initialProviderBaseUrl },
+  afterExit: { providerBaseUrl: disconnectedModel.baseUrl },
+  replacement: { ...secondProxy, providerBaseUrl: replacementModel?.baseUrl },
   response: { stopReason: result.stopReason, text: responseText },
   sameRequestRoutedToReplacement:
     responseText === 'served-by:' + String(secondProxy.pid) + ':' + String(secondProxy.port),
@@ -143,7 +139,7 @@ process.stdout.write(JSON.stringify({
     !lifecycleText.includes('fresh-bundle-token') &&
     !lifecycleText.includes('prove the same request recovers'),
 }))
-await handlers.get('session_shutdown')?.()
+await session.dispose()
 try {
   process.kill(secondProxy.pid, 'SIGTERM')
 } catch {}

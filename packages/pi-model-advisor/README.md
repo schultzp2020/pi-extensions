@@ -1,12 +1,12 @@
 # Pi Model Advisor
 
-A Pi 1.0.4 extension and reusable core that recommends an eligible chat model and thinking level for an explicitly supplied subtask. It does not switch the parent model, read the parent transcript, approve a recommendation, or launch an agent.
+A Pi 1.1.0+ extension and reusable core that recommends an eligible chat model and thinking level for an explicitly supplied subtask. It does not switch the parent model, read the parent transcript, approve a recommendation, or launch an agent.
 
 ## Requirements
 
-- Pi 1.0.4 or later compatible with its native typed-classifier API; this package targets and tests against Pi 1.0.4.
+- Pi 1.1.0 or later; package development and tests target exact Pi 1.1.0 dependencies.
 - An authenticated Pi classifier and at least one eligible chat model for recommendations.
-- For local classification, an authenticated Pi classifier; the package also provides a separately enabled native `llama.cpp` provider for a local router. The advisor does not start or configure that server.
+- For local classification, Pi's built-in `llama.cpp` provider enabled and an authenticated local router. Decision-model classification requires llama.cpp 0.6.0 or later; the Advisor does not start or configure the server.
 
 ## Install
 
@@ -16,25 +16,21 @@ After the package is released:
 pi install npm:@schultzp2020/pi-model-advisor
 ```
 
-The package manifest loads only the default Advisor extension. For development, build the package first and load `dist/index.js` as an extension. Installation does not configure a classifier, model policy, or optional provider.
+The package manifest loads only the Advisor extension. For development, build the package first and load `dist/index.js` as an extension. Installation does not configure a classifier or model policy.
 
 ## Configure Pi's classifier
 
-Pi owns classifier discovery, provider registration, authentication, transport, and native retries. The advisor selects one exact classifier identity from Pi's authenticated classifier inventory; it does not infer a classifier from model names or make a chat request in place of classification.
+Pi owns classifier discovery, provider registration, authentication, transport, retries, cancellation, and usage accounting. The Advisor selects one exact classifier identity from Pi's authenticated classifier inventory; it does not infer a classifier from model names or make a chat request in place of classification.
 
-Authenticate the provider in Pi with `/login <provider>` or its documented environment variable. For example, OpenRouter supports `/login openrouter` or `OPENROUTER_API_KEY`. Pi 1.0.4 exposes available native classifiers separately from chat models; the configured `provider` and `model` must match one of those exact entries. See Pi's [classifier model documentation](https://github.com/earendil-works/pi/blob/v1.0.4/packages/coding-agent/docs/models.md#use-classifier-models) for providers and IDs.
+Authenticate the provider in Pi with `/login <provider>` or its documented environment variable. For example, OpenRouter supports `/login openrouter` or `OPENROUTER_API_KEY`. Pi exposes available classifiers separately from chat models; configured `provider` and `model` must match one exact authenticated entry. See Pi's [classifier model documentation](https://github.com/earendil-works/pi/blob/v1.1.0/packages/coding-agent/docs/models.md#use-classifier-models).
 
-For local classification, start `llama-server` in router mode (without `--model` or `-m`). The package's optional provider extension is not loaded by the default Advisor manifest and does not take over Pi's built-in `llama.cpp` provider unless explicitly enabled. After installing the package with Pi, add a shim at `<getAgentDir()>/extensions/llama-cpp-provider.ts` that imports the managed build directly; Pi's npm packages live under `<getAgentDir()>/npm/node_modules`, outside normal extension module resolution:
+### Local classification with Pi's built-in llama.cpp
 
-```ts
-import llamaCppProvider from '../npm/node_modules/@schultzp2020/pi-model-advisor/dist/llama-cpp-provider.js'
+Before upgrading from the Pi 1.0.4-based Advisor release, remove the old `<getAgentDir()>/extensions/llama-cpp-provider.ts` shim that imports `dist/llama-cpp-provider.js`, then upgrade and run `/reload`. Keep Pi's built-in `llama.cpp` provider enabled. The old shim overrides Pi's native provider; this package no longer ships that duplicate. Advisor migration does not change authentication or server settings automatically.
 
-export default llamaCppProvider
-```
+Start `llama-server` in router mode (without `--model` or `-m`), then configure Pi with `/login llama.cpp` or `LLAMA_BASE_URL` and optional `LLAMA_API_KEY`. Pi's built-in provider handles model discovery, authentication, chat/classifier dispatch, cancellation, and usage. Ordinary chat models also appear as classifiers; decision-only models appear only as classifiers. llama.cpp 0.6.0+ reports decision models through `architecture.output_modalities: ["decisions"]` and serves typed decisions at `/v1/systemone`. Older servers may omit this metadata, so Pi cannot identify decision-only models correctly. See Pi's [llama.cpp guide](https://github.com/earendil-works/pi/blob/v1.1.0/packages/coding-agent/docs/llama-cpp.md).
 
-Then use `/login llama.cpp` or `LLAMA_BASE_URL` and optional `LLAMA_API_KEY`, and select the exact authenticated classifier ID Pi exposes. To disable the optional provider, remove the shim and run `/reload`; the native registration is removed and Pi's built-in provider is restored. This changes no server settings, downloads no models, and adds no Advisor configuration fields. The managed provider loader is verified with Pi 1.0.4 on Node 24.14; Bun runtime and compiled Bun-binary execution are unverified.
-
-The provider selects TypeSafe System One for catalog models whose validated `architecture.output_modalities` contains `decisions` (a Clef model is one example, not a name-based exception). Ordinary decoder models use Pi's native llama.cpp next-token classifier API; decision-only models are not listed as chat models. The Advisor starts no server and never falls back to a hosted classifier. A provider ID by itself does not prove where an endpoint runs or how it handles data.
+OpenAI's GPT-6 Luna is an optional hosted classifier. It requires OpenAI API-key authentication (`OPENAI_API_KEY`); ChatGPT/Codex login does not authenticate the Decisions API. If `openai` is logged in with ChatGPT credentials, `/logout openai` before relying on `OPENAI_API_KEY`, or sign in with an API key. Configure the exact `openai` classifier identity and authenticate it explicitly. The Advisor does not switch providers automatically or expand image-input support. The Advisor starts no server and never falls back to a hosted classifier. A provider ID alone does not prove endpoint location or data handling.
 
 ## Configure the advisor
 
@@ -178,7 +174,7 @@ pnpm --filter @schultzp2020/pi-model-advisor lint
 pnpm --filter @schultzp2020/pi-model-advisor format:check
 ```
 
-Unit and packaging tests use injected classifier results and Pi snapshots. They require no credentials, network access, paid inference, or local model server. Do not run live classifier or worker calls for normal verification.
+Core tests use injected classifier results and Pi snapshots. The native llama.cpp integration test loads Pi 1.1.0's built-in extension against a localhost mock server. Tests need no credentials, external network, paid inference, or running llama.cpp server. Do not run live classifier or worker calls for normal verification.
 
 ## License
 

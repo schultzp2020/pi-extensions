@@ -650,6 +650,8 @@ components:
               [
                 unavailable,
                 virtual_model,
+                invalid_context_window,
+                invalid_max_tokens,
                 unclassified,
                 caller_level_excluded,
                 provider_excluded,

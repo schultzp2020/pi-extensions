@@ -11,6 +11,20 @@ export const THINKING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhig
 
 export type Capability = (typeof CAPABILITIES)[number]
 export type ThinkingLevel = (typeof THINKING_LEVELS)[number]
+export type ModelLimitRejectionReason = 'invalid_context_window' | 'invalid_max_tokens'
+
+export function invalidModelLimitReasons(
+  model: Pick<Model<Api>, 'contextWindow' | 'maxTokens'>,
+): ModelLimitRejectionReason[] {
+  const reasons: ModelLimitRejectionReason[] = []
+  if (!Number.isSafeInteger(model.contextWindow) || model.contextWindow <= 0) {
+    reasons.push('invalid_context_window')
+  }
+  if (!Number.isSafeInteger(model.maxTokens) || model.maxTokens <= 0) {
+    reasons.push('invalid_max_tokens')
+  }
+  return reasons
+}
 
 export interface ModelIdentity {
   provider: string
@@ -344,6 +358,7 @@ export interface AdvisorModelInventory {
   unclassified: ModelIdentity[]
   unavailable: ModelIdentity[]
   rejected: ModelIdentity[]
+  invalidLimits: { provider: string; model: string; reasons: ModelLimitRejectionReason[] }[]
   candidateModels: Model<Api>[]
 }
 
@@ -390,6 +405,11 @@ export async function discoverAdvisorModels(
   const configured = configuration ? configuredModels(configuration) : []
   const configuredKeys = new Set(configured.map(({ identity }) => identityKey(identity)))
   const unsupportedThinkingModels = new Set<string>()
+  const invalidLimits = candidates.flatMap((model) => {
+    const reasons = invalidModelLimitReasons(model)
+    return reasons.length > 0 ? [{ ...modelIdentity(model), reasons }] : []
+  })
+  const invalidLimitKeys = new Set(invalidLimits.map(({ provider, model }) => identityKey({ provider, model })))
   const classifierIdentity = configuration?.classifier
   let classifierAvailable = false
   if (configuration) {
@@ -415,7 +435,7 @@ export async function discoverAdvisorModels(
       const modelMetadata =
         candidates.find((candidate) => identityKey(modelIdentity(candidate)) === identityKey(model.identity)) ??
         available.find((candidate) => identityKey(modelIdentity(candidate)) === identityKey(model.identity))
-      if (!modelMetadata) {
+      if (!modelMetadata || invalidLimitKeys.has(identityKey(model.identity))) {
         continue
       }
       const supported = getSupportedThinkingLevels(modelMetadata)
@@ -441,7 +461,7 @@ export async function discoverAdvisorModels(
   const eligible = candidates
     .filter((model) => {
       const key = identityKey(modelIdentity(model))
-      return configuredKeys.has(key) && !unsupportedThinkingModels.has(key)
+      return configuredKeys.has(key) && !unsupportedThinkingModels.has(key) && !invalidLimitKeys.has(key)
     })
     .map(modelIdentity)
   const unclassified = candidates
@@ -467,6 +487,7 @@ export async function discoverAdvisorModels(
     unclassified,
     unavailable,
     rejected,
+    invalidLimits,
     candidateModels: candidates,
   }
 }
