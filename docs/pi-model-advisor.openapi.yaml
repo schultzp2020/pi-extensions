@@ -1,0 +1,880 @@
+openapi: 3.1.0
+info:
+  title: Pi Model Advisor — draft schema reference
+  version: 0.1.0-draft
+  description: |
+    Reference for Pi tool and exported-core JSON values, not an HTTP API.
+    Source implementation is authorized. No HTTP server, endpoints, or publication.
+    The HTML specification remains authoritative for previously agreed behavior.
+    Planning contract updated with user-approved config-only tasks and defaults.
+    Starter profiles: plan, implement, review, research, pull_request. No reserved keys:
+    any configured name is valid, unknown explicit names are input errors. taskKind
+    explicitly selects a profile; no task name is inferred. Profiles accept level
+    arrays or objects with levels and optional descriptions. Without taskKind there
+    is no selected profile or description. role is descriptive, not routing authority.
+    One native call asks three choice questions (capability, thinking, context) and
+    one bool question (consequence). Profile descriptions are classifier data, never
+    permission to override bounds. No built-in taxonomy or task-kind floors remain.
+
+    Task levels define the normal automatic-picking pool. Request levels stay hard.
+    Prefer a sufficient compatible normal-pool model. If none exists, a sufficient
+    model above the highest task level may be proposed with approval_required, within
+    every hard bound. Caller must obtain fresh approval of exact provider/model/thinking;
+    this is not automatic substitution or classifier fallback. Empty task/request lists
+    block the request, including escalation. Array order does not set priority.
+    Routine implementation uses light Luna at max; stronger exceptions require approval.
+    Adding another light model changes the routine implementation pool.
+
+    Configuration keeps the older object-style identities: classifier has provider
+    and model; models groups arrays of provider/model objects under capability keys.
+    Capability belongs to the group, not each model. Model presence permits selection;
+    removing an entry excludes it. There are no enabled or local configuration fields.
+    Priority, thinking, policy, and logging overrides remain optional.
+    Configuration: <getAgentDir()>/model-advisor.json, global only; initialization
+    and /reload only. PI_CODING_AGENT_DIR is honored. Invalid reload disables routing.
+
+    Native classification uses one explicitly configured, authenticated Pi classifier,
+    either hosted or local. A locally served Clef can be selected through Pi's native
+    llama.cpp provider when its exact model ID appears in the classifier inventory.
+    Pi owns the llama.cpp server URL, optional credentials, discovery, and transport;
+    advisor configuration has no endpoint, API key, or classifier-local flag.
+    The provider ID alone does not prove locality: configure a genuinely local server
+    in Pi. Local versus hosted classifiers require probability-policy calibration.
+    Pi's native llama.cpp classification reads next-token label probabilities.
+    Ollama's documented OpenAI-compatible endpoints do not support logprobs, so an
+    Ollama chat endpoint is not a drop-in replacement for this classifier path.
+    Ollama may still serve worker chat models through Pi's compatible-endpoint support.
+    There is no fallback, corrective inference, generated rationale, parent model
+    switch, or agent launch. Pi owns authentication and transport retries.
+    Native TypeScript functions, abort signals, model snapshots, and preflight host
+    objects are intentionally not represented as JSON request fields.
+paths: {}
+x-pi-tool:
+  name: recommend_subagent_model
+  inputSchema: '#/components/schemas/RecommendationRequest'
+  outputSchema: '#/components/schemas/RecommendationResult'
+  annotations:
+    readOnlyHint: true
+    destructiveHint: false
+    openWorldHint: true
+  description: |
+    structuredContent matches RecommendationResult on every result path.
+    Reported nested usage must also be forwarded through Pi's native accounting
+    field by the adapter; a value in details or structuredContent alone is insufficient.
+    openWorldHint is conservative because classifier traffic may leave the machine.
+x-configuration:
+  path: '<getAgentDir()>/model-advisor.json'
+  schema: '#/components/schemas/AdvisorConfiguration'
+x-core-export:
+  path: '@schultzp2020/pi-model-advisor/core'
+  function: recommendSubagentModel
+  inputSchema: '#/components/schemas/RecommendationRequest'
+  outputSchema: '#/components/schemas/RecommendationResult'
+  description: |
+    Inject a validated configuration snapshot, Pi-derived physical candidate snapshot,
+    native classifier execution, Pi thinking helpers, and optional AbortSignal.
+    No ExtensionContext or pi-subagents runtime dependency. Registry/catalog discovery
+    stays in the Pi adapter. Request levels and all hard requirements narrow its snapshot;
+    task levels define the normal pool, with stronger exceptions requiring user approval.
+x-pi-subagents-export:
+  path: '@schultzp2020/pi-model-advisor/pi-subagents'
+  function: verifySubagentRecommendation
+  outputSchema: '#/components/schemas/VerificationResult'
+  description: |
+    Native TypeScript inputs: recommendation, intended launch inputs, current host
+    snapshots, and caller-injected resolveSubagentLaunchContract from the public
+    pi-subagents/preflight export. Supports native Pi children only.
+    Verification is neither approval nor reservation. Launcher rechecks policy.
+    Exact dispatch selection is provider/model:thinking; no external CLI translation.
+x-commands:
+  - /model-advisor
+  - /model-advisor recommend <task>
+  - /model-advisor models
+  - /model-advisor config
+  - /model-advisor doctor
+  - /model-advisor doctor --connectivity
+x-command-notes: |
+  Proposed recommend command accepts task text; structured overrides use the tool/core.
+  Bare command shows status. Config shows the active snapshot and reload boundary,
+  not credentials. Models distinguishes eligible, unclassified, unavailable,
+  and rejected entries. Doctor makes no inference call by default; --connectivity
+  explicitly opts into a minimal native classification probe, not worker execution.
+  Rendering and diagnostic text are mechanically derived, never generated rationale.
+x-policy:
+  contextWindowPreference: Applies only to broad and exceptional context demand.
+  rankingOrder:
+    - Lowest sufficient capability
+    - Higher user priority
+    - Larger context window when context preference applies
+    - Lower output price
+    - Lower input price
+    - Lower cache-read price
+    - Case-sensitive provider, then model lexical order
+  missingPrice: Sorts after known values; explicit zero remains zero.
+  probabilityTolerance: 0.0001
+  probabilityValidation: |
+    Every probability and choice confidence is finite and in [0,1]. Exact expected
+    labels only; absolute distribution-sum error must be at most 0.0001.
+    Accepted rounding drift is normalized for the cumulative capability percentile.
+    Quantile is the first ordered label whose cumulative probability reaches the
+    configured percentile; at percentile 100, use the highest nonzero label.
+    No native score expectation, confidence, rounding-to-class, or correction call.
+    Unknown answer fields, missing labels, and duplicate entries are invalid.
+    A parsed JSON object cannot expose duplicate keys: raw-wire parsing belongs to Pi.
+  levelRestrictions: |
+    Reject unknown explicit taskKind before classification. Request levels, Pi scope,
+    membership, and provider/image/context/thinking requirements are hard.
+    Empty request or selected-task lists block the request. Classify explicit task data
+    and the selected profile description once. Prefer sufficient compatible models in
+    the task/request intersection. If none exists, consider only levels above the highest
+    task level, inside the hard caller level set and every hard bound. Rank one stronger
+    proposal and return approval_required. No sufficient normal or stronger candidate
+    yields no_eligible_model. Never weaken capability floors or hard requirements.
+    Without taskKind, all caller-permitted levels are normal: no profile escalation.
+    Native classifier failure never triggers a proposal.
+  approval: |
+    recommended identifies a normal-pool selection, not user authorization to launch.
+    Caller launch policy remains authoritative. approval_required demands fresh exact
+    provider/model/thinking approval, even if that model was previously approved for
+    another role. Preflight verification is neither approval nor reservation.
+    Advisor never launches, mutates approval state, or substitutes automatically.
+  thinkingResolution: |
+    Intersect global, per-model, and caller bounds. Clamp requested effort into the
+    interval, then use Pi's next-supported-higher-then-lower resolution. If native
+    resolution crosses a bound, choose the nearest supported boundary INSIDE the
+    interval. No supported level inside configured bounds is configuration_error;
+    caller bounds eliminating all candidates produce no_eligible_model.
+  logging: |
+    Pi custom session entries record classifier identity, validated bounded answers,
+    candidate identities, selection, and failure category. Default metadata excludes
+    task, role, context, and raw provider errors. includeTask=true permits the complete
+    supplied task state. Pi may independently retain tool arguments and transcripts.
+  validation: |
+    additionalProperties=false applies to advisor-owned objects. Reject duplicate
+    model identities, inverted thinking ranges, unordered consequence thresholds,
+    nonfinite numbers, and unknown keys. Identity matching is exact and case-sensitive;
+    whitespace-only identities/tasks are invalid. Core callers receive equivalent
+    input-validation errors; invalid requests are not RecommendationResult statuses.
+    Unknown configured chat IDs are inventory warnings, never eligible models.
+components:
+  schemas:
+    Capability:
+      type: string
+      enum: [light, standard, advanced, frontier]
+      description: Ordered user-defined model capability; never inferred from name or price.
+    ThinkingLevel:
+      type: string
+      enum: ['off', minimal, low, medium, high, xhigh, max]
+      description: Ordered Pi levels; actual support is resolved through Pi model metadata.
+    TaskName:
+      $ref: '#/components/schemas/NonemptyString'
+      description: Arbitrary exact configured profile key; unknown explicit names are invalid input. No built-in catalog or aliases.
+    ContextDemand:
+      type: string
+      enum: [narrow, moderate, broad, exceptional]
+      description: |
+        Ordered semantic demand, not a token-count estimate.
+        narrow: one localized artifact.
+        moderate: several related artifacts.
+        broad: cross-module or repository-wide dependencies.
+        exceptional: extensive cross-system material.
+    NonemptyString:
+      type: string
+      minLength: 1
+      pattern: '\S'
+    ModelIdentity:
+      type: object
+      additionalProperties: false
+      required: [provider, model]
+      properties:
+        provider:
+          $ref: '#/components/schemas/NonemptyString'
+        model:
+          $ref: '#/components/schemas/NonemptyString'
+      description: |
+        Exact Pi identity. openai is work; openai-codex is personal. Do not rewrite
+        provider prefixes. Native Pi registry entries use id; adapters map it to model.
+    RecommendationRequest:
+      type: object
+      additionalProperties: false
+      required: [task]
+      properties:
+        task:
+          $ref: '#/components/schemas/NonemptyString'
+          description: Explicit task body; the parent transcript is never read.
+        taskKind:
+          $ref: '#/components/schemas/TaskName'
+          description: Optional exact configured profile key; must exist in active tasks. Omitted means no selected profile or inferred task name.
+        role:
+          $ref: '#/components/schemas/NonemptyString'
+          description: Descriptive free text; does not enforce a model restriction.
+        context:
+          type: string
+          description: Caller-supplied context only; may be sent to a remote classifier.
+        requirements:
+          $ref: '#/components/schemas/Requirements'
+        levels:
+          $ref: '#/components/schemas/AllowedLevels'
+          description: Hard level restriction for both normal picks and stronger proposals; omitted permits all four, empty blocks the request.
+      examples:
+        - task: Implement strict global configuration validation.
+          taskKind: implement
+          requirements:
+            allowedProviders: [openai-codex]
+        - task: Review the supplied authorization diff for regressions and security flaws.
+          taskKind: review
+          context: '<supplied diff and test results>'
+          requirements:
+            allowedProviders: [openai-codex]
+        - task: Write a PR title and body from verified changes and test results.
+          taskKind: pull_request
+          context: '<supplied diff and test results>'
+          requirements:
+            allowedProviders: [openai-codex]
+        - task: Audit the supplied authentication diff for privilege escalation.
+          taskKind: security_review
+          levels: [advanced, frontier]
+          context: '<supplied diff>'
+          requirements:
+            allowedProviders: [openai-codex]
+      x-example-notes: |
+        Requests are separate calls, not launches. The custom security_review example
+        requires a configured profile with that exact name; unknown names fail validation.
+        Routine implementation uses Luna at max. Omitted request levels allow a stronger
+        proposal requiring fresh exact approval; explicit levels=[light] would forbid it.
+        Lower thinking ceilings exclude Luna, never reduce its effort. Classifier demand
+        and consequence floors remain binding. No parent transcript is read.
+    Requirements:
+      type: object
+      additionalProperties: false
+      properties:
+        imageInput:
+          type: boolean
+          default: false
+          description: Requires Pi image-input support; does not attach an image to classification.
+        minimumContextWindow:
+          type: integer
+          minimum: 1
+          description: Hard token-capacity minimum; missing model capacity cannot prove eligibility.
+        allowedProviders:
+          type: array
+          uniqueItems: true
+          items:
+            $ref: '#/components/schemas/NonemptyString'
+          description: Exact provider allowlist; omitted is unrestricted, empty excludes all.
+        minimumThinking:
+          $ref: '#/components/schemas/ThinkingLevel'
+        maximumThinking:
+          $ref: '#/components/schemas/ThinkingLevel'
+      description: Caller thinking bounds are hard; inverted bounds are invalid input.
+    AdvisorConfiguration:
+      type: object
+      additionalProperties: false
+      required: [classifier, models]
+      properties:
+        classifier:
+          $ref: '#/components/schemas/ModelIdentity'
+          description: Must match exactly one available Pi classifier inventory entry, hosted or local. For locally served Clef, use provider llama.cpp and the exact registered model ID; Pi owns server configuration and optional authentication.
+        models:
+          $ref: '#/components/schemas/CapabilityGroups'
+          description: Exact grouped classifications narrow Pi-owned candidates; no independent catalogue.
+        tasks:
+          $ref: '#/components/schemas/TaskProfiles'
+          default: {}
+          description: Config-only named normal-pool policies; callers select them explicitly. No built-in keys or inferred task names.
+        thinking:
+          $ref: '#/components/schemas/ThinkingRange'
+          default: { minimum: 'off', maximum: max }
+        policy:
+          $ref: '#/components/schemas/PolicyConfiguration'
+          default: {}
+        logging:
+          $ref: '#/components/schemas/LoggingConfiguration'
+          default: { includeTask: false }
+      examples:
+        - classifier: { provider: openrouter, model: typesafe/jev-1.13 }
+          models:
+            light:
+              - provider: openai
+                model: gpt-6-luna
+                thinking: { minimum: max, maximum: max }
+              - provider: openai-codex
+                model: gpt-6-luna
+                thinking: { minimum: max, maximum: max }
+            standard:
+              - { provider: openai, model: gpt-6-sol }
+              - { provider: openai-codex, model: gpt-6-sol }
+            advanced:
+              - { provider: openai, model: gpt-6.1-sol }
+              - { provider: openai-codex, model: gpt-6.1-sol }
+            frontier:
+              - { provider: openai, model: gpt-6-astra }
+              - { provider: openai-codex, model: gpt-6-astra }
+          tasks:
+            plan:
+              description: Design an approach and implementation steps from requirements.
+              levels: [advanced, frontier]
+            implement:
+              description: Change code and tests, including fixes and refactoring.
+              levels: [light]
+            review:
+              description: Assess correctness, security, and regressions.
+              levels: [advanced, frontier]
+            research:
+              description: Investigate sources and summarize evidence-backed findings.
+              levels: [standard, advanced]
+            pull_request:
+              description: Prepare a PR title and body from verified changes and test results.
+              levels: [standard, advanced]
+        - classifier: { provider: openrouter, model: typesafe/jev-1.13 }
+          models:
+            light:
+              - provider: openai
+                model: gpt-6-luna
+                priority: 10
+                thinking: { minimum: max, maximum: max }
+          tasks:
+            implement: [light]
+            security_review:
+              description: Audit authentication and authorization changes for security flaws.
+              levels: [advanced, frontier]
+        - classifier:
+            provider: llama.cpp
+            model: '<exact-local-clef-model-id>'
+          models:
+            light:
+              - provider: openai
+                model: gpt-6-luna
+                thinking: { minimum: max, maximum: max }
+          tasks:
+            implement: [light]
+      x-example-notes: |
+        The local classifier ID is a placeholder, not a discovered model. Configure
+        Pi's llama.cpp connection, load a compatible local model, and copy its exact
+        classifier inventory ID. The advisor does not start servers, download models,
+        auto-register classifiers, or fall back from local to hosted inference.
+        Local native classification uses llama.cpp, not Ollama chat/JSON emulation.
+      x-ollama-reference: https://docs.ollama.com/api/openai-compatibility
+    AllowedLevels:
+      type: array
+      uniqueItems: true
+      items:
+        $ref: '#/components/schemas/Capability'
+      description: Capability-level list; field context determines hard caller restriction versus normal task pool. Order has no priority meaning. Empty blocks the request.
+    TaskProfiles:
+      type: object
+      propertyNames:
+        $ref: '#/components/schemas/TaskName'
+      additionalProperties:
+        oneOf:
+          - $ref: '#/components/schemas/AllowedLevels'
+          - $ref: '#/components/schemas/TaskProfile'
+      description: |
+        Arbitrary exact keys; no reserved names, inference, aliases, or inheritance.
+        Arrays define normal levels; objects may add descriptions. Explicit taskKind
+        must match a key. Empty levels block that task including escalation.
+        Without taskKind, no task policy or description applies.
+    TaskProfile:
+      type: object
+      additionalProperties: false
+      required: [levels]
+      properties:
+        description:
+          $ref: '#/components/schemas/NonemptyString'
+          description: Brief scope/outcome description; passed as explicit classifier data only for the selected profile.
+        levels:
+          $ref: '#/components/schemas/AllowedLevels'
+          description: Normal picking pool; a sufficient model above its highest level requires fresh user approval.
+    CapabilityGroups:
+      type: object
+      additionalProperties: false
+      properties:
+        light:
+          $ref: '#/components/schemas/ModelGroup'
+        standard:
+          $ref: '#/components/schemas/ModelGroup'
+        advanced:
+          $ref: '#/components/schemas/ModelGroup'
+        frontier:
+          $ref: '#/components/schemas/ModelGroup'
+      description: |
+        Capability applies to every model in its array. Unused groups may be omitted.
+        Empty groups or an empty object are valid; no candidates yields no_eligible_model.
+        Reject repeated provider/model identities within or across groups, even when
+        optional overrides differ. Omitted models are unclassified and excluded.
+        Examples use the user's explicit tiers: GPT-6 Luna=light, GPT-6 Sol=standard,
+        GPT-6.1 Sol=advanced, GPT-6 Astra=frontier, for both openai and openai-codex.
+        These are configured judgments, not capability inferred from model names.
+        The user's Luna entries must pin minimum=maximum=max; missing bounds are not
+        equivalent to this policy. Max thinking does not raise class. Stronger sufficient
+        proposals require fresh exact approval and must satisfy all hard caller bounds.
+    ModelGroup:
+      type: array
+      uniqueItems: true
+      items:
+        $ref: '#/components/schemas/ConfiguredModel'
+    ConfiguredModel:
+      type: object
+      additionalProperties: false
+      required: [provider, model]
+      properties:
+        provider:
+          $ref: '#/components/schemas/NonemptyString'
+        model:
+          $ref: '#/components/schemas/NonemptyString'
+        priority:
+          type: integer
+          default: 0
+          description: Higher wins within the lowest sufficient capability class; negative is permitted.
+        thinking:
+          $ref: '#/components/schemas/ThinkingRange'
+          default: { minimum: 'off', maximum: max }
+    ThinkingRange:
+      type: object
+      additionalProperties: false
+      properties:
+        minimum:
+          $ref: '#/components/schemas/ThinkingLevel'
+          default: 'off'
+        maximum:
+          $ref: '#/components/schemas/ThinkingLevel'
+          default: max
+      description: Bounds inclusive; minimum cannot exceed maximum in Pi's ordered scale.
+    PolicyConfiguration:
+      type: object
+      additionalProperties: false
+      properties:
+        capabilityPercentile:
+          $ref: '#/components/schemas/CapabilityPercentile'
+          default: 75
+        consequenceThresholds:
+          $ref: '#/components/schemas/ConsequenceThresholds'
+          default: { advanced: 0.7, frontier: 0.9 }
+        overallDeadlineMs:
+          type: integer
+          minimum: 1
+          default: 60000
+          description: Overall native classification deadline, including Pi transport retries.
+    CapabilityPercentile:
+      type: number
+      exclusiveMinimum: 0
+      maximum: 100
+    ConsequenceThresholds:
+      type: object
+      additionalProperties: false
+      properties:
+        advanced:
+          $ref: '#/components/schemas/Probability'
+          default: 0.7
+        frontier:
+          $ref: '#/components/schemas/Probability'
+          default: 0.9
+      description: |
+        advanced <= frontier. At frontier or above, floor at frontier. Otherwise at
+        advanced or above, floor at advanced. Equal thresholds make advanced-only empty.
+    LoggingConfiguration:
+      type: object
+      additionalProperties: false
+      properties:
+        includeTask:
+          type: boolean
+          default: false
+          description: Explicit opt-in to retain complete supplied task state in advisor metadata.
+    Probability:
+      type: number
+      minimum: 0
+      maximum: 1
+    NativeChoiceAnswer:
+      type: object
+      additionalProperties: false
+      required: [type, choice, probabilities, confidence]
+      properties:
+        type:
+          const: choice
+        choice:
+          type: string
+        probabilities:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/Probability'
+        confidence:
+          $ref: '#/components/schemas/Probability'
+      description: Native choice label is used for effort and context; confidence does not rank models.
+    CapabilityAnswer:
+      allOf:
+        - $ref: '#/components/schemas/NativeChoiceAnswer'
+        - properties:
+            choice:
+              $ref: '#/components/schemas/Capability'
+            probabilities:
+              minProperties: 4
+              maxProperties: 4
+              propertyNames:
+                $ref: '#/components/schemas/Capability'
+      description: |
+        Capability selection uses the ordered distribution, not the choice label.
+        Task-demand rubrics:
+        light: routine, mechanical, or tightly bounded work.
+        standard: ordinary localized work with multiple steps.
+        advanced: complex cross-component work requiring substantial judgment.
+        frontier: exceptionally difficult work with extensive uncertainty or constraints.
+        Consequence floors apply separately. Profile descriptions inform demand, not permissions.
+    EffortAnswer:
+      allOf:
+        - $ref: '#/components/schemas/NativeChoiceAnswer'
+        - properties:
+            choice:
+              $ref: '#/components/schemas/ThinkingLevel'
+            probabilities:
+              minProperties: 7
+              maxProperties: 7
+              propertyNames:
+                $ref: '#/components/schemas/ThinkingLevel'
+      description: |
+        off: direct lookup, transcription, or mechanical action.
+        minimal: a straightforward single-step judgment.
+        low: localized work with a few dependencies.
+        medium: multi-step reasoning across related components.
+        high: difficult diagnosis, design, or competing constraints.
+        xhigh: extensive ambiguity and many interacting constraints.
+        max: exceptionally demanding sustained reasoning.
+        These are task-demand rubrics, not guaranteed provider reasoning behavior.
+    ContextAnswer:
+      allOf:
+        - $ref: '#/components/schemas/NativeChoiceAnswer'
+        - properties:
+            choice:
+              $ref: '#/components/schemas/ContextDemand'
+            probabilities:
+              minProperties: 4
+              maxProperties: 4
+              propertyNames:
+                $ref: '#/components/schemas/ContextDemand'
+    ConsequenceAnswer:
+      type: object
+      additionalProperties: false
+      required: [type, probability]
+      properties:
+        type:
+          const: bool
+        probability:
+          $ref: '#/components/schemas/Probability'
+      description: Probability of material security, data, release, migration, or operational harm from an incorrect result.
+    ClassifierAnswers:
+      type: object
+      additionalProperties: false
+      required: [required_capability, reasoning_effort, context_demand, high_consequence]
+      properties:
+        required_capability:
+          $ref: '#/components/schemas/CapabilityAnswer'
+        reasoning_effort:
+          $ref: '#/components/schemas/EffortAnswer'
+        context_demand:
+          $ref: '#/components/schemas/ContextAnswer'
+        high_consequence:
+          $ref: '#/components/schemas/ConsequenceAnswer'
+    Selection:
+      type: object
+      additionalProperties: false
+      required: [provider, model, thinking, capability]
+      properties:
+        provider:
+          $ref: '#/components/schemas/NonemptyString'
+        model:
+          $ref: '#/components/schemas/NonemptyString'
+        thinking:
+          $ref: '#/components/schemas/ThinkingLevel'
+        capability:
+          $ref: '#/components/schemas/Capability'
+    PolicyDetails:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          allowedLevels,
+          automaticLevels,
+          capabilityPercentile,
+          baseCapability,
+          requiredCapability,
+          contextDemand,
+          contextWindowPreference,
+          requestedThinking,
+          permittedThinking,
+        ]
+      properties:
+        taskKind:
+          $ref: '#/components/schemas/TaskName'
+          description: Present only for a caller-selected configured profile.
+        allowedLevels:
+          $ref: '#/components/schemas/AllowedLevels'
+          description: Hard caller levels, or all four when omitted.
+        automaticLevels:
+          $ref: '#/components/schemas/AllowedLevels'
+          description: Normal task levels intersected with hard caller levels, reported in capability order.
+        capabilityPercentile:
+          $ref: '#/components/schemas/CapabilityPercentile'
+        baseCapability:
+          $ref: '#/components/schemas/Capability'
+        consequenceFloor:
+          $ref: '#/components/schemas/Capability'
+        requiredCapability:
+          $ref: '#/components/schemas/Capability'
+          description: Maximum of base capability and applicable consequence floor.
+        contextDemand:
+          $ref: '#/components/schemas/ContextDemand'
+        contextWindowPreference:
+          type: boolean
+        requestedThinking:
+          $ref: '#/components/schemas/ThinkingLevel'
+        permittedThinking:
+          allOf:
+            - $ref: '#/components/schemas/ThinkingRange'
+            - required: [minimum, maximum]
+          description: Effective selected-model bounds after global, per-model, and caller intersection; both keys present.
+    Rejection:
+      type: object
+      additionalProperties: false
+      required: [provider, model, reasons]
+      properties:
+        provider:
+          $ref: '#/components/schemas/NonemptyString'
+        model:
+          $ref: '#/components/schemas/NonemptyString'
+        reasons:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items:
+            type: string
+            enum:
+              [
+                unavailable,
+                virtual_model,
+                unclassified,
+                caller_level_excluded,
+                provider_excluded,
+                image_unsupported,
+                context_insufficient,
+                thinking_incompatible,
+                capability_insufficient,
+                task_blocked,
+                outside_normal_pool,
+              ]
+      description: Mechanical exclusions; no generated rationale. Does not imply enumerating models outside Pi scope.
+    ConfigurationIssue:
+      type: object
+      additionalProperties: false
+      required: [path, code, message]
+      properties:
+        path:
+          type: string
+          description: JSON Pointer; empty string is document root.
+        code:
+          type: string
+          enum:
+            [
+              file_missing,
+              file_unreadable,
+              invalid_json,
+              schema_invalid,
+              duplicate_model,
+              invalid_range,
+              unsupported_thinking,
+              classifier_unavailable,
+            ]
+        message:
+          type: string
+          description: Mechanical diagnostic without credentials or task content.
+    NativeUsage:
+      type: object
+      required: [input, output, totalTokens, cost]
+      properties:
+        input: { type: number, minimum: 0 }
+        output: { type: number, minimum: 0 }
+        cacheRead: { type: number, minimum: 0 }
+        cacheWrite: { type: number, minimum: 0 }
+        cacheWrite1h: { type: number, minimum: 0 }
+        reasoning: { type: number, minimum: 0 }
+        totalTokens: { type: number, minimum: 0 }
+        cost:
+          type: object
+          required: [total]
+          properties:
+            input: { type: number, minimum: 0 }
+            output: { type: number, minimum: 0 }
+            cacheRead: { type: number, minimum: 0 }
+            cacheWrite: { type: number, minimum: 0 }
+            total: { type: number, minimum: 0 }
+          additionalProperties: true
+      additionalProperties: true
+      description: |
+        Preserve Pi-reported token/cost metadata, including native extension fields.
+        Absent when not reported; never insert fabricated zero usage. Reasoning tokens
+        are a subset of output, not extra tokens. Costs are USD. This Pi-owned object
+        is the explicit exception to strict advisor-owned field validation.
+    RecommendationResult:
+      oneOf:
+        - $ref: '#/components/schemas/Recommended'
+        - $ref: '#/components/schemas/ApprovalRequired'
+        - $ref: '#/components/schemas/ConfigurationError'
+        - $ref: '#/components/schemas/NoEligibleModel'
+        - $ref: '#/components/schemas/ClassifierFailed'
+        - $ref: '#/components/schemas/Aborted'
+      discriminator:
+        propertyName: status
+        mapping:
+          recommended: '#/components/schemas/Recommended'
+          approval_required: '#/components/schemas/ApprovalRequired'
+          configuration_error: '#/components/schemas/ConfigurationError'
+          no_eligible_model: '#/components/schemas/NoEligibleModel'
+          classifier_failed: '#/components/schemas/ClassifierFailed'
+          aborted: '#/components/schemas/Aborted'
+    Recommended:
+      type: object
+      additionalProperties: false
+      required: [status, classifier, selection, answers, policy, rejections]
+      properties:
+        status: { const: recommended }
+        classifier:
+          $ref: '#/components/schemas/ModelIdentity'
+        selection:
+          $ref: '#/components/schemas/Selection'
+        answers:
+          $ref: '#/components/schemas/ClassifierAnswers'
+        policy:
+          $ref: '#/components/schemas/PolicyDetails'
+        rejections:
+          type: array
+          items:
+            $ref: '#/components/schemas/Rejection'
+        usage:
+          $ref: '#/components/schemas/NativeUsage'
+    ApprovalRequired:
+      type: object
+      additionalProperties: false
+      required: [status, classifier, selection, answers, policy, rejections]
+      properties:
+        status: { const: approval_required }
+        classifier:
+          $ref: '#/components/schemas/ModelIdentity'
+        selection:
+          $ref: '#/components/schemas/Selection'
+        answers:
+          $ref: '#/components/schemas/ClassifierAnswers'
+        policy:
+          $ref: '#/components/schemas/PolicyDetails'
+        rejections:
+          type: array
+          items:
+            $ref: '#/components/schemas/Rejection'
+        usage:
+          $ref: '#/components/schemas/NativeUsage'
+      description: |
+        Sufficient compatible model above the task's highest normal level. Requires
+        fresh user approval of exact provider/model/thinking before proceeding.
+        Prior routine approval or read-only preflight does not approve this exception.
+        All caller scope/provider/image/context/thinking/level bounds hold.
+        This result neither launches nor automatically substitutes a worker.
+    ConfigurationError:
+      type: object
+      additionalProperties: false
+      required: [status, issues]
+      properties:
+        status: { const: configuration_error }
+        issues:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/ConfigurationIssue'
+    NoEligibleModel:
+      type: object
+      additionalProperties: false
+      required: [status, classifier, rejections]
+      properties:
+        status: { const: no_eligible_model }
+        classifier:
+          $ref: '#/components/schemas/ModelIdentity'
+        rejections:
+          type: array
+          items:
+            $ref: '#/components/schemas/Rejection'
+        answers:
+          $ref: '#/components/schemas/ClassifierAnswers'
+          description: Present only if classification ran before capability filtering exhausted candidates.
+        usage:
+          $ref: '#/components/schemas/NativeUsage'
+    ClassifierFailed:
+      type: object
+      additionalProperties: false
+      required: [status, classifier, category, message]
+      properties:
+        status: { const: classifier_failed }
+        classifier:
+          $ref: '#/components/schemas/ModelIdentity'
+        category:
+          type: string
+          enum: [transport, deadline, invalid_answer]
+        message:
+          type: string
+          description: Mechanically derived diagnostic; raw invalid answers are not exposed as valid answers.
+        usage:
+          $ref: '#/components/schemas/NativeUsage'
+    Aborted:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status: { const: aborted }
+        classifier:
+          $ref: '#/components/schemas/ModelIdentity'
+        usage:
+          $ref: '#/components/schemas/NativeUsage'
+      description: Caller cancellation or native aborted response; deadline is classifier_failed/deadline.
+    VerificationResult:
+      oneOf:
+        - $ref: '#/components/schemas/Verified'
+        - $ref: '#/components/schemas/VerificationFailed'
+      discriminator:
+        propertyName: status
+        mapping:
+          verified: '#/components/schemas/Verified'
+          verification_failed: '#/components/schemas/VerificationFailed'
+    Verified:
+      type: object
+      additionalProperties: false
+      required: [status, selection]
+      properties:
+        status: { const: verified }
+        selection:
+          $ref: '#/components/schemas/Selection'
+      description: Exact provider/model/thinking unchanged by public preflight; neither approval nor reservation.
+    VerificationFailed:
+      type: object
+      additionalProperties: false
+      required: [status, category, message]
+      properties:
+        status: { const: verification_failed }
+        category:
+          type: string
+          enum: [preflight_rejected, host_required, selection_conflict, unresolved_contract]
+        message:
+          type: string
+        observedSelection:
+          $ref: '#/components/schemas/ObservedLaunchSelection'
+        missingHostFacts:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+      description: No substitution, reclassification, approval claim, settings write, or child launch.
+    ObservedLaunchSelection:
+      type: object
+      additionalProperties: false
+      required: [provider, model, thinking]
+      properties:
+        provider:
+          $ref: '#/components/schemas/NonemptyString'
+        model:
+          $ref: '#/components/schemas/NonemptyString'
+        thinking:
+          $ref: '#/components/schemas/ThinkingLevel'

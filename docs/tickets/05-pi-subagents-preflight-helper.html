@@ -1,0 +1,333 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Ticket 05: Add optional caller-owned pi-subagents preflight verification</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #0b1020;
+        --panel: #121a2e;
+        --panel-2: #18233d;
+        --text: #e7edf8;
+        --muted: #a9b6cc;
+        --line: #31415f;
+        --accent: #68d5c4;
+        --accent-2: #8cb4ff;
+        --warn: #f5c26b;
+        --danger: #ff8f8f;
+        --ok: #82d99b;
+        --code: #080d19;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html {
+        scroll-behavior: smooth;
+      }
+      body {
+        margin: 0;
+        background: linear-gradient(145deg, #080c18 0%, var(--bg) 45%, #101a31 100%);
+        color: var(--text);
+        font-family:
+          Inter,
+          ui-sans-serif,
+          system-ui,
+          -apple-system,
+          BlinkMacSystemFont,
+          'Segoe UI',
+          sans-serif;
+        line-height: 1.6;
+      }
+      a {
+        color: var(--accent-2);
+        text-decoration-thickness: 1px;
+        text-underline-offset: 3px;
+      }
+      a:hover {
+        color: var(--accent);
+      }
+      header {
+        border-bottom: 1px solid var(--line);
+        background: rgba(8, 13, 25, 0.88);
+        position: sticky;
+        top: 0;
+        z-index: 10;
+        backdrop-filter: blur(12px);
+      }
+      nav {
+        max-width: 1120px;
+        margin: auto;
+        padding: 0.8rem 1.25rem;
+        display: flex;
+        gap: 1rem;
+        flex-wrap: wrap;
+      }
+      nav a {
+        color: var(--muted);
+        text-decoration: none;
+        font-weight: 650;
+      }
+      main {
+        max-width: 1120px;
+        margin: auto;
+        padding: 3rem 1.25rem 5rem;
+      }
+      h1 {
+        font-size: clamp(2.2rem, 5vw, 4.4rem);
+        letter-spacing: -0.045em;
+        line-height: 1;
+        margin: 0 0 1rem;
+      }
+      h2 {
+        margin-top: 3rem;
+        border-top: 1px solid var(--line);
+        padding-top: 1.5rem;
+      }
+      h3 {
+        margin-top: 2rem;
+      }
+      h1,
+      h2,
+      h3 {
+        color: #f7f9fd;
+      }
+      .eyebrow {
+        color: var(--accent);
+        text-transform: uppercase;
+        letter-spacing: 0.16em;
+        font-size: 0.76rem;
+        font-weight: 800;
+      }
+      .lede {
+        max-width: 860px;
+        color: var(--muted);
+        font-size: 1.16rem;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+        gap: 1rem;
+      }
+      .card,
+      .ticket,
+      .callout {
+        background: linear-gradient(180deg, rgba(24, 35, 61, 0.96), rgba(18, 26, 46, 0.96));
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        padding: 1.15rem 1.25rem;
+        box-shadow: 0 14px 34px rgba(0, 0, 0, 0.18);
+      }
+      .callout {
+        border-left: 4px solid var(--accent);
+      }
+      .warning {
+        border-left-color: var(--warn);
+      }
+      .danger {
+        border-left-color: var(--danger);
+      }
+      .ok {
+        border-left-color: var(--ok);
+      }
+      .tag {
+        display: inline-block;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        padding: 0.15rem 0.55rem;
+        color: var(--muted);
+        font-size: 0.82rem;
+        margin: 0 0.35rem 0.35rem 0;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 1rem 0 2rem;
+        background: rgba(18, 26, 46, 0.8);
+      }
+      th,
+      td {
+        padding: 0.75rem;
+        border: 1px solid var(--line);
+        text-align: left;
+        vertical-align: top;
+      }
+      th {
+        background: var(--panel-2);
+      }
+      code,
+      pre {
+        font-family: 'Cascadia Code', 'SFMono-Regular', Consolas, monospace;
+      }
+      code {
+        color: #b9f1e7;
+      }
+      pre {
+        background: var(--code);
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 1rem;
+        overflow-x: auto;
+      }
+      li + li {
+        margin-top: 0.45rem;
+      }
+      .flow {
+        display: grid;
+        gap: 0.65rem;
+        max-width: 780px;
+        margin: 1.5rem auto;
+      }
+      .flow .node {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 0.8rem 1rem;
+        text-align: center;
+      }
+      .flow .arrow {
+        color: var(--accent);
+        text-align: center;
+        font-size: 1.4rem;
+        line-height: 1;
+      }
+      .split {
+        display: grid;
+        grid-template-columns: 1fr auto 1fr;
+        gap: 0.75rem;
+        align-items: center;
+      }
+      .muted {
+        color: var(--muted);
+      }
+      .status {
+        font-weight: 750;
+        color: var(--ok);
+      }
+      .blocked {
+        color: var(--warn);
+      }
+      .checklist {
+        list-style: none;
+        padding-left: 0;
+      }
+      .checklist li::before {
+        content: '☐';
+        color: var(--accent);
+        margin-right: 0.6rem;
+      }
+      footer {
+        max-width: 1120px;
+        margin: auto;
+        padding: 2rem 1.25rem 4rem;
+        color: var(--muted);
+        border-top: 1px solid var(--line);
+      }
+      @media (max-width: 650px) {
+        .split {
+          grid-template-columns: 1fr;
+        }
+        .split .arrow {
+          transform: rotate(90deg);
+        }
+      }
+      @media print {
+        header {
+          position: static;
+        }
+        body {
+          background: white;
+          color: #111;
+        }
+        .card,
+        .ticket,
+        .callout,
+        table {
+          background: white;
+          box-shadow: none;
+        }
+        h1,
+        h2,
+        h3 {
+          color: #111;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <nav>
+        <a href="../index.html">Overview</a>
+        <a href="../pi-model-advisor-spec.html">Specification</a>
+        <a href="../pi-model-advisor-tickets.html">Tickets</a>
+        <a href="../pi-model-advisor-handoff.html">Handoff</a>
+      </nav>
+    </header>
+    <main>
+      <p class="eyebrow">Planned slice · Ticket 05</p>
+      <h1>Add optional caller-owned pi-subagents preflight verification</h1>
+      <p>
+        <strong>What to build:</strong> One isolated same-package export verifies a recommendation against the official
+        pi-subagents launch preflight supplied by the caller, without introducing a launcher or default runtime
+        dependency.
+      </p>
+      <p>
+        <strong>Blocked by:</strong>
+        <span class="blocked">03: Apply hard constraints, deterministic ranking, and thinking clamps</span>
+      </p>
+      <p>
+        <strong>Status:</strong> <span class="status">completed</span> — verified locally at integration commit
+        <code>f54472ed7a2682e1bb2030d7c8f314aaebd3c661</code>; approved leaf-05:G1 passed after merge, including final
+        re-verification; independent G2 review accepted with no findings (run
+        <code>6ad46fa3-4197-4090-9298-a54e8dc511d9</code>). Writer handoff run
+        <code>8a270a0f-ee57-4cc7-ac85-1d84b30bcb8d</code> records 3 red regressions then 22/22 focused tests, 97 package
+        tests, and TypeScript/lint/format/build/export checks.
+      </p>
+      <h2>Acceptance criteria</h2>
+      <ul class="checklist">
+        <li>
+          Expose verifySubagentRecommendation() at @schultzp2020/pi-model-advisor/pi-subagents, outside default
+          extension/core imports; do not create a separate package.
+        </li>
+        <li>
+          Receive recommendation, intended launch inputs, current host snapshots, and the caller-supplied
+          resolveSubagentLaunchContract() function from the public pi-subagents/preflight export.
+        </li>
+        <li>
+          Missing required host facts (host_required), rejected preflight, or changed provider/model/thinking returns
+          structured verification_failed; exact unchanged selection returns verified.
+        </li>
+        <li>
+          Use no internal-module imports, settings writes, model substitution, new classifier calls, approval claims, or
+          child launches.
+        </li>
+        <li>
+          Verification is neither approval nor reservation: document recommend → verify → approve exact selection →
+          existing launcher, with authoritative launch recheck.
+        </li>
+        <li>
+          Support native Pi children only. Dispatch uses model: "provider/id:thinking"; resolve/approve workflow
+          selections before dispatch and pass exact values into child steps.
+        </li>
+        <li>
+          pi-subagents owns defaults, scopes, thinking ceilings, and launch approval. Routine implementation uses
+          max-thinking light Luna; stronger proposals require fresh exact user approval. Read-only preflight must accept
+          a proposed selection without treating verified as approval or clearing approval_required. Role defaults alone
+          do not enforce restrictions.
+        </li>
+        <li>
+          Compatibility tests use published pi-subagents 0.76.1 as a development dependency, alongside mocked rejection,
+          missing-host, and adjustment cases; generic imports must work without that runtime package.
+        </li>
+      </ul>
+      <h2>References</h2>
+      <ul>
+        <li><a href="../pi-model-advisor-spec.html">Canonical specification</a></li>
+        <li><a href="../pi-model-advisor-tickets.html">Ticket dependency graph</a></li>
+        <li><a href="../pi-model-advisor-handoff.html">Agent handoff</a></li>
+      </ul>
+    </main>
+    <footer>Pi Model Advisor design artifacts · updated 6 October 2026</footer>
+  </body>
+</html>

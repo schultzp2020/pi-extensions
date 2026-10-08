@@ -1,0 +1,19 @@
+import { defineConfig } from 'rolldown'
+
+export default defineConfig({
+  input: {
+    index: 'src/index.ts',
+    core: 'src/core.ts',
+    'pi-subagents': 'src/pi-subagents.ts',
+    'llama-cpp-provider': 'src/llama-cpp-provider.ts',
+  },
+  output: {
+    dir: 'dist',
+    format: 'esm',
+    entryFileNames: '[name].js',
+    chunkFileNames: 'chunks/[name]-[hash].js',
+  },
+  platform: 'node',
+  treeshake: true,
+  external: [/^node:/, /^@earendil-works\/(?:pi-agent-core|pi-ai|pi-coding-agent|pi-tui)(?:$|\/)/, /^typebox(?:$|\/)/],
+})

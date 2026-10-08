@@ -8,9 +8,13 @@ import { loadConfig } from 'rolldown/config'
 import { describe, expect, it } from 'vitest'
 
 describe('published extension bundle', () => {
+  // 15 s subprocess bound + 244 ms measured config/build/setup/cleanup + 5 s scheduling headroom.
   it('bundles legacy lazy streaming while preserving host adapter dispatch', async () => {
     const configPath = fileURLToPath(new URL('../rolldown.config.ts', import.meta.url))
     const packageDir = fileURLToPath(new URL('..', import.meta.url))
+    // The harness uses process.kill(pid, 'SIGKILL'): Node reports code 1 on Windows and SIGKILL on POSIX.
+    const expectedKilledExit =
+      process.platform === 'win32' ? { exitCode: 1, exitSignal: null } : { exitCode: null, exitSignal: 'SIGKILL' }
     const loadedConfig = await loadConfig(configPath)
     if (typeof loadedConfig === 'function' || Array.isArray(loadedConfig)) {
       throw new Error('Expected one Rolldown configuration and one output')
@@ -173,8 +177,7 @@ try {
         sameRequestRoutedToReplacement: true,
         lifecycle: {
           childPid: recovery.initial.pid,
-          exitCode: null,
-          exitSignal: 'SIGKILL',
+          ...expectedKilledExit,
           restartOutcome: 'succeeded',
         },
         credentialsAbsentFromLifecycle: true,
@@ -196,5 +199,5 @@ try {
       } catch {}
       rmSync(outputDir, { recursive: true, force: true })
     }
-  })
+  }, 20_000)
 })

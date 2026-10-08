@@ -1,0 +1,329 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Ticket 07: Finish package documentation and monorepo verification</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #0b1020;
+        --panel: #121a2e;
+        --panel-2: #18233d;
+        --text: #e7edf8;
+        --muted: #a9b6cc;
+        --line: #31415f;
+        --accent: #68d5c4;
+        --accent-2: #8cb4ff;
+        --warn: #f5c26b;
+        --danger: #ff8f8f;
+        --ok: #82d99b;
+        --code: #080d19;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html {
+        scroll-behavior: smooth;
+      }
+      body {
+        margin: 0;
+        background: linear-gradient(145deg, #080c18 0%, var(--bg) 45%, #101a31 100%);
+        color: var(--text);
+        font-family:
+          Inter,
+          ui-sans-serif,
+          system-ui,
+          -apple-system,
+          BlinkMacSystemFont,
+          'Segoe UI',
+          sans-serif;
+        line-height: 1.6;
+      }
+      a {
+        color: var(--accent-2);
+        text-decoration-thickness: 1px;
+        text-underline-offset: 3px;
+      }
+      a:hover {
+        color: var(--accent);
+      }
+      header {
+        border-bottom: 1px solid var(--line);
+        background: rgba(8, 13, 25, 0.88);
+        position: sticky;
+        top: 0;
+        z-index: 10;
+        backdrop-filter: blur(12px);
+      }
+      nav {
+        max-width: 1120px;
+        margin: auto;
+        padding: 0.8rem 1.25rem;
+        display: flex;
+        gap: 1rem;
+        flex-wrap: wrap;
+      }
+      nav a {
+        color: var(--muted);
+        text-decoration: none;
+        font-weight: 650;
+      }
+      main {
+        max-width: 1120px;
+        margin: auto;
+        padding: 3rem 1.25rem 5rem;
+      }
+      h1 {
+        font-size: clamp(2.2rem, 5vw, 4.4rem);
+        letter-spacing: -0.045em;
+        line-height: 1;
+        margin: 0 0 1rem;
+      }
+      h2 {
+        margin-top: 3rem;
+        border-top: 1px solid var(--line);
+        padding-top: 1.5rem;
+      }
+      h3 {
+        margin-top: 2rem;
+      }
+      h1,
+      h2,
+      h3 {
+        color: #f7f9fd;
+      }
+      .eyebrow {
+        color: var(--accent);
+        text-transform: uppercase;
+        letter-spacing: 0.16em;
+        font-size: 0.76rem;
+        font-weight: 800;
+      }
+      .lede {
+        max-width: 860px;
+        color: var(--muted);
+        font-size: 1.16rem;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+        gap: 1rem;
+      }
+      .card,
+      .ticket,
+      .callout {
+        background: linear-gradient(180deg, rgba(24, 35, 61, 0.96), rgba(18, 26, 46, 0.96));
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        padding: 1.15rem 1.25rem;
+        box-shadow: 0 14px 34px rgba(0, 0, 0, 0.18);
+      }
+      .callout {
+        border-left: 4px solid var(--accent);
+      }
+      .warning {
+        border-left-color: var(--warn);
+      }
+      .danger {
+        border-left-color: var(--danger);
+      }
+      .ok {
+        border-left-color: var(--ok);
+      }
+      .tag {
+        display: inline-block;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        padding: 0.15rem 0.55rem;
+        color: var(--muted);
+        font-size: 0.82rem;
+        margin: 0 0.35rem 0.35rem 0;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 1rem 0 2rem;
+        background: rgba(18, 26, 46, 0.8);
+      }
+      th,
+      td {
+        padding: 0.75rem;
+        border: 1px solid var(--line);
+        text-align: left;
+        vertical-align: top;
+      }
+      th {
+        background: var(--panel-2);
+      }
+      code,
+      pre {
+        font-family: 'Cascadia Code', 'SFMono-Regular', Consolas, monospace;
+      }
+      code {
+        color: #b9f1e7;
+      }
+      pre {
+        background: var(--code);
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 1rem;
+        overflow-x: auto;
+      }
+      li + li {
+        margin-top: 0.45rem;
+      }
+      .flow {
+        display: grid;
+        gap: 0.65rem;
+        max-width: 780px;
+        margin: 1.5rem auto;
+      }
+      .flow .node {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 0.8rem 1rem;
+        text-align: center;
+      }
+      .flow .arrow {
+        color: var(--accent);
+        text-align: center;
+        font-size: 1.4rem;
+        line-height: 1;
+      }
+      .split {
+        display: grid;
+        grid-template-columns: 1fr auto 1fr;
+        gap: 0.75rem;
+        align-items: center;
+      }
+      .muted {
+        color: var(--muted);
+      }
+      .status {
+        font-weight: 750;
+        color: var(--ok);
+      }
+      .blocked {
+        color: var(--warn);
+      }
+      .checklist {
+        list-style: none;
+        padding-left: 0;
+      }
+      .checklist li::before {
+        content: '☐';
+        color: var(--accent);
+        margin-right: 0.6rem;
+      }
+      footer {
+        max-width: 1120px;
+        margin: auto;
+        padding: 2rem 1.25rem 4rem;
+        color: var(--muted);
+        border-top: 1px solid var(--line);
+      }
+      @media (max-width: 650px) {
+        .split {
+          grid-template-columns: 1fr;
+        }
+        .split .arrow {
+          transform: rotate(90deg);
+        }
+      }
+      @media print {
+        header {
+          position: static;
+        }
+        body {
+          background: white;
+          color: #111;
+        }
+        .card,
+        .ticket,
+        .callout,
+        table {
+          background: white;
+          box-shadow: none;
+        }
+        h1,
+        h2,
+        h3 {
+          color: #111;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <nav>
+        <a href="../index.html">Overview</a>
+        <a href="../pi-model-advisor-spec.html">Specification</a>
+        <a href="../pi-model-advisor-tickets.html">Tickets</a>
+        <a href="../pi-model-advisor-handoff.html">Handoff</a>
+      </nav>
+    </header>
+    <main>
+      <p class="eyebrow">Planned slice · Ticket 07</p>
+      <h1>Finish package documentation and monorepo verification</h1>
+      <p>
+        <strong>What to build:</strong> The future 0.1.0 package is documented, built, and verified with native
+        classifiers, the reusable core, and the optional preflight export; implementation is now authorized.
+      </p>
+      <p>
+        <strong>Blocked by:</strong>
+        <span class="blocked"
+          >05: Add optional caller-owned pi-subagents preflight verification; 06: Complete command UX, privacy-safe
+          observability, and core reuse</span
+        >
+      </p>
+      <p>
+        <strong>Status:</strong> <span class="status">completed locally</span> — verified after integration merge
+        <code>3040811bdde0aa7cc4c5fdb5ca421ab258fb1f15</code>; see local completion record below.
+      </p>
+      <p>
+        <strong>Local completion:</strong> Verified at integration merge
+        <code>3040811bdde0aa7cc4c5fdb5ca421ab258fb1f15</code>; approved leaf-07:G1 passed after merge (9 focused tests),
+        and independent G2 review accepted with no findings (run 4d87c055-ce60-4ca8-b617-3432699950cd; reviewed
+        candidate <code>5031f8280e003ddb08d63b052ae4ae2acff21af3</code>). The package suite passed (106 tests),
+        TypeScript/declaration/Rolldown builds passed, lint/format checks passed, and
+        <code>npm pack --dry-run</code> listed 17 intended files. No publication or live inference.
+      </p>
+      <h2>Acceptance criteria</h2>
+      <ul class="checklist">
+        <li>
+          README documents Pi 1.0.4, native classifier registration/authentication, ordered-choice calibration,
+          config-only task profiles/descriptions, stronger proposals requiring fresh approval, global configuration,
+          /reload, typed classifier failures with no fallback, thinking bounds, commands, structured output/usage, and
+          privacy.
+        </li>
+        <li>
+          Examples cover Paseo, pure Pi, and optional native pi-subagents recommend → verify → approve → launch handoff,
+          preserving exact work/personal provider IDs.
+        </li>
+        <li>
+          Workflow examples resolve approved model:thinking strings before dispatch; no classifier calls inside sandbox
+          scripts or external CLI translation.
+        </li>
+        <li>
+          Build emits extension, reusable core, and isolated pi-subagents export. Published-contract tests target
+          pi-subagents 0.76.1; default imports need no pi-subagents runtime resolution.
+        </li>
+        <li>
+          Root package table and changeset describe the future public package; build, unit-test, lint, and format checks
+          pass when implementation is authorized.
+        </li>
+        <li>Normal tests require no credentials, network access, paid inference, or local model server.</li>
+        <li>No push, pull request, npm publication, or live model tests are performed.</li>
+      </ul>
+      <h2>References</h2>
+      <ul>
+        <li><a href="../pi-model-advisor-spec.html">Canonical specification</a></li>
+        <li><a href="../pi-model-advisor-tickets.html">Ticket dependency graph</a></li>
+        <li><a href="../pi-model-advisor-handoff.html">Agent handoff</a></li>
+      </ul>
+    </main>
+    <footer>Pi Model Advisor design artifacts · updated 6 October 2026</footer>
+  </body>
+</html>

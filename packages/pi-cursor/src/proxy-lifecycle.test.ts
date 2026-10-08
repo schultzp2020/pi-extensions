@@ -24,10 +24,11 @@ import type * as DebugLoggerModule from './proxy/debug-logger.ts'
 type SpawnFn = (command: string, args: readonly string[], options: SpawnOptions) => ChildProcess
 
 const spawnMock = vi.hoisted(() => vi.fn<SpawnFn>())
+const spawnSyncMock = vi.hoisted(() => vi.fn<typeof ChildProcessModule.spawnSync>())
 
-// The real spawn, captured by the child_process mock factory so the
-// real-child test can delegate to it.
+// The real child_process functions, captured by the mock factory for controlled test delegation.
 const realSpawnRef = vi.hoisted(() => ({ current: null as SpawnFn | null }))
+const realSpawnSyncRef = vi.hoisted(() => ({ current: null as typeof ChildProcessModule.spawnSync | null }))
 
 // Captured at module load, before any fake-timer activation, so tests can
 // schedule real-time bounds while timers are faked. The fake clearTimeout
@@ -38,7 +39,9 @@ const realClearTimeout = clearTimeout
 vi.mock('node:child_process', async (importOriginal) => {
   const actual = await importOriginal<typeof ChildProcessModule>()
   realSpawnRef.current = actual.spawn
-  return { ...actual, spawn: spawnMock }
+  realSpawnSyncRef.current = actual.spawnSync
+  spawnSyncMock.mockImplementation((...args) => actual.spawnSync(...args))
+  return { ...actual, spawn: spawnMock, spawnSync: spawnSyncMock }
 })
 
 const logProxyStderrMock = vi.hoisted(() => vi.fn<(sessionId: string, output: string) => void>())
@@ -59,6 +62,7 @@ import {
   onProxyExit,
   pushToken,
   stopHeartbeat,
+  type ProxyExitEvent,
 } from './proxy-lifecycle.ts'
 import { removeOwnedProxyPortFileWithLock } from './proxy-port-file.ts'
 import { logProxyStderr } from './proxy/debug-logger.ts'
@@ -68,6 +72,9 @@ const PROXY_STARTUP_TIMEOUT_MS = 15_000
 const STDERR_DRAIN_TIMEOUT_MS = 1_000
 const SIGTERM_GRACE_MS = 1_000
 const SIGKILL_WAIT_MS = 250
+// `process.kill(pid, 'SIGKILL')` reports signal termination on POSIX, but Node maps the forced Windows termination to exit code 1.
+const SIGKILL_EXIT_METADATA =
+  process.platform === 'win32' ? { exitCode: 1, exitSignal: null } : { exitCode: null, exitSignal: 'SIGKILL' }
 const BOOTSTRAP_SESSION_ID = '00000000-0000-4000-8000-000000000000'
 const REAL_SESSION_ID = '11111111-1111-4111-8111-111111111111'
 const SIGTERM_RESISTANT_FIXTURE = resolve(import.meta.dirname, 'test-fixtures', 'sigterm-resistant-child.js')
@@ -236,6 +243,13 @@ describe('proxy-lifecycle session ID resolution', () => {
     vi.useRealTimers()
     vi.unstubAllGlobals()
     vi.clearAllMocks()
+    spawnSyncMock.mockImplementation((...args) => {
+      const spawnSync = realSpawnSyncRef.current
+      if (!spawnSync) {
+        throw new Error('Real child_process.spawnSync was not captured')
+      }
+      return spawnSync(...args)
+    })
     recorded.length = 0
   })
 
@@ -245,8 +259,60 @@ describe('proxy-lifecycle session ID resolution', () => {
       JSON.stringify({ port: 45678, pid: process.pid, generation: new Date().toISOString() }),
     )
 
+    let resolveInitialProbeFailure: (() => void) | undefined
+    const initialProbeFailure = new Promise<void>((resolve) => {
+      resolveInitialProbeFailure = resolve
+    })
+    if (process.platform === 'win32') {
+      let failFirstProbe = true
+      spawnSyncMock.mockImplementation((command, args, options) => {
+        if (command === 'powershell.exe' && failFirstProbe) {
+          failFirstProbe = false
+          resolveInitialProbeFailure?.()
+          return {
+            pid: 0,
+            output: [null, '', ''],
+            stdout: '',
+            stderr: '',
+            status: 1,
+            signal: null,
+          }
+        }
+        const spawnSync = realSpawnSyncRef.current
+        if (!spawnSync) {
+          throw new Error('Real child_process.spawnSync was not captured')
+        }
+        return spawnSync(command, args, options)
+      })
+    }
+
     let currentId = BOOTSTRAP_SESSION_ID
-    const result = await connectToTestProxy(() => currentId, null)
+    const pending = connectToTestProxy(() => currentId, null)
+    if (process.platform === 'win32') {
+      await withRealDeadline(initialProbeFailure, 2_500, 'controlled Windows process-identity failure')
+    }
+    const retryObservationTimeoutMs = process.platform === 'win32' ? 50 : 2_500
+    const retryObservation = await withRealDeadline(
+      pending,
+      retryObservationTimeoutMs,
+      'proxy adoption during lock retry',
+    ).then(
+      () => 'settled',
+      (error) =>
+        error instanceof Error &&
+        error.message ===
+          `proxy adoption during lock retry did not settle within ${String(retryObservationTimeoutMs)} ms`
+          ? 'deadline'
+          : 'rejected',
+    )
+    expect(retryObservation).toBe(process.platform === 'win32' ? 'deadline' : 'settled')
+    if (process.platform === 'win32') {
+      await vi.advanceTimersToNextTimerAsync()
+    }
+    const result = await pending
+    expect(spawnSyncMock.mock.calls.filter(([command]) => command === 'powershell.exe')).toHaveLength(
+      process.platform === 'win32' ? 2 : 0,
+    )
     expect(result.port).toBe(45678)
 
     // The immediate heartbeat uses the ID current at connect time (bootstrap).
@@ -873,6 +939,23 @@ describe('real-time observation deadline', () => {
   })
 })
 
+function matchesObservedExit(record: Record<string, unknown>, event: ProxyExitEvent | undefined): boolean {
+  return (
+    event !== undefined &&
+    record.childPid === event.childPid &&
+    record.exitCode === event.exitCode &&
+    record.exitSignal === event.exitSignal
+  )
+}
+
+function matchesExpectedSigkillExit(record: Record<string, unknown>, childPid: number): boolean {
+  return (
+    record.childPid === childPid &&
+    record.exitCode === SIGKILL_EXIT_METADATA.exitCode &&
+    record.exitSignal === SIGKILL_EXIT_METADATA.exitSignal
+  )
+}
+
 async function waitFor(predicate: () => boolean, timeoutMs = 3000): Promise<void> {
   const deadline = performance.now() + timeoutMs
   while (!predicate()) {
@@ -1252,7 +1335,7 @@ describe('post-ready child exit recovery', () => {
       await waitFor(() => {
         try {
           const record = JSON.parse(readFileSync(lifecycleFilePath, 'utf8')) as Record<string, unknown>
-          return record.exitSignal === 'SIGKILL' && record.restartOutcome === 'failed'
+          return matchesExpectedSigkillExit(record, connection.pid) && record.restartOutcome === 'failed'
         } catch {
           return false
         }
@@ -1261,8 +1344,7 @@ describe('post-ready child exit recovery', () => {
       expect(exitRecord).toMatchObject({
         generation: connection.generation,
         childPid: connection.pid,
-        exitCode: null,
-        exitSignal: 'SIGKILL',
+        ...SIGKILL_EXIT_METADATA,
         restartOutcome: 'failed',
       })
       expect(Date.parse(String(exitRecord.timestamp))).toBeGreaterThanOrEqual(
@@ -1382,8 +1464,8 @@ describe('post-ready child exit recovery', () => {
     const lifecycleFilePath = join(tempDir, 'cursor-proxy-lifecycle.json')
     const proxyEntry = fileURLToPath(new URL('./test-fixtures/ready-proxy.mjs', import.meta.url))
     const childPids: number[] = []
-    const exits: number[] = []
-    const stopObserving = onProxyExit((event) => exits.push(event.childPid))
+    const exits: ProxyExitEvent[] = []
+    const stopObserving = onProxyExit((event) => exits.push(event))
 
     try {
       const first = await connectToProxy('test-session', 'test-secret', {
@@ -1393,15 +1475,21 @@ describe('post-ready child exit recovery', () => {
       })
       childPids.push(first.pid)
       process.kill(first.pid, 'SIGKILL')
-      await waitFor(() => exits.includes(first.pid))
+      await waitFor(() => exits.some((event) => event.childPid === first.pid))
       await waitFor(() => {
         try {
           const record = JSON.parse(readFileSync(lifecycleFilePath, 'utf8')) as Record<string, unknown>
-          return record.childPid === first.pid && record.exitSignal === 'SIGKILL'
+          return matchesObservedExit(
+            record,
+            exits.find((event) => event.childPid === first.pid),
+          )
         } catch {
           return false
         }
       })
+      const firstExit = exits.find((event) => event.childPid === first.pid)
+      const firstRecord = JSON.parse(readFileSync(lifecycleFilePath, 'utf8')) as Record<string, unknown>
+      expect(matchesObservedExit(firstRecord, firstExit)).toBeTruthy()
       vi.useFakeTimers({ toFake: ['Date'] })
       vi.setSystemTime(Date.parse(first.generation) - 60_000)
       const second = await connectToProxy('test-session', 'test-secret', {
@@ -1442,6 +1530,8 @@ describe('post-ready child exit recovery', () => {
     const lifecycleFilePath = join(tempDir, 'cursor-proxy-lifecycle.json')
     const proxyEntry = fileURLToPath(new URL('./test-fixtures/ready-proxy.mjs', import.meta.url))
     const childPids: number[] = []
+    const exits: ProxyExitEvent[] = []
+    const stopObserving = onProxyExit((event) => exits.push(event))
 
     try {
       const first = await connectToProxy('first-session', 'first-secret', {
@@ -1454,12 +1544,17 @@ describe('post-ready child exit recovery', () => {
       await waitFor(() => {
         try {
           const record = JSON.parse(readFileSync(lifecycleFilePath, 'utf8')) as Record<string, unknown>
-          return record.childPid === first.pid && record.exitSignal === 'SIGKILL'
+          return matchesObservedExit(
+            record,
+            exits.find((event) => event.childPid === first.pid),
+          )
         } catch {
           return false
         }
       })
+      const firstExit = exits.find((event) => event.childPid === first.pid)
       const firstRecord = JSON.parse(readFileSync(lifecycleFilePath, 'utf8')) as Record<string, unknown>
+      expect(matchesObservedExit(firstRecord, firstExit)).toBeTruthy()
 
       vi.useFakeTimers({ toFake: ['Date'] })
       vi.setSystemTime(Date.parse(String(firstRecord.timestamp)) - 60_000)
@@ -1473,7 +1568,10 @@ describe('post-ready child exit recovery', () => {
       await waitFor(() => {
         try {
           const record = JSON.parse(readFileSync(lifecycleFilePath, 'utf8')) as Record<string, unknown>
-          return record.childPid === second.pid && record.exitSignal === 'SIGKILL'
+          return matchesObservedExit(
+            record,
+            exits.find((event) => event.childPid === second.pid),
+          )
         } catch {
           return false
         }
@@ -1482,18 +1580,19 @@ describe('post-ready child exit recovery', () => {
         connectToProxy('second-session', null, { portFilePath, lifecycleFilePath, proxyEntry }),
       ).rejects.toThrow('No access token and no existing proxy')
       const secondRecord = JSON.parse(readFileSync(lifecycleFilePath, 'utf8')) as Record<string, unknown>
+      const secondExit = exits.find((event) => event.childPid === second.pid)
 
+      expect(matchesObservedExit(secondRecord, secondExit)).toBeTruthy()
       expect(secondRecord).toMatchObject({
         generation: second.generation,
         childPid: second.pid,
-        exitCode: null,
-        exitSignal: 'SIGKILL',
         restartOutcome: 'failed',
       })
       expect(Number(secondRecord.observation)).toBeGreaterThan(Number(firstRecord.observation))
       expect(Date.parse(String(secondRecord.timestamp))).toBeLessThan(Date.parse(String(firstRecord.timestamp)))
     } finally {
       vi.useRealTimers()
+      stopObserving()
       stopHeartbeat()
       for (const pid of childPids) {
         try {
@@ -1577,8 +1676,8 @@ describe('post-ready child exit recovery', () => {
     const lifecycleFilePath = join(tempDir, 'cursor-proxy-lifecycle.json')
     const proxyEntry = fileURLToPath(new URL('./test-fixtures/ready-proxy.mjs', import.meta.url))
     const childPids: number[] = []
-    const exits: number[] = []
-    const stopObserving = onProxyExit((event) => exits.push(event.childPid))
+    const exits: ProxyExitEvent[] = []
+    const stopObserving = onProxyExit((event) => exits.push(event))
     let stopRecoveredHeartbeat: (() => void) | undefined
 
     try {
@@ -1591,15 +1690,19 @@ describe('post-ready child exit recovery', () => {
       expect(getActivePort()).toBe(first.port)
 
       process.kill(first.pid, 'SIGKILL')
-      await waitFor(() => exits.includes(first.pid))
+      await waitFor(() => exits.some((event) => event.childPid === first.pid))
 
       expect(getActivePort()).toBeNull()
       await waitFor(() => existsSync(lifecycleFilePath), REAL_PENDING_DEADLINE_MS)
       const exitRecord = JSON.parse(readFileSync(lifecycleFilePath, 'utf8')) as Record<string, unknown>
+      expect(
+        matchesObservedExit(
+          exitRecord,
+          exits.find((event) => event.childPid === first.pid),
+        ),
+      ).toBeTruthy()
       expect(exitRecord).toMatchObject({
         childPid: first.pid,
-        exitCode: null,
-        exitSignal: 'SIGKILL',
         restartOutcome: 'not-attempted',
       })
       expect(typeof exitRecord.timestamp).toBe('string')
@@ -1731,6 +1834,8 @@ describe('post-ready child exit recovery', () => {
     const lifecycleFilePath = join(tempDir, 'cursor-proxy-lifecycle.json')
     const proxyEntry = fileURLToPath(new URL('./test-fixtures/ready-proxy.mjs', import.meta.url))
     const childPids: number[] = []
+    const exits: ProxyExitEvent[] = []
+    const stopObserving = onProxyExit((event) => exits.push(event))
 
     try {
       const first = await connectToProxy('first-session', 'first-secret', {
@@ -1751,7 +1856,10 @@ describe('post-ready child exit recovery', () => {
       await waitFor(() => {
         try {
           const record = JSON.parse(readFileSync(lifecycleFilePath, 'utf8')) as Record<string, unknown>
-          return record.childPid === second.pid && record.exitSignal === 'SIGKILL'
+          return matchesObservedExit(
+            record,
+            exits.find((event) => event.childPid === second.pid),
+          )
         } catch {
           return false
         }
@@ -1767,14 +1875,16 @@ describe('post-ready child exit recovery', () => {
       await waitFor(() => {
         try {
           const record = JSON.parse(readFileSync(lifecycleFilePath, 'utf8')) as Record<string, unknown>
-          return record.childPid === first.pid && record.exitSignal === 'SIGKILL'
+          return matchesExpectedSigkillExit(record, first.pid)
         } catch {
           return false
         }
       })
       const latestRecord = JSON.parse(readFileSync(lifecycleFilePath, 'utf8')) as Record<string, unknown>
+      expect(latestRecord).toMatchObject({ childPid: first.pid, ...SIGKILL_EXIT_METADATA })
       expect(Date.parse(String(latestRecord.timestamp))).toBeGreaterThan(Date.parse(secondExitTimestamp))
     } finally {
+      stopObserving()
       stopHeartbeat()
       for (const pid of childPids) {
         try {
@@ -2007,6 +2117,8 @@ describe('post-ready child exit recovery', () => {
     const lifecycleFilePath = join(tempDir, 'cursor-proxy-lifecycle.json')
     const lockFilePath = `${lifecycleFilePath}.lock`
     const proxyEntry = fileURLToPath(new URL('./test-fixtures/ready-proxy.mjs', import.meta.url))
+    const exits: ProxyExitEvent[] = []
+    const stopObserving = onProxyExit((event) => exits.push(event))
     let childPid: number | undefined
 
     try {
@@ -2022,7 +2134,14 @@ describe('post-ready child exit recovery', () => {
       await waitFor(() => {
         try {
           const record = JSON.parse(readFileSync(lifecycleFilePath, 'utf8')) as Record<string, unknown>
-          return record.childPid === childPid && record.restartOutcome === 'not-attempted' && !existsSync(lockFilePath)
+          return (
+            matchesObservedExit(
+              record,
+              exits.find((event) => event.childPid === childPid),
+            ) &&
+            record.restartOutcome === 'not-attempted' &&
+            !existsSync(lockFilePath)
+          )
         } catch {
           return false
         }
@@ -2033,15 +2152,20 @@ describe('post-ready child exit recovery', () => {
       expect(Object.keys(record).sort()).toEqual(
         ['timestamp', 'generation', 'observation', 'childPid', 'exitCode', 'exitSignal', 'restartOutcome'].sort(),
       )
+      expect(
+        matchesObservedExit(
+          record,
+          exits.find((event) => event.childPid === childPid),
+        ),
+      ).toBeTruthy()
       expect(record).toMatchObject({
         childPid,
-        exitCode: null,
-        exitSignal: 'SIGKILL',
         restartOutcome: 'not-attempted',
       })
       expect(recordText).not.toContain('test-secret')
       expect(existsSync(lockFilePath)).toBeFalsy()
     } finally {
+      stopObserving()
       stopHeartbeat()
       if (childPid !== undefined) {
         const pid = childPid
