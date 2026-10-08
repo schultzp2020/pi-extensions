@@ -1,3 +1,4 @@
+import type { Api, Model } from '@earendil-works/pi-ai'
 import type { ExtensionAPI, ExtensionCommandContext } from '@earendil-works/pi-coding-agent'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -62,6 +63,20 @@ describe('model advisor commands', () => {
       ),
     ).toBeTruthy()
     expect(messages.some((message) => message.includes('eligible'))).toBeTruthy()
+    expect(classify).not.toHaveBeenCalled()
+  })
+
+  it('reports invalid model token limits in doctor diagnostics without inference', async () => {
+    const { command } = await register()
+    const invalid = { ...chatModel(), contextWindow: 0 } as Model<Api>
+    const { context, notify, classify } = commandContext([invalid])
+
+    await command.handler('doctor', context)
+
+    expect(notify).toHaveBeenCalledWith(
+      expect.stringContaining('Invalid model limits: openai/gpt-luna (invalid_context_window).'),
+      'info',
+    )
     expect(classify).not.toHaveBeenCalled()
   })
 

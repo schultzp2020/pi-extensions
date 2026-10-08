@@ -163,6 +163,8 @@ const RejectionReasonSchema = Type.Union([
   Type.Literal('provider_excluded'),
   Type.Literal('image_unsupported'),
   Type.Literal('context_insufficient'),
+  Type.Literal('invalid_context_window'),
+  Type.Literal('invalid_max_tokens'),
   Type.Literal('thinking_incompatible'),
   Type.Literal('capability_insufficient'),
   Type.Literal('task_blocked'),

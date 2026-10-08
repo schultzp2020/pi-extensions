@@ -1,7 +1,6 @@
 packages:
   - packages/*
 allowBuilds:
-  '@bufbuild/buf': true
   '@google/genai': true
   esbuild: true
   koffi: true
