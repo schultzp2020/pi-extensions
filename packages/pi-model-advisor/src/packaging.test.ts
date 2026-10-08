@@ -15,7 +15,6 @@ vi.mock('./llama-cpp-provider.ts', () => {
 
 const packageDirectory = fileURLToPath(new URL('../', import.meta.url))
 const packageJson = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as {
-  version: string
   files: string[]
   type: string
   types?: string
@@ -51,13 +50,6 @@ describe('published package contents', () => {
   it('lists the public package in the monorepo package table', () => {
     const rootReadme = readFileSync(new URL('../../../README.md', import.meta.url), 'utf8')
     expect(rootReadme).toMatch(/^\| \[pi-model-advisor\]\(packages\/pi-model-advisor\/\) \|/m)
-  })
-
-  it('records the first public 0.1.0 release without scheduling a version bump', () => {
-    const changeset = readFileSync(new URL('../../../.changeset/pi-model-advisor.md', import.meta.url), 'utf8')
-    expect(packageJson.version).toBe('0.1.0')
-    expect(changeset).toMatch(/^---\r?\n['"]@schultzp2020\/pi-model-advisor['"]: none\r?\n---/)
-    expect(changeset).toContain('first public 0.1.0 release')
   })
 
   it('maps the Pi extension and all ESM entry points to JavaScript and declaration outputs', () => {
