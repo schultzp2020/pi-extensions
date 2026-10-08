@@ -1,5 +1,11 @@
 # @schultzp2020/pi-cursor
 
+## 0.5.3
+
+### Patch Changes
+
+- [#50](https://github.com/schultzp2020/pi-extensions/pull/50) [`b1fa4bd`](https://github.com/schultzp2020/pi-extensions/commit/b1fa4bd7caf1812f57ab198bc35b51b1537f4bc3) Thanks [@schultzp2020](https://github.com/schultzp2020)! - Use native child-exit metadata in Cursor lifecycle tests, exercise a controlled lock retry after a failed Windows identity probe, and give the bundle test headroom above its bounded subprocess. Runtime implementation unchanged.
+
 ## 0.5.2
 
 ### Patch Changes
