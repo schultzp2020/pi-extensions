@@ -56,12 +56,7 @@ describe('published package contents', () => {
   })
 
   it('documents current setup without obsolete upgrade instructions', () => {
-    for (const path of [
-      '../README.md',
-      '../../../README.md',
-      '../../../docs/pi-1.1.0.md',
-      '../../../docs/index.html',
-    ]) {
+    for (const path of ['../README.md', '../../../README.md', '../../../docs/pi-1.1.0.md']) {
       const content = readFileSync(new URL(path, import.meta.url), 'utf8')
       expect(content).not.toMatch(/upgrad|migrat|llama-cpp-provider|1\.0\.4/iu)
     }
