@@ -36,14 +36,12 @@ describe('published package contents', () => {
     )
   })
 
-  it('documents native llama.cpp ownership and the required migration boundary', () => {
+  it('documents native llama.cpp ownership and requirements', () => {
     const packageReadme = readFileSync(new URL('../README.md', import.meta.url), 'utf8')
     expect(packageJson.pi.extensions).toEqual(['./dist/index.js'])
     expect(packageReadme).toContain('Pi 1.1.0')
     expect(packageReadme).toContain('llama.cpp 0.6.0')
-    expect(packageReadme).toContain('Before upgrading from the Pi 1.0.4-based Advisor release, remove the old')
-    expect(packageReadme).toContain('extensions/llama-cpp-provider.ts')
-    expect(packageReadme).toContain("Pi's built-in `llama.cpp` provider enabled")
+    expect(packageReadme).toContain("Use Pi's built-in `llama.cpp` provider.")
     expect(packageReadme).toContain('ChatGPT/Codex login')
     expect(packageReadme).toContain('architecture.output_modalities')
     for (const dependency of [
@@ -55,6 +53,19 @@ describe('published package contents', () => {
       expect(packageJson.devDependencies[dependency]).toBe('1.1.0')
       expect(packageJson.peerDependencies[dependency]).toBe('>=1.1.0')
     }
+  })
+
+  it('documents current setup without obsolete upgrade instructions', () => {
+    for (const path of [
+      '../README.md',
+      '../../../README.md',
+      '../../../docs/pi-1.1.0.md',
+      '../../../docs/index.html',
+    ]) {
+      const content = readFileSync(new URL(path, import.meta.url), 'utf8')
+      expect(content).not.toMatch(/upgrad|migrat|llama-cpp-provider|1\.0\.4/iu)
+    }
+    expect(existsSync(new URL('../../../docs/pi-1.1.0-migration.md', import.meta.url))).toBeFalsy()
   })
 
   it('lists the public package in the monorepo package table', () => {

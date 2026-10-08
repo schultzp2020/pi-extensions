@@ -26,7 +26,7 @@ Authenticate the provider in Pi with `/login <provider>` or its documented envir
 
 ### Local classification with Pi's built-in llama.cpp
 
-Before upgrading from the Pi 1.0.4-based Advisor release, remove the old `<getAgentDir()>/extensions/llama-cpp-provider.ts` shim that imports `dist/llama-cpp-provider.js`, then upgrade and run `/reload`. Keep Pi's built-in `llama.cpp` provider enabled. The old shim overrides Pi's native provider; this package no longer ships that duplicate. Advisor migration does not change authentication or server settings automatically.
+Use Pi's built-in `llama.cpp` provider. The Advisor does not register a replacement provider or configure authentication or server settings automatically.
 
 Start `llama-server` in router mode (without `--model` or `-m`), then configure Pi with `/login llama.cpp` or `LLAMA_BASE_URL` and optional `LLAMA_API_KEY`. Pi's built-in provider handles model discovery, authentication, chat/classifier dispatch, cancellation, and usage. Ordinary chat models also appear as classifiers; decision-only models appear only as classifiers. llama.cpp 0.6.0+ reports decision models through `architecture.output_modalities: ["decisions"]` and serves typed decisions at `/v1/systemone`. Older servers may omit this metadata, so Pi cannot identify decision-only models correctly. See Pi's [llama.cpp guide](https://github.com/earendil-works/pi/blob/v1.1.0/packages/coding-agent/docs/llama-cpp.md).
 
