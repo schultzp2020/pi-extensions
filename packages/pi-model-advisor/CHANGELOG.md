@@ -1,5 +1,11 @@
 # @schultzp2020/pi-model-advisor
 
+## 1.0.1
+
+### Patch Changes
+
+- [#55](https://github.com/schultzp2020/pi-extensions/pull/55) [`2e47969`](https://github.com/schultzp2020/pi-extensions/commit/2e479691ed451a751d381f97cbf1e883b5318807) Thanks [@schultzp2020](https://github.com/schultzp2020)! - Explain how to recover when a configured llama.cpp classifier is unavailable, including `/llama` and autoloadable router presets.
+
 ## 1.0.0
 
 ### Major Changes
