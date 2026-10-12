@@ -148,7 +148,19 @@ describe('registerModelAdvisorExtension', () => {
     const result = await definition.execute('call-1', validRecommendationRequest(), undefined, undefined, context)
 
     expect(result.isError).toBeTruthy()
-    expect(result.structuredContent).toMatchObject({ status: 'configuration_error' })
+    expect(result.details).toMatchObject({ status: 'configuration_error' })
+    if (result.details.status !== 'configuration_error') {
+      throw new Error('Expected a configuration error')
+    }
+    expect(result.details.issues[0]).toMatchObject({ path: '/classifier', code: 'classifier_unavailable' })
+    expect(result.details.issues[0]?.message).toContain(
+      'use /llama to load the model or configure an autoloadable router preset',
+    )
+    const [content] = result.content
+    if (content.type !== 'text') {
+      throw new Error('Expected text guidance')
+    }
+    expect(content.text).toContain('use /llama to load the model')
     expect(Value.Check(RecommendationResultSchema, result.structuredContent)).toBeTruthy()
     expect(classificationCalled).toBeFalsy()
   })

@@ -6,6 +6,9 @@ import { getAgentDir, type ModelRegistry, type ScopedModel } from '@earendil-wor
 import { Type } from 'typebox'
 import { Value } from 'typebox/value'
 
+export const CLASSIFIER_UNAVAILABLE_MESSAGE =
+  'Configured classifier is not available in Pi’s authenticated classifier inventory. For llama.cpp, use /llama to load the model or configure an autoloadable router preset.'
+
 export const CAPABILITIES = ['light', 'standard', 'advanced', 'frontier'] as const
 export const THINKING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const
 
@@ -425,7 +428,7 @@ export async function discoverAdvisorModels(
       issues.push({
         path: '/classifier',
         code: 'classifier_unavailable',
-        message: 'Configured classifier is not available in Pi’s authenticated classifier inventory.',
+        message: CLASSIFIER_UNAVAILABLE_MESSAGE,
       })
     }
   }
