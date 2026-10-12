@@ -32,6 +32,8 @@ Start `llama-server` in router mode (without `--model` or `-m`), then configure 
 
 OpenAI's GPT-6 Luna is an optional hosted classifier. It requires OpenAI API-key authentication (`OPENAI_API_KEY`); ChatGPT/Codex login does not authenticate the Decisions API. If `openai` is logged in with ChatGPT credentials, `/logout openai` before relying on `OPENAI_API_KEY`, or sign in with an API key. Configure the exact `openai` classifier identity and authenticate it explicitly. The Advisor does not switch providers automatically or expand image-input support. The Advisor starts no server and never falls back to a hosted classifier. A provider ID alone does not prove endpoint location or data handling.
 
+For an unloaded llama.cpp classifier, configure an autoloadable router preset (`--models-preset <file>`, with router autoload enabled), or load the model through Pi’s `/llama` command. A model listed only as an unloaded cache entry is not selectable by Pi’s classifier inventory. The Advisor does not load models or change the router; its `classifier_unavailable` diagnostic points to these options without assuming why the model is absent.
+
 ## Configure the advisor
 
 Create `<getAgentDir()>/model-advisor.json`; Pi's `PI_CODING_AGENT_DIR` environment variable selects the agent directory. Configuration is global-only: project files cannot change the classifier or model classifications. It is strictly validated at extension initialization and Pi's `/reload` boundary. Editing the file alone does not change the active snapshot. An invalid configuration disables recommendations rather than restoring an older snapshot.

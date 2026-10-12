@@ -8,7 +8,12 @@ import {
 } from '@earendil-works/pi-ai'
 import type { ExtensionAPI, ExtensionContext, ExtensionToolContext } from '@earendil-works/pi-coding-agent'
 
-import { discoverAdvisorModels, type AdvisorModelRegistry, type ConfigurationResult } from './config.ts'
+import {
+  CLASSIFIER_UNAVAILABLE_MESSAGE,
+  discoverAdvisorModels,
+  type AdvisorModelRegistry,
+  type ConfigurationResult,
+} from './config.ts'
 import { recommendSubagentModel } from './core.ts'
 import {
   RecommendationRequestSchema,
@@ -81,7 +86,7 @@ export async function recommendWithPi(
         {
           path: '/classifier',
           code: 'classifier_unavailable',
-          message: 'Configured classifier is not available in Pi’s authenticated classifier inventory.',
+          message: CLASSIFIER_UNAVAILABLE_MESSAGE,
         },
       ],
     }
@@ -104,6 +109,9 @@ function resultText(result: RecommendationResult): string {
   }
   if (result.status === 'classifier_failed') {
     return `${result.status}: ${result.category}`
+  }
+  if (result.status === 'configuration_error') {
+    return `${result.status}: ${result.issues.map((issue) => issue.message).join(' ')}`
   }
   return result.status
 }
