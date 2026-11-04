@@ -26,20 +26,24 @@ so concurrent Pi processes cannot lose each other's writes.
 ## Install
 
 ```bash
-pi install git:github.com/google/elephant-goldfish-model   # skills + checkout (if not present)
-pi install /path/to/pi-extensions/packages/pi-egm           # this extension (build first)
+pi install npm:@schultzp2020/pi-egm                           # this extension
+pi install git:github.com/google/elephant-goldfish-model   # EGM skills + checkout (if not present)
 ```
 
-Restart Pi afterwards; skills load at session start.
+For local development instead: build first
+(`pnpm --filter @schultzp2020/pi-egm build`), then
+`pi install /path/to/pi-extensions/packages/pi-egm`.
+
+Restart Pi afterwards; skills and personas load at session start.
 
 ## Commands
 
-| Command                     | Effect                                                  |
-| --------------------------- | ------------------------------------------------------- |
-| `/egm-status`               | Current revision, pin state, latest release tag.        |
-| `/egm-update`               | Latest release tag: update + pin. Restart Pi to reload. |
-| `/egm-update <ref>`         | Any tag or branch. `main`/`master` unpins.              |
-| `/egm-update <ref> --force` | Discard local edits in the managed checkout first.      |
+| Command                     | Effect                                                          |
+| --------------------------- | --------------------------------------------------------------- |
+| `/egm-status`               | Current revision, pin state, latest release tag.                |
+| `/egm-update`               | Latest release tag: update + pin. Restart Pi to reload.         |
+| `/egm-update <ref>`         | Any tag or branch. `main`/`master` unpins.                      |
+| `/egm-update <ref> --force` | Also discard local edits and untracked files (gitignored kept). |
 
 Update semantics: the checkout is fetched and moved first; only a successful move pins
 `settings.json`. A dirty checkout (local edits, untracked files) aborts the update unless
