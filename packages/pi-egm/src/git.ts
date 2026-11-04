@@ -1,4 +1,5 @@
 import fs from 'node:fs'
+import { resolve, sep } from 'node:path'
 
 import git from 'isomorphic-git'
 import http from 'isomorphic-git/http/node'
@@ -20,6 +21,22 @@ async function peelToCommit(dir: string, oid: string): Promise<string> {
     }
   }
   throw new Error(`tag object chain too deep at ${oid}`)
+}
+
+/** Remove nonignored untracked files — the pristine half of a forced update. Gitignored files are kept. */
+export async function removeUntrackedFiles(dir: string): Promise<number> {
+  const root = resolve(dir)
+  // statusMatrix with ignored: false already excludes gitignored files.
+  const matrix = await git.statusMatrix({ fs, dir, ignored: false })
+  const untracked = matrix.filter(([, head, , stage]) => !head && !stage).map(([filepath]) => filepath)
+  for (const filepath of untracked) {
+    const full = resolve(dir, filepath)
+    // chisle: path safety — only delete inside the checkout
+    if (full.startsWith(root + sep)) {
+      fs.rmSync(full, { recursive: true, force: true })
+    }
+  }
+  return untracked.length
 }
 
 /**
@@ -65,6 +82,13 @@ export function createIsomorphicGitBackend(repoUrl = EGM_REPO_URL) {
      * fetch the single ref over HTTP, peel to its commit, force a detached
      * checkout at that commit. Local edits abort unless force is set.
      */
+    /**
+     * Move the checkout to ref (tag or branch name from the EGM remote):
+     * fetch the single ref over HTTP, peel to its commit, force a detached
+     * checkout at that commit. Local edits are rejected unless force is set;
+     * force additionally removes nonignored untracked files so the managed
+     * checkout is pristine (gitignored files are kept).
+     */
     async update(dir: string, ref: string, options: { force?: boolean } = {}): Promise<string> {
       if (!options.force && (await isDirtyDir(dir))) {
         throw new Error('EGM checkout has local edits; re-run with --force to discard them')
@@ -78,6 +102,9 @@ export function createIsomorphicGitBackend(repoUrl = EGM_REPO_URL) {
       }
       const commit = await peelToCommit(dir, result.fetchHead)
       await git.checkout({ fs, dir, ref: commit, force: true })
+      if (options.force) {
+        await removeUntrackedFiles(dir)
+      }
       return this.headDescription(dir)
     },
   }

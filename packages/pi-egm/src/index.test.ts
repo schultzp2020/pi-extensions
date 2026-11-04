@@ -2,6 +2,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
+import lockfile from 'proper-lockfile'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { EGM_PACKAGE_SPEC, type GitBackend, type RemoteTag } from './egm.ts'
@@ -109,6 +110,19 @@ describe('wirePersonas', () => {
     writeFileSync(join(nulled, 'settings.json'), 'null')
     expect(wirePersonas(nulled, () => true)).toBeFalsy()
     expect(wirePersonas(tempAgentDir({ subagents: 'legacy' }), () => true)).toBeFalsy()
+  })
+
+  it('refuses to write while another process holds the settings lock', () => {
+    const dir = tempAgentDir({ theme: 'dark' })
+    const settingsPath = join(dir, 'settings.json')
+    const release = lockfile.lockSync(settingsPath, { realpath: false })
+    try {
+      expect(wirePersonas(dir, () => true)).toBeFalsy()
+      expect(readSettingsFile(settingsPath)).toEqual({ theme: 'dark' }) // unchanged
+    } finally {
+      release()
+    }
+    expect(wirePersonas(dir, () => true)).toBeTruthy() // succeeds once the lock frees
   })
 })
 

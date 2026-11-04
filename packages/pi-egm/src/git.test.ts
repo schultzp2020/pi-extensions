@@ -1,11 +1,11 @@
-import fs, { mkdtempSync, rmSync } from 'node:fs'
+import fs, { existsSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import git from 'isomorphic-git'
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { createIsomorphicGitBackend } from './git.ts'
+import { createIsomorphicGitBackend, removeUntrackedFiles } from './git.ts'
 
 const tempDirs: string[] = []
 
@@ -75,5 +75,21 @@ describe('createIsomorphicGitBackend', () => {
     const dir = await fixture({ 'a.txt': 'one' })
     fs.writeFileSync(join(dir, 'a.txt'), 'edited')
     await expect(backend.update(dir, 'v0.1.0')).rejects.toThrow(/local edits/)
+  })
+})
+
+describe('removeUntrackedFiles', () => {
+  it('removes nonignored untracked files but keeps tracked and gitignored ones', async () => {
+    const dir = await fixture({ 'a.txt': 'one', '.gitignore': 'ignored.log\n' })
+    fs.writeFileSync(join(dir, 'local.md'), 'untracked persona')
+    fs.writeFileSync(join(dir, 'ignored.log'), 'ignored artifact')
+
+    const removed = await removeUntrackedFiles(dir)
+
+    expect(removed).toBe(1)
+    expect(existsSync(join(dir, 'local.md'))).toBeFalsy()
+    expect(existsSync(join(dir, 'ignored.log'))).toBeTruthy()
+    expect(existsSync(join(dir, 'a.txt'))).toBeTruthy()
+    expect(await createIsomorphicGitBackend().isDirty(dir)).toBeFalsy()
   })
 })

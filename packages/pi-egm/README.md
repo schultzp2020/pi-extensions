@@ -43,7 +43,9 @@ Restart Pi afterwards; skills load at session start.
 
 Update semantics: the checkout is fetched and moved first; only a successful move pins
 `settings.json`. A dirty checkout (local edits, untracked files) aborts the update unless
-`--force` is passed — the managed checkout is otherwise replaced without mercy, by design.
+`--force` is passed. `--force` overwrites tracked-file edits and removes nonignored
+untracked files, leaving the managed checkout pristine; gitignored files (build
+artifacts, local caches) are kept.
 
 ## Version independence and limits
 

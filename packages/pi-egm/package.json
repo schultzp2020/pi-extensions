@@ -36,13 +36,13 @@
     "prepublishOnly": "pnpm run build"
   },
   "dependencies": {
-    "isomorphic-git": "^1.44.10",
     "proper-lockfile": "4.1.2"
   },
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "1.1.0",
     "@types/node": "^26.2.0",
     "@types/proper-lockfile": "^4.1.4",
+    "isomorphic-git": "^1.44.10",
     "rolldown": "^1.2.4",
     "typescript": "^7.0.2",
     "vitest": "^4.1.10"

@@ -15,17 +15,19 @@ import {
   removeAgentScanDir,
 } from './settings.ts'
 
-/** Acquire pi's settings lock (proper-lockfile, lockSync with ELOCKED retry) and release in finally. */
-function acquireSettingsLock(path: string): (() => void) | undefined {
+/** Acquire pi's settings lock (proper-lockfile, lockSync with ELOCKED retry). Throws on failure — never runs unlocked. */
+function acquireSettingsLock(path: string): () => void {
   const maxAttempts = 10
+  let lastError: unknown
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
       return lockfile.lockSync(path, { realpath: false })
     } catch (error) {
       const code = typeof error === 'object' && error !== null && 'code' in error ? String(error.code) : undefined
       if (code !== 'ELOCKED' || attempt === maxAttempts) {
-        return undefined
+        throw error
       }
+      lastError = error
       // chisle: sync backoff, mirrors pi's FileSettingsStorage
       const start = Date.now()
       while (Date.now() - start < 20) {
@@ -33,22 +35,20 @@ function acquireSettingsLock(path: string): (() => void) | undefined {
       }
     }
   }
-  return undefined
+  throw lastError ?? new Error(`could not acquire settings lock: ${path}`)
 }
 
 /**
  * Run fn while holding pi's lock on the settings file, so a concurrent pi process
- * cannot interleave a write between our read and write. Mirrors FileSettingsStorage.withLock.
+ * cannot interleave a write between our read and write. Mirrors FileSettingsStorage.withLock;
+ * fails closed — the callback never runs without lock ownership.
  */
 function withSettingsLock<T>(path: string, fn: () => T): T {
-  let release: (() => void) | undefined
+  const release = acquireSettingsLock(path)
   try {
-    if (existsSync(path)) {
-      release = acquireSettingsLock(path)
-    }
     return fn()
   } finally {
-    release?.()
+    release()
   }
 }
 
@@ -69,28 +69,35 @@ export function wirePersonas(agentDir: string, exists: (p: string) => boolean): 
     return false
   }
   const agentsDir = egmAgentsDir(agentDir)
-  return withSettingsLock(settingsPath, () => {
-    let parsed: unknown
-    try {
-      parsed = JSON.parse(readFileSync(settingsPath, 'utf8'))
-    } catch {
-      return false
-    }
-    if (!isRecord(parsed)) {
-      return false
-    }
-    const settings = parsed as Settings
-    const result = exists(agentsDir) ? ensureAgentScanDir(settings, agentsDir) : removeAgentScanDir(settings, agentsDir)
-    if (!result.changed) {
-      return false
-    }
-    try {
-      writeFileSync(settingsPath, `${JSON.stringify(result.settings, null, 2)}\n`)
-      return true
-    } catch {
-      return false
-    }
-  })
+  try {
+    return withSettingsLock(settingsPath, () => {
+      let parsed: unknown
+      try {
+        parsed = JSON.parse(readFileSync(settingsPath, 'utf8'))
+      } catch {
+        return false
+      }
+      if (!isRecord(parsed)) {
+        return false
+      }
+      const settings = parsed as Settings
+      const result = exists(agentsDir)
+        ? ensureAgentScanDir(settings, agentsDir)
+        : removeAgentScanDir(settings, agentsDir)
+      if (!result.changed) {
+        return false
+      }
+      try {
+        writeFileSync(settingsPath, `${JSON.stringify(result.settings, null, 2)}\n`)
+        return true
+      } catch {
+        return false
+      }
+    })
+  } catch {
+    // lock unavailable: skip this wiring round rather than write unlocked
+    return false
+  }
 }
 
 /** Read and validate settings.json; throws with a user-facing message when unusable. */
@@ -207,18 +214,25 @@ export function registerEgmCommands(
 
       // Pin under pi's lock, re-reading so a concurrent pi write is not clobbered.
       const settingsPath = join(agentDir, 'settings.json')
-      const pinned = withSettingsLock(settingsPath, () => {
+      const pinned = (() => {
         try {
-          const settings = readSettingsStrict(agentDir)
-          const result = pinEgmPackageRef(settings, ref === 'main' || ref === 'master' ? undefined : ref)
-          if (result.changed) {
-            writeFileSync(settingsPath, `${JSON.stringify(result.settings, null, 2)}\n`)
-          }
-          return true
+          return withSettingsLock(settingsPath, () => {
+            try {
+              const settings = readSettingsStrict(agentDir)
+              const result = pinEgmPackageRef(settings, ref === 'main' || ref === 'master' ? undefined : ref)
+              if (result.changed) {
+                writeFileSync(settingsPath, `${JSON.stringify(result.settings, null, 2)}\n`)
+              }
+              return true
+            } catch {
+              return false
+            }
+          })
         } catch {
+          // lock unavailable: report pin-persistence failure rather than write unlocked
           return false
         }
-      })
+      })()
       if (!pinned) {
         ctx.ui.notify(
           `Checkout moved to ${description} but the settings.json pin could not be persisted; ` +

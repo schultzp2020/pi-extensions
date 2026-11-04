@@ -1,3 +1,5 @@
+import { join } from 'node:path'
+
 import { describe, expect, it } from 'vitest'
 
 import { type RemoteTag, compareVersions, egmAgentsDir, egmCheckoutDir, latestReleaseTag, pinnedRef } from './egm.ts'
@@ -38,9 +40,9 @@ describe('pinnedRef', () => {
 
 describe('checkout paths', () => {
   it('are ref-independent and nest under the pi git-package layout', () => {
-    expect(egmCheckoutDir('/agent')).toBe('/agent/git/github.com/google/elephant-goldfish-model'.replaceAll('/', '\\'))
+    expect(egmCheckoutDir('/agent')).toBe(join('/agent', 'git', 'github.com', 'google', 'elephant-goldfish-model'))
     expect(egmAgentsDir('/agent')).toBe(
-      '/agent/git/github.com/google/elephant-goldfish-model/agents'.replaceAll('/', '\\'),
+      join('/agent', 'git', 'github.com', 'google', 'elephant-goldfish-model', 'agents'),
     )
   })
 })

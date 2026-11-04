@@ -32,9 +32,6 @@ importers:
 
   packages/pi-egm:
     dependencies:
-      isomorphic-git:
-        specifier: ^1.44.10
-        version: 1.44.10
       proper-lockfile:
         specifier: 4.1.2
         version: 4.1.2
@@ -48,6 +45,9 @@ importers:
       '@types/proper-lockfile':
         specifier: ^4.1.4
         version: 4.1.4
+      isomorphic-git:
+        specifier: ^1.44.10
+        version: 1.44.10
       rolldown:
         specifier: ^1.2.4
         version: 1.2.4
