@@ -1,0 +1,53 @@
+{
+  "name": "@schultzp2020/pi-egm",
+  "version": "0.1.0",
+  "description": "Wire the Elephant-Goldfish Model git package into Pi: goldfish personas as named subagents, plus version-pinned updates",
+  "keywords": [
+    "egm",
+    "pi",
+    "pi-package"
+  ],
+  "license": "MIT",
+  "author": "Paul Schultz",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/schultzp2020/pi-extensions.git",
+    "directory": "packages/pi-egm"
+  },
+  "files": [
+    "dist/",
+    "README.md",
+    "LICENSE"
+  ],
+  "type": "module",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "node --input-type=module -e \"import { rmSync } from 'node:fs'; rmSync('dist', { recursive: true, force: true })\" && tsc --noEmit -p tsconfig.json && tsc -p tsconfig.build.json && rolldown --config rolldown.config.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "oxlint --type-aware --type-check --deny-warnings .",
+    "format:check": "oxfmt --check .",
+    "prepublishOnly": "pnpm run build"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "1.1.0",
+    "@types/node": "^26.2.0",
+    "rolldown": "^1.2.4",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": ">=1.1.0"
+  },
+  "pi": {
+    "extensions": [
+      "./dist/index.js"
+    ]
+  }
+}
