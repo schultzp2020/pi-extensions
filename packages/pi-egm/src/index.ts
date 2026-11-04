@@ -1,121 +1,136 @@
-import { execFile } from 'node:child_process'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
-import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { promisify } from 'node:util'
 
-import type { ExtensionAPI, ExtensionCommandContext } from '@earendil-works/pi-coding-agent'
+import { getAgentDir, type ExtensionAPI, type ExtensionCommandContext } from '@earendil-works/pi-coding-agent'
+import lockfile from 'proper-lockfile'
 
+import { type GitBackend, EGM_PACKAGE_SPEC, egmAgentsDir, egmCheckoutDir, latestReleaseTag } from './egm.ts'
+import { createIsomorphicGitBackend } from './git.ts'
 import {
-  type GitRunner,
-  EGM_PACKAGE_SPEC,
-  checkoutDescription,
-  egmAgentsDir,
-  egmCheckoutDir,
-  latestReleaseTag,
-  pinnedRef,
-  updateCheckout,
-} from './egm.ts'
-import { ensureAgentScanDir, type Settings, pinEgmPackageRef } from './settings.ts'
+  ensureAgentScanDir,
+  egmPinnedRefFromSettings,
+  type Settings,
+  isRecord,
+  pinEgmPackageRef,
+  removeAgentScanDir,
+} from './settings.ts'
 
-/** Mirrors pi-subagents' agent-dir resolution: PI_CODING_AGENT_DIR (with ~) or ~/.pi/agent. */
-export function resolveAgentDir(env: NodeJS.ProcessEnv = process.env): string {
-  const home = env.HOME ?? env.USERPROFILE ?? homedir()
-  const configured = env.PI_CODING_AGENT_DIR
-  if (configured === '~') {
-    return home
+/** Acquire pi's settings lock (proper-lockfile, lockSync with ELOCKED retry) and release in finally. */
+function acquireSettingsLock(path: string): (() => void) | undefined {
+  const maxAttempts = 10
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return lockfile.lockSync(path, { realpath: false })
+    } catch (error) {
+      const code = typeof error === 'object' && error !== null && 'code' in error ? String(error.code) : undefined
+      if (code !== 'ELOCKED' || attempt === maxAttempts) {
+        return undefined
+      }
+      // chisle: sync backoff, mirrors pi's FileSettingsStorage
+      const start = Date.now()
+      while (Date.now() - start < 20) {
+        // busy-wait
+      }
+    }
   }
-  if (configured?.startsWith('~/') || configured?.startsWith('~\\')) {
-    return join(home, configured.slice(2))
-  }
-  return configured ?? join(home, '.pi', 'agent')
+  return undefined
 }
 
-const execFileAsync = promisify(execFile)
-const defaultGit: GitRunner = async (args, opts) =>
-  (await execFileAsync('git', args, { cwd: opts?.cwd, encoding: 'utf8' })).stdout.trim()
+/**
+ * Run fn while holding pi's lock on the settings file, so a concurrent pi process
+ * cannot interleave a write between our read and write. Mirrors FileSettingsStorage.withLock.
+ */
+function withSettingsLock<T>(path: string, fn: () => T): T {
+  let release: (() => void) | undefined
+  try {
+    if (existsSync(path)) {
+      release = acquireSettingsLock(path)
+    }
+    return fn()
+  } finally {
+    release?.()
+  }
+}
 
 export interface EgmExtensionOptions {
   agentDir?: string
-  git?: GitRunner
+  backend?: GitBackend
   exists?: (path: string) => boolean
 }
 
-/** Register the EGM personas dir with pi-subagents; idempotent, fails silently when unreadable. */
+/**
+ * Register (or, when the EGM checkout is gone, remove) the personas scan dir in
+ * settings.json. The whole read-merge-write runs under pi's settings lock and
+ * fails closed on unreadable or unsupported shapes. Idempotent.
+ */
 export function wirePersonas(agentDir: string, exists: (p: string) => boolean): boolean {
   const settingsPath = join(agentDir, 'settings.json')
   if (!exists(settingsPath)) {
     return false
   }
-  let settings: Settings
-  try {
-    settings = JSON.parse(readFileSync(settingsPath, 'utf8')) as Settings
-  } catch {
-    return false
-  }
-  const result = ensureAgentScanDir(settings, egmAgentsDir(agentDir))
-  if (!result.changed) {
-    return false
-  }
-  try {
-    writeFileSync(settingsPath, `${JSON.stringify(result.settings, null, 2)}\n`)
-    return true
-  } catch {
-    return false
-  }
-}
-
-function readSettings(agentDir: string): Settings | undefined {
-  try {
-    return JSON.parse(readFileSync(join(agentDir, 'settings.json'), 'utf8')) as Settings
-  } catch {
-    return undefined
-  }
-}
-
-function writeSettings(agentDir: string, settings: Settings): boolean {
-  try {
-    writeFileSync(join(agentDir, 'settings.json'), `${JSON.stringify(settings, null, 2)}\n`)
-    return true
-  } catch {
-    return false
-  }
-}
-
-function egmPinnedRef(agentDir: string): string | undefined {
-  const packages = readSettings(agentDir)?.packages
-  if (!Array.isArray(packages)) {
-    return undefined
-  }
-  for (const entry of packages) {
-    if (typeof entry === 'string' && (entry === EGM_PACKAGE_SPEC || entry.startsWith(`${EGM_PACKAGE_SPEC}@`))) {
-      return pinnedRef(entry)
+  const agentsDir = egmAgentsDir(agentDir)
+  return withSettingsLock(settingsPath, () => {
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(readFileSync(settingsPath, 'utf8'))
+    } catch {
+      return false
     }
+    if (!isRecord(parsed)) {
+      return false
+    }
+    const settings = parsed as Settings
+    const result = exists(agentsDir) ? ensureAgentScanDir(settings, agentsDir) : removeAgentScanDir(settings, agentsDir)
+    if (!result.changed) {
+      return false
+    }
+    try {
+      writeFileSync(settingsPath, `${JSON.stringify(result.settings, null, 2)}\n`)
+      return true
+    } catch {
+      return false
+    }
+  })
+}
+
+/** Read and validate settings.json; throws with a user-facing message when unusable. */
+function readSettingsStrict(agentDir: string): Settings {
+  const settingsPath = join(agentDir, 'settings.json')
+  let raw: string
+  try {
+    raw = readFileSync(settingsPath, 'utf8')
+  } catch {
+    throw new Error(`cannot read ${settingsPath}`)
   }
-  return undefined
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch {
+    throw new Error(`${settingsPath} is not valid JSON`)
+  }
+  if (!isRecord(parsed)) {
+    throw new Error(`${settingsPath} is not a JSON object`)
+  }
+  return parsed
 }
 
 export function registerEgmCommands(
   pi: Pick<ExtensionAPI, 'registerCommand'>,
   options: EgmExtensionOptions = {},
 ): void {
-  const agentDir = options.agentDir ?? resolveAgentDir()
-  const git = options.git ?? defaultGit
+  const agentDir = options.agentDir ?? getAgentDir()
+  const backend = options.backend ?? createIsomorphicGitBackend()
   const exists = options.exists ?? existsSync
   const checkout = egmCheckoutDir(agentDir)
-
-  const notifyMissing = (ctx: ExtensionCommandContext): void => {
-    ctx.ui.notify(
-      `EGM checkout not found at ${checkout}.\nInstall the package first: pi install ${EGM_PACKAGE_SPEC}`,
-      'error',
-    )
-  }
 
   const requireCheckout = (ctx: ExtensionCommandContext): boolean => {
     if (exists(checkout)) {
       return true
     }
-    notifyMissing(ctx)
+    ctx.ui.notify(
+      `EGM checkout not found at ${checkout}.\nInstall the package first: pi install ${EGM_PACKAGE_SPEC}`,
+      'error',
+    )
     return false
   }
 
@@ -125,11 +140,16 @@ export function registerEgmCommands(
       if (!requireCheckout(ctx)) {
         return
       }
-      const current = await checkoutDescription(git, checkout)
-      const pinned = egmPinnedRef(agentDir)
+      const current = await backend.headDescription(checkout)
+      let pinned: string | undefined
+      try {
+        pinned = egmPinnedRefFromSettings(readSettingsStrict(agentDir))
+      } catch {
+        pinned = undefined
+      }
       let latest = 'unknown'
       try {
-        latest = (await latestReleaseTag(git)) ?? 'none'
+        latest = (await backend.listRemoteTags().then(latestReleaseTag)) ?? 'none'
       } catch {
         // offline: leave unknown
       }
@@ -139,16 +159,33 @@ export function registerEgmCommands(
   })
 
   pi.registerCommand('egm-update', {
-    description: 'Update EGM to the latest release (or a given tag/branch, e.g. /egm-update main)',
+    description:
+      'Update EGM to the latest release (or a given tag/branch, e.g. /egm-update main); --force discards local checkout edits',
     handler: async (args, ctx) => {
       if (!requireCheckout(ctx)) {
         return
       }
-      const requested = args.trim()
+      const tokens = args.split(/\s+/).filter(Boolean)
+      const unknownFlags = tokens.filter((t) => t.startsWith('--') && t !== '--force')
+      if (unknownFlags.length > 0) {
+        ctx.ui.notify(`Unknown option: ${unknownFlags.join(', ')}`, 'error')
+        return
+      }
+      const force = tokens.includes('--force')
+      const requested = tokens.find((t) => !t.startsWith('--')) ?? ''
+
+      // Fail closed on unusable settings before touching the checkout.
+      try {
+        readSettingsStrict(agentDir)
+      } catch (error) {
+        ctx.ui.notify(`Refusing to update: ${String(error instanceof Error ? error.message : error)}`, 'error')
+        return
+      }
+
       let ref: string | undefined = requested
       if (!ref) {
         try {
-          ref = await latestReleaseTag(git)
+          ref = (await backend.listRemoteTags().then(latestReleaseTag)) ?? undefined
         } catch (error) {
           ctx.ui.notify(`Could not look up the latest release: ${String(error)}`, 'error')
           return
@@ -158,21 +195,36 @@ export function registerEgmCommands(
           return
         }
       }
-      const settings = readSettings(agentDir)
-      if (settings) {
-        // Branch names unpin (track default); tags and commits pin.
-        const trackDefault = ref === 'main' || ref === 'master'
-        const pinned = pinEgmPackageRef(settings, trackDefault ? undefined : ref)
-        if (pinned.changed && !writeSettings(agentDir, pinned.settings)) {
-          ctx.ui.notify('Could not update settings.json package pin; aborting.', 'error')
-          return
-        }
-      }
+
+      // Git first, pin second: a failed fetch/checkout leaves settings untouched.
       let description: string
       try {
-        description = await updateCheckout(git, checkout, ref)
+        description = await backend.update(checkout, ref, { force })
       } catch (error) {
-        ctx.ui.notify(`git update failed: ${String(error)}`, 'error')
+        ctx.ui.notify(`Update failed; settings unchanged: ${String(error)}`, 'error')
+        return
+      }
+
+      // Pin under pi's lock, re-reading so a concurrent pi write is not clobbered.
+      const settingsPath = join(agentDir, 'settings.json')
+      const pinned = withSettingsLock(settingsPath, () => {
+        try {
+          const settings = readSettingsStrict(agentDir)
+          const result = pinEgmPackageRef(settings, ref === 'main' || ref === 'master' ? undefined : ref)
+          if (result.changed) {
+            writeFileSync(settingsPath, `${JSON.stringify(result.settings, null, 2)}\n`)
+          }
+          return true
+        } catch {
+          return false
+        }
+      })
+      if (!pinned) {
+        ctx.ui.notify(
+          `Checkout moved to ${description} but the settings.json pin could not be persisted; ` +
+            'pi reconciliation may revert it. Fix settings.json and re-run.',
+          'error',
+        )
         return
       }
       ctx.ui.notify(`EGM updated to ${ref} (${description}). Restart pi to reload skills and personas.`, 'info')
@@ -181,7 +233,6 @@ export function registerEgmCommands(
 }
 
 export default function (pi: ExtensionAPI): void {
-  const agentDir = resolveAgentDir()
-  wirePersonas(agentDir, existsSync)
+  wirePersonas(getAgentDir(), existsSync)
   registerEgmCommands(pi)
 }

@@ -4,9 +4,28 @@ import { join } from 'node:path'
 export const EGM_PACKAGE_SPEC = 'git:github.com/google/elephant-goldfish-model'
 export const EGM_REPO_URL = 'https://github.com/google/elephant-goldfish-model'
 
-/** A git runner: runs `git <args>` optionally in cwd, resolves to trimmed stdout. */
-export interface GitRunner {
-  (args: string[], opts?: { cwd?: string }): Promise<string>
+/** A remote tag: name plus the commit oid it (peels to) points at. */
+export interface RemoteTag {
+  name: string
+  oid: string
+}
+
+/**
+ * The git operations pi-egm needs, so no git binary has to exist on the PATH.
+ * Implemented for real by createIsomorphicGitBackend (src/git.ts); faked in tests.
+ */
+export interface GitBackend {
+  /** Remote tags of the EGM repository. */
+  listRemoteTags(): Promise<RemoteTag[]>
+  /** Whether the checkout carries local edits, deletions, or untracked files. */
+  isDirty(checkout: string): Promise<boolean>
+  /** Tag name when HEAD sits on a tag, else short commit hash (+ -dirty). */
+  headDescription(checkout: string): Promise<string>
+  /**
+   * Move the checkout to ref (tag or branch from the EGM remote). Rejects a
+   * dirty checkout unless force is set. Resolves to the new head description.
+   */
+  update(checkout: string, ref: string, options?: { force?: boolean }): Promise<string>
 }
 
 /** Location where pi checks out the EGM git package. Ref-independent. */
@@ -37,33 +56,13 @@ export function compareVersions(a: string, b: string): number {
   return 0
 }
 
-/** Highest `vX.Y.Z` tag reachable via ls-remote, or undefined when none exist. */
-export async function latestReleaseTag(run: GitRunner, repoUrl = EGM_REPO_URL): Promise<string | undefined> {
-  const out = await run(['ls-remote', '--tags', '--refs', repoUrl])
-  const tags = out
-    .split('\n')
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .map((line) => line.split('\t')[1]?.replace('refs/tags/', '') ?? '')
-    .filter((tag) => /^v?\d+(\.\d+)*$/.test(tag))
-  return tags.sort(compareVersions).at(-1)
-}
-
-/** Human-readable description of the checked-out EGM revision. */
-export async function checkoutDescription(run: GitRunner, checkout: string): Promise<string> {
-  try {
-    return await run(['describe', '--tags', '--always', '--dirty'], { cwd: checkout })
-  } catch {
-    // not a tagged checkout: fall back to the short hash
-  }
-  return run(['rev-parse', '--short', 'HEAD'], { cwd: checkout })
-}
-
-/** Fetch tags and check out ref in the pi-managed EGM checkout. */
-export async function updateCheckout(run: GitRunner, checkout: string, ref: string): Promise<string> {
-  await run(['fetch', '--tags', '--force', 'origin'], { cwd: checkout })
-  await run(['checkout', '--force', ref], { cwd: checkout })
-  return checkoutDescription(run, checkout)
+/** Highest `vX.Y.Z` tag from a remote tag list, or undefined when none exist. */
+export function latestReleaseTag(tags: RemoteTag[]): string | undefined {
+  return tags
+    .map((tag) => tag.name)
+    .filter((name) => /^v?\d+(\.\d+)*$/.test(name))
+    .sort(compareVersions)
+    .at(-1)
 }
 
 /** The pinned ref of the EGM package spec, or undefined when it tracks the default branch. */

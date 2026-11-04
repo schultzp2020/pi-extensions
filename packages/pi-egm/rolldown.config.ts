@@ -12,5 +12,5 @@ export default defineConfig({
   },
   platform: 'node',
   treeshake: true,
-  external: [/^node:/, /^@earendil-works\/pi-coding-agent(?:$|\/)/],
+  external: [/^node:/, /^@earendil-works\/pi-coding-agent(?:$|\/)/, /^proper-lockfile$/],
 })

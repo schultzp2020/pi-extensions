@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { compareVersions, type GitRunner, latestReleaseTag, pinnedRef } from './egm.ts'
+import { type RemoteTag, compareVersions, egmAgentsDir, egmCheckoutDir, latestReleaseTag, pinnedRef } from './egm.ts'
 
 describe('compareVersions', () => {
   it('orders semver tags', () => {
@@ -12,25 +12,19 @@ describe('compareVersions', () => {
 })
 
 describe('latestReleaseTag', () => {
-  it('picks the highest numeric tag and ignores non-release refs', async () => {
-    const run: GitRunner = async () => {
-      await Promise.resolve()
-      return [
-        'a1b2c3\trefs/tags/v0.1.0',
-        'd4e5f6\trefs/tags/v0.10.0',
-        '789abc\trefs/tags/v0.2.0',
-        '000000\trefs/tags/nightly',
-      ].join('\n')
-    }
-    expect(await latestReleaseTag(run)).toBe('v0.10.0')
+  it('picks the highest numeric tag and ignores non-release refs', () => {
+    const tags: RemoteTag[] = [
+      { name: 'v0.1.0', oid: 'a' },
+      { name: 'v0.10.0', oid: 'b' },
+      { name: 'v0.2.0', oid: 'c' },
+      { name: 'nightly', oid: 'd' },
+    ]
+    expect(latestReleaseTag(tags)).toBe('v0.10.0')
   })
 
-  it('returns undefined when no release tags exist', async () => {
-    const run: GitRunner = async () => {
-      await Promise.resolve()
-      return '000000\trefs/tags/nightly'
-    }
-    expect(await latestReleaseTag(run)).toBeUndefined()
+  it('returns undefined when no release tags exist', () => {
+    expect(latestReleaseTag([{ name: 'nightly', oid: 'd' }])).toBeUndefined()
+    expect(latestReleaseTag([])).toBeUndefined()
   })
 })
 
@@ -39,5 +33,14 @@ describe('pinnedRef', () => {
     expect(pinnedRef('git:github.com/google/elephant-goldfish-model@v0.1.0')).toBe('v0.1.0')
     expect(pinnedRef('git:github.com/google/elephant-goldfish-model')).toBeUndefined()
     expect(pinnedRef('npm:other')).toBeUndefined()
+  })
+})
+
+describe('checkout paths', () => {
+  it('are ref-independent and nest under the pi git-package layout', () => {
+    expect(egmCheckoutDir('/agent')).toBe('/agent/git/github.com/google/elephant-goldfish-model'.replaceAll('/', '\\'))
+    expect(egmAgentsDir('/agent')).toBe(
+      '/agent/git/github.com/google/elephant-goldfish-model/agents'.replaceAll('/', '\\'),
+    )
   })
 })
